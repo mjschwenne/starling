@@ -1,17 +1,17 @@
 # for a description of available keys, see https://github.com/typst/packages/?tab=readme-ov-file#package-format
 
 [package]
-name = ""
+name = "starling"
 version = "0.1.0"
 entrypoint = "src/lib.typ"
-authors = []
-license = "Unlicense"
-description = ""
-homepage = ""
-repository = ""
-keywords = []
-categories = []
-disciplines = []
+authors = ["Matt Schwennesen <mjschwenne@gmail.com>"]
+license = "GPL-3.0-or-later"
+description = "Animated renderings of data structures (binary search trees, and more to come) for teaching."
+homepage = "https://github.com/mjschwenne/starling"
+repository = "https://github.com/mjschwenne/starling"
+keywords = ["data-structures", "animation", "education", "cetz", "bst"]
+categories = ["visualization"]
+disciplines = ["computer-science"]
 # compiler = ""
 exclude = [
   ".github",
@@ -22,6 +22,8 @@ exclude = [
   "Justfile",
   "thumbnail-dark.svg",
   "thumbnail-light.svg",
+  "flake.nix",
+  "flake.lock",
 ]
 
 # [template]

@@ -1,69 +1,139 @@
-# The `my-package` Package
+# Starling
+
 <div align="center">Version 0.1.0</div>
 
-A short description about the project and/or client.
+Animated renderings of data structures for teaching, built on
+[cetz](https://typst.app/universe/package/cetz),
+[typsy](https://typst.app/universe/package/typsy),
+and (optionally) [touying](https://typst.app/universe/package/touying).
 
-## Template adaptation checklist
+Starling is the animation toolkit for a programming course; it
+currently ships a `BST` (binary search tree) and will grow to cover more
+structures over time (heaps, hash tables, graphs, etc.).
 
-- [ ] Fill out `README.md`
-  - Change the `my-package` package name, including code snippets
-  - Check section contents and/or delete sections that don't apply
-- [ ] Check and/or replace `LICENSE` by something that suits your needs
-- [ ] Fill out `typst.toml`
-  - See also the [typst/packages README](https://github.com/typst/packages/?tab=readme-ov-file#package-format)
-- [ ] Adapt Repository URLs in `CHANGELOG.md`
-  - Consider only committing that file with your first release, or removing the "Initial Release" part in the beginning
-- [ ] Adapt or deactivate the release workflow in `.github/workflows/release.yml`
-  - to deactivate it, delete that file or remove/comment out lines 2-4 (`on:` and following)
-  - to use the workflow
-    - [ ] check the values under `env:`, particularly `REGISTRY_FORK`
-    - [ ] if you don't have one, [create a fine-grained personal access token](https://github.com/settings/tokens?type=beta) with [only Contents permission](https://stackoverflow.com/a/75116350/371191) for the `REGISTRY_FORK`
-    - [ ] on this repo, create a secret `REGISTRY_TOKEN` (at `https://github.com/[user]/[repo]/settings/secrets/actions`) that contains the so created token
-
-    if configured correctly, whenever you create a tag `v...`, your package will be pushed onto a branch on the `REGISTRY_FORK`, from which you can then create a pull request against [typst/packages](https://github.com/typst/packages/)
-- [ ] remove/replace the example test case
-- [ ] (add your actual code, docs and tests)
-- [ ] remove this section from the README
-
-## Getting Started
-
-These instructions will get you a copy of the project up and running on the typst web app. Perhaps a short code example on importing the package and a very simple teaser usage.
+## Quick start
 
 ```typ
-#import "@preview/my-package:0.1.0": *
+#import "@preview/starling:0.1.0": BST
 
-#show: my-show-rule.with()
-#my-func()
+#let t = (BST.new)(value: 4, left: none, right: none)
+#let t = (t.insert)(1)
+#let t = (t.insert)(7)
+#let t = (t.insert)(3)
+#let t = (t.insert)(6)
+
+#(t.display)()              // static render
+#(t.search-display)(6)      // animated search
+#(t.insert-display)(5)      // animated insertion
+#(t.delete-display)(3)      // animated deletion
+#(t.rotate-display)(1)      // animated rotation
 ```
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./thumbnail-dark.svg">
-  <img src="./thumbnail-light.svg">
-</picture>
+By default, the `*-display` methods collapse the animation to its final
+frame -- a static image that's appropriate for handouts or printed notes.
 
-### Installation
+## Usage with touying
 
-A step by step guide that will tell you how to get the development environment up and running. This should explain how to clone the repo and where to (maybe a link to the typst documentation on it), along with any pre-requisite software and installation steps.
-
-```
-$ First step
-$ Another step
-$ Final step
-```
-
-## Usage
-
-A more in-depth description of usage. Any template arguments? A complicated example that showcases most if not all of the functions the package provides? This is also an excellent place to signpost the manual.
+In a touying slide deck, configure Starling with touying's `alternatives`
+so each animation frame becomes its own subslide:
 
 ```typ
-#import "@preview/my-package:0.1.0": *
+#import "@preview/touying:0.7.3": *
+#import "@preview/starling:0.1.0" as starling
 
-#let my-complicated-example = ...
+#let (BST,) = (starling.configure)(wrap: alternatives)
+
+#show: solaris-theme.with(aspect-ratio: "16-9")
+
+== A Binary Search Tree
+
+#let t = (BST.new)(value: 4, left: none, right: none)
+#let t = (t.insert)(1)
+// ...
+
+== Searching
+
+#(t.search-display)(6)      // each step is a subslide
 ```
 
-## Additional Documentation and Acknowledgments
+`configure(wrap: ...)` returns a dictionary of data-structure factories
+with the wrapper baked in. Destructure the ones you need (currently just
+`BST`).
 
-* Project folder on server:
-* Confluence link:
-* Asana board:
-* etc...
+### Why closure capture, not state?
+
+If you're tempted to thread the wrapper through `std.state` (or typsy's
+`safe-state`) so it can be "set once and forgotten": don't. It doesn't
+work with touying.
+
+Touying's `alternatives` is a layout-time mark that touying scans for
+during page layout. Reading state requires a surrounding
+`#context { ... }` block, and touying explicitly rejects its marks
+inside `context`:
+
+> ``Unsupported mark `touying-fn-wrapper` ... You can't use it inside
+> some functions like `context`.``
+
+Closure capture at the `configure` call site sidesteps the issue: the
+wrapper is captured by value into each method, no contextual read
+required. The single-line cost at the top of a touying document is
+intentional.
+
+## What `wrap` receives
+
+The `*-display` methods build a sequence of `figure`s, one per animation
+frame, and call `wrap(..figs)`. Built-in wrappers worth knowing:
+
+| Wrapper                                | Result                              |
+|----------------------------------------|-------------------------------------|
+| (default, non-touying)                 | `figs.pos().last()` -- final frame  |
+| `alternatives` (from touying)          | one subslide per frame              |
+| `(..figs) => stack(dir: ttb, ..figs.pos())` | all frames vertically stacked  |
+
+You can pass anything that accepts variadic content. Roll your own if
+you want side-by-side layouts, interactive HTML output, etc.
+
+## Lower-level: building your own animations
+
+The animation kernel lives in `src/tree-anim.typ` and is exposed for
+custom uses:
+
+- `make-renderer(tree, ...)` -- start with one blank frame.
+- `r.push-with-node(path, ..style)`, `r.push-with-edge(path, ..style)`
+  -- append a frame that styles a node/edge.
+- `r.patch(f => f.style-node(...))` -- modify the topmost frame in place.
+- `r.render()` -- produce an array of cetz canvases.
+- `concat-frames(r1, r2, ...)` -- stitch across renderers (needed when
+  the tree shape changes mid-animation).
+
+Paths are `"L"`/`"R"` strings rooted at `""`. The header of
+`src/tree-anim.typ` documents the data model and sketches a path to
+n-ary trees.
+
+## Installation
+
+While Starling is unpublished, install locally:
+
+```sh
+just install        # installs to @local/starling/0.1.0
+just uninstall      # removes it
+```
+
+Or use the underlying script directly:
+
+```sh
+./scripts/package @local
+```
+
+## Development
+
+```sh
+just doc            # build docs/manual.pdf and thumbnails
+just test           # run tytanic test suite
+just update         # update visual regression refs
+just ci             # test + doc
+```
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).
