@@ -327,23 +327,36 @@
 }
 
 // ===================================================================
-// Op command stream — FUTURE EXTENSION
+// Op command stream
 // ===================================================================
 //
-// A higher-level command-stream layer on top of frames. Each Op describes
-// one change; a sequence of Ops folds into a list of frames. Useful when
-// the per-frame patching gets verbose. Not wired into TreeRenderer above
-// — add a method like `apply: (self, ops) => ops.fold(self, _apply-op)`
-// when this graduates from draft.
+// A declarative layer over the per-frame patch API. Each Op describes a
+// single change to the in-progress frame; `Op.Commit` finalizes that
+// frame and opens a fresh one. Fold a sequence of Ops into a renderer
+// with `apply-ops`.
+//
+// Variants:
+//   Highlight(path, color)     — set node stroke to `color + 2pt`
+//   Annotate(path, text)       — attach a note to a node
+//   StyleNode(path, style)     — arbitrary node-style overrides
+//   StyleEdge(path, style)     — arbitrary edge-style overrides
+//   Caption(text)              — set the current frame's caption
+//   Commit                     — finalize the current frame
+//   ClearNotes                 — drop all notes on the current frame
+//
+// Example:
 //
 //   let ops = (
 //     (Op.Highlight.new)(path: "", color: blue),
 //     (Op.Annotate.new)(path: "", text: [7 < 14]),
-//     (Op.Commit.new)(),                   // marks "end of this frame"
+//     (Op.Commit.new)(),
 //     (Op.Highlight.new)(path: "L", color: blue),
-//     ...
 //   )
-//   let r = apply(make-renderer(t), ops)
+//   let r = apply-ops(make-renderer(t), ops)
+//   let frames = (r.render)()
+//
+// The trailing in-progress frame is kept — no explicit `Commit` is needed
+// after the last batch of edits.
 
 #let Op = enumeration(
   Highlight: class(
@@ -353,6 +366,10 @@
   Annotate: class(
     name: "Op.Annotate",
     fields: (path: PathId, text: Content),
+  ),
+  StyleNode: class(
+    name: "Op.StyleNode",
+    fields: (path: PathId, style: NodeStyle),
   ),
   StyleEdge: class(
     name: "Op.StyleEdge",
@@ -370,6 +387,7 @@
   op,
   case(Op.Highlight, () => (r.patch)(f => (f.style-node)(op.path, stroke: op.color + 2pt))),
   case(Op.Annotate, () => (r.patch)(f => (f.note-node)(op.path, op.text))),
+  case(Op.StyleNode, () => (r.patch)(f => (f.style-node)(op.path, ..op.style))),
   case(Op.StyleEdge, () => (r.patch)(f => (f.style-edge)(op.path, ..op.style))),
   case(Op.Caption, () => (r.patch)(f => (f.with-caption)(op.text))),
   case(Op.Commit, () => (r.push-frame)()),

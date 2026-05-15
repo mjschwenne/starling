@@ -1,4 +1,10 @@
-#import "/src/lib.typ" as my-package: *
+#import "/src/lib.typ" as starling
+#let (BST,) = (starling.configure)(wrap: (..figs) => grid(
+  columns: 3,
+  column-gutter: 1em,
+  row-gutter: 1em,
+  ..figs,
+))
 
 #set page(height: auto, margin: 5mm, fill: none)
 
@@ -7,4 +13,7 @@
 #set text(white) if theme == "dark"
 
 #set text(22pt)
-#align(center)[_a thumbnail showing the package's output_]
+
+#let tree = (BST.new)(value: 5, left: none, right: none)
+#let tree = (tree.insert-many)(1, 10)
+#(tree.insert-display)(7)

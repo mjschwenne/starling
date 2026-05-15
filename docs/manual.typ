@@ -91,6 +91,63 @@ Display methods (return content shaped by `wrap`):
 = Lower-level: `tree-anim`
 
 The animation kernel is exposed for building your own animated trees. See
-`src/tree-anim.typ` for `make-renderer`, `Frame`, `TreeRenderer`,
-`concat-frames`, and the experimental `Op` command stream. Paths are
-`"L"`/`"R"` strings rooted at `""`.
+`src/tree-anim.typ` for `make-renderer`, `Frame`, `TreeRenderer`, and
+`concat-frames`. Paths are `"L"`/`"R"` strings rooted at `""`.
+
+== Op command stream
+
+`Op` is a declarative layer over the per-frame patch API. Build a list of
+`Op` values, fold them into a renderer with `apply-ops`, and render the
+result. `Op.Commit` marks the boundary between frames; the trailing
+in-progress frame is kept as the final frame, so no closing `Commit` is
+needed.
+
+The available variants:
+
+- `Op.Highlight(path, color)` -- set a node's stroke to `color + 2pt`
+- `Op.Annotate(path, text)` -- attach a note to a node
+- `Op.StyleNode(path, style)` -- arbitrary node-style overrides
+  (`fill`, `stroke`, `text-fill`, `note`, `note-fill`, `hide`)
+- `Op.StyleEdge(path, style)` -- arbitrary edge-style overrides
+  (`stroke`, `mark`, `note`, `note-fill`, `hide`)
+- `Op.Caption(text)` -- set the current frame's caption
+- `Op.Commit()` -- finalize the current frame and open a fresh one
+- `Op.ClearNotes()` -- drop all notes from the current frame
+
+A short walk-through of searching for `1` in the tree above (path `"L"`):
+
+```typ
+#import "@preview/starling:0.1.0": make-renderer, apply-ops, Op
+
+#let ops = (
+  (Op.Caption.new)(text: [start at root]),
+  (Op.Highlight.new)(path: "", color: blue),
+  (Op.Annotate.new)(path: "", text: [1 < 4]),
+  (Op.Commit.new)(),
+  (Op.ClearNotes.new)(),
+  (Op.Caption.new)(text: [descend left]),
+  (Op.Highlight.new)(path: "L", color: blue),
+  (Op.StyleEdge.new)(path: "L", style: (stroke: blue + 2pt)),
+  (Op.StyleNode.new)(path: "L", style: (fill: green.lighten(70%))),
+  (Op.Annotate.new)(path: "L", text: [1 = 1]),
+)
+
+#let r = apply-ops(make-renderer(t, sticky: true), ops)
+#(r.render)()   // an array of frames -- pass to `alternatives(..)` or pick one
+```
+
+#let op-ops = (
+  (starling.Op.Caption.new)(text: [start at root]),
+  (starling.Op.Highlight.new)(path: "", color: blue),
+  (starling.Op.Annotate.new)(path: "", text: [1 < 4]),
+  (starling.Op.Commit.new)(),
+  (starling.Op.ClearNotes.new)(),
+  (starling.Op.Caption.new)(text: [descend left]),
+  (starling.Op.Highlight.new)(path: "L", color: blue),
+  (starling.Op.StyleEdge.new)(path: "L", style: (stroke: blue + 2pt)),
+  (starling.Op.StyleNode.new)(path: "L", style: (fill: green.lighten(70%))),
+  (starling.Op.Annotate.new)(path: "L", text: [1 = 1]),
+)
+#let op-r = (starling.apply-ops)(starling.make-renderer(t, sticky: true), op-ops)
+
+#align(center, grid(columns: 2, gutter: 2em, ..(op-r.render)()))

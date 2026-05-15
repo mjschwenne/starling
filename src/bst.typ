@@ -72,6 +72,13 @@
         (cls.new)(value: self.value, left: self.left, right: new-right)
       }
     },
+    insert-many: (self, ..vals) => {
+      let tree = self
+      for v in vals.pos() {
+        tree = (tree.insert)(v)
+      }
+      tree
+    },
     contains: (self, v) => {
       if v == self.value { true } else if v < self.value {
         self.left != none and (self.left.contains)(v)
