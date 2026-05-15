@@ -1,6 +1,6 @@
 # Starling
 
-<div align="center">Version 0.1.0</div>
+<div align="center">Version 0.2.0</div>
 
 Animated renderings of data structures for teaching, built on
 [cetz](https://typst.app/universe/package/cetz),
@@ -14,7 +14,8 @@ structures over time (heaps, hash tables, graphs, etc.).
 ## Quick start
 
 ```typ
-#import "@preview/starling:0.1.0": BST
+#import "@preview/starling:0.2.0" as starling
+#import starling: BST
 
 #let t = (BST.new)(value: 4, left: none, right: none)
 #let t = (t.insert)(1)
@@ -22,26 +23,44 @@ structures over time (heaps, hash tables, graphs, etc.).
 #let t = (t.insert)(3)
 #let t = (t.insert)(6)
 
-#(t.display)()              // static render
-#(t.search-display)(6)      // animated search
-#(t.insert-display)(5)      // animated insertion
-#(t.delete-display)(3)      // animated deletion
-#(t.rotate-display)(1)      // animated rotation
+#starling.last((t.display)())              // static tree
+#starling.last((t.search-display)(6))      // search, final frame
+#starling.stacked((t.insert-display)(5))   // insert, all frames vertically
+#starling.stacked((t.delete-display)(3))   // delete, all frames vertically
+#starling.stacked((t.rotate-display)(1))   // rotation, all frames vertically
 ```
 
-By default, the `*-display` methods collapse the animation to its final
-frame -- a static image that's appropriate for handouts or printed notes.
+## Frames and helpers
+
+Every `*-display` method returns `Array(Frame)`. A `Frame` is a record:
+
+```
+(canvas: Content, caption: Union(None, Content), step: Union(None, Dictionary))
+```
+
+`canvas` is a cetz canvas, `caption` is an optional textual track for the
+step, and `step` is per-method metadata (e.g. `(kind: "compare", path,
+cmp, found)` for search frames). The package ships these helpers:
+
+| Helper                                  | Result                                  |
+|-----------------------------------------|-----------------------------------------|
+| `last(frames, caption: false)`          | final frame's canvas (+ caption opt-in) |
+| `stacked(frames, caption: true)`        | all frames stacked vertically           |
+| `figures(frames, caption: true)`        | `Array(figure)` for touying             |
+| `canvases-only(frames)`                 | strip captions, return canvas array     |
+
+If those don't fit your layout, pull the records apart yourself:
+`frames.last().canvas`, `frames.map(f => f.caption)`, etc.
 
 ## Usage with touying
 
-In a touying slide deck, configure Starling with touying's `alternatives`
-so each animation frame becomes its own subslide:
+Starling does not depend on touying. Splat `figures` into `alternatives`
+so each frame becomes its own subslide:
 
 ```typ
 #import "@preview/touying:0.7.3": *
-#import "@preview/starling:0.1.0" as starling
-
-#let (BST,) = (starling.configure)(wrap: alternatives)
+#import "@preview/starling:0.2.0" as starling
+#import starling: BST
 
 #show: solaris-theme.with(aspect-ratio: "16-9")
 
@@ -53,58 +72,61 @@ so each animation frame becomes its own subslide:
 
 == Searching
 
-#(t.search-display)(6)      // each step is a subslide
+#alternatives(..starling.figures((t.search-display)(6)))
 ```
 
-`configure(wrap: ...)` returns a dictionary of data-structure factories
-with the wrapper baked in. Destructure the ones you need (currently just
-`BST`).
+Because Starling returns plain data, you can also weave frame fields
+into custom slide layouts — for instance, side-by-side animation and
+prose that step together:
 
-### Why closure capture, not state?
+```typ
+== Searching for 6
+#let frames = (t.search-display)(6)
+#grid(columns: 2,
+  alternatives(..starling.figures(frames, caption: false)),
+  alternatives(..frames.map(f => f.caption)),
+)
+```
 
-If you're tempted to thread the wrapper through `std.state` (or typsy's
-`safe-state`) so it can be "set once and forgotten": don't. It doesn't
-work with touying.
+## Adding cetz annotations alongside a tree
 
-Touying's `alternatives` is a layout-time mark that touying scans for
-during page layout. Reading state requires a surrounding
-`#context { ... }` block, and touying explicitly rejects its marks
-inside `context`:
+For callouts or overlays that need to track specific nodes, drop down
+to the cetz layer. `draw-tree` emits the tree's draw commands *without*
+wrapping them in `cetz.canvas`, so you can compose them with your own
+annotations in a shared canvas. `path-anchor("LR")` translates a starling
+L/R path to the cetz anchor name of the corresponding node circle:
 
-> ``Unsupported mark `touying-fn-wrapper` ... You can't use it inside
-> some functions like `context`.``
+```typ
+#import "@preview/cetz:0.5.2"
+#import "@preview/starling:0.2.0" as starling
 
-Closure capture at the `configure` call site sidesteps the issue: the
-wrapper is captured by value into each method, no contextual read
-required. The single-line cost at the top of a touying document is
-intentional.
+#cetz.canvas({
+  starling.draw-tree(t, starling.blank-snapshot())
+  import cetz.draw: *
+  // Ring around the node at path "LR" (root → L → R).
+  circle(starling.path-anchor("LR"), radius: 0.85, stroke: red + 2pt)
+})
+```
 
-## What `wrap` receives
-
-The `*-display` methods build a sequence of `figure`s, one per animation
-frame, and call `wrap(..figs)`. Built-in wrappers worth knowing:
-
-| Wrapper                                | Result                              |
-|----------------------------------------|-------------------------------------|
-| (default, non-touying)                 | `figs.pos().last()` -- final frame  |
-| `alternatives` (from touying)          | one subslide per frame              |
-| `(..figs) => stack(dir: ttb, ..figs.pos())` | all frames vertically stacked  |
-
-You can pass anything that accepts variadic content. Roll your own if
-you want side-by-side layouts, interactive HTML output, etc.
+`draw-tree` accepts a `name:` (default `"tree"`) and `node-prefix:`
+(default `"node-"`); `path-anchor` takes matching `tree-name:` and
+`prefix:` if you've customised those.
 
 ## Lower-level: building your own animations
 
 The animation kernel lives in `src/tree-anim.typ` and is exposed for
 custom uses:
 
-- `make-renderer(tree, ...)` -- start with one blank frame.
+- `make-renderer(tree, sticky: true)` — start with one blank frame.
 - `r.push-with-node(path, ..style)`, `r.push-with-edge(path, ..style)`
-  -- append a frame that styles a node/edge.
-- `r.patch(f => f.style-node(...))` -- modify the topmost frame in place.
-- `r.render()` -- produce an array of cetz canvases.
-- `concat-frames(r1, r2, ...)` -- stitch across renderers (needed when
-  the tree shape changes mid-animation).
+  — append a frame that styles a node/edge.
+- `r.patch(f => f.style-node(...))` — modify the topmost frame's
+  style snapshot in place.
+- `r.with-caption(c)`, `r.with-step(s)` — set the current frame's
+  caption / metadata.
+- `r.render()` — produce `Array(Frame)`.
+- `concat-frames(r1, r2, ...)` — stitch frames across renderers
+  (needed when the tree shape changes mid-animation).
 
 Paths are `"L"`/`"R"` strings rooted at `""`. The header of
 `src/tree-anim.typ` documents the data model and sketches a path to
@@ -115,7 +137,7 @@ n-ary trees.
 While Starling is unpublished, install locally:
 
 ```sh
-just install        # installs to @local/starling/0.1.0
+just install        # installs to @local/starling/0.2.0
 just uninstall      # removes it
 ```
 
