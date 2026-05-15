@@ -4,14 +4,20 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # Use typst flake to get other versions of typst if needed
+    typst = {
+      url = "github:typst/typst-flake";
+      inputs.typst.url = "github:typst/typst/0.14";
+    };
     utpm.url = "github:typst-community/utpm";
-    tytanic.url = "github:typst-community/tytanic";
+    tytanic.url = "github:typst-community/tytanic/v0.3.4";
   };
 
   outputs =
     {
       nixpkgs,
       flake-utils,
+      typst,
       utpm,
       tytanic,
       ...
@@ -30,7 +36,7 @@
           mkShell {
             buildInputs = [
               # Core typst tools
-              typst
+              typst.packages.${system}.default
               tinymist
               typstyle
               utpm.packages.${system}.default
