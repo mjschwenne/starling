@@ -152,10 +152,17 @@
 /// Typsy class representing one rendered animation frame. Fields:
 /// #raw("canvas") (cetz content, no caption baked in),
 /// #raw("caption") (optional textual track for the step, possibly
-/// #raw("none")), and #raw("step") (optional free-form per-method
-/// metadata, possibly #raw("none")). Produced by
-/// #raw("TreeRenderer.render()"); the BST's #raw("*-display") methods
-/// return arrays of these.
+/// #raw("none")), #raw("step") (optional free-form per-method
+/// metadata, possibly #raw("none")), and #raw("alt") (optional
+/// accessible text describing what the frame depicts, possibly
+/// #raw("none")). Produced by #raw("TreeRenderer.render()"); the
+/// BST's #raw("*-display") methods return arrays of these.
+///
+/// The #raw("alt") field carries text destined for the #raw("alt:")
+/// argument on a Typst #raw("figure"). The first frame of each
+/// operation includes the full tree structure (via the BST
+/// #raw("describe") method) so screen-reader users have a baseline;
+/// subsequent frames describe only the per-step change.
 #let Frame = class(
   name: "Frame",
   fields: (
@@ -164,6 +171,7 @@
     // to content; users should be able to pass `[6 < 7]` or `"6 < 7"`.
     caption: Union(None, Any),
     step: Union(None, Dictionary(..Any)),
+    alt: Union(None, Any),
   ),
   methods: (:),
 )
@@ -351,19 +359,21 @@
   tree-name + "." + prefix + segments.join("-")
 }
 
-// Three parallel arrays. `snapshots[i]` is the style snapshot for the i-th
-// frame; `captions[i]` and `steps[i]` are the optional caption and metadata
-// for that frame. All three are kept in lockstep — `push-frame` appends to
-// each, `patch` / `with-caption` / `with-step` modify the tail. `render`
-// zips them into `Frame` records.
+// Four parallel arrays. `snapshots[i]` is the style snapshot for the
+// i-th frame; `captions[i]`, `steps[i]`, and `alts[i]` are the optional
+// caption, metadata, and accessible-text track for that frame. All four
+// are kept in lockstep — `push-frame` appends to each,
+// `patch` / `with-caption` / `with-step` / `with-alt` modify the tail.
+// `render` zips them into `Frame` records.
 /// Typsy class accumulating an animation. Holds the tree, parallel
-/// arrays of snapshots / captions / steps (one entry per frame), and
-/// default node/edge styles. Methods include #raw("push-frame()"),
-/// #raw("patch(fn)"), #raw("push-with-node(path, ..style)"),
+/// arrays of snapshots / captions / steps / alts (one entry per frame),
+/// and default node/edge styles. Methods include
+/// #raw("push-frame()"), #raw("patch(fn)"),
+/// #raw("push-with-node(path, ..style)"),
 /// #raw("push-with-edge(path, ..style)"),
 /// #raw("push-note-node(path, txt)"), #raw("push-note-edge(path, txt)"),
-/// #raw("with-caption(c)"), #raw("with-step(s)"), and
-/// #raw("render()"). Build one via @@make-renderer().
+/// #raw("with-caption(c)"), #raw("with-step(s)"), #raw("with-alt(a)"),
+/// and #raw("render()"). Build one via @@make-renderer().
 #let TreeRenderer = class(
   name: "TreeRenderer",
   fields: (
@@ -371,6 +381,7 @@
     snapshots: Array(..Any),
     captions: Array(..Any),
     steps: Array(..Any),
+    alts: Array(..Any),
     default-node-style: NodeStyle,
     default-edge-style: EdgeStyle,
     sticky: Bool,
@@ -388,6 +399,7 @@
         snapshots: self.snapshots + (base,),
         captions: self.captions + (none,),
         steps: self.steps + (none,),
+        alts: self.alts + (none,),
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
@@ -406,6 +418,7 @@
         snapshots: next,
         captions: self.captions,
         steps: self.steps,
+        alts: self.alts,
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
@@ -424,6 +437,7 @@
         snapshots: self.snapshots,
         captions: next,
         steps: self.steps,
+        alts: self.alts,
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
@@ -442,6 +456,26 @@
         snapshots: self.snapshots,
         captions: self.captions,
         steps: next,
+        alts: self.alts,
+        default-node-style: self.default-node-style,
+        default-edge-style: self.default-edge-style,
+        sticky: self.sticky,
+      )
+    },
+    with-alt: (self, a) => {
+      let cls = self.meta.cls
+      assert(
+        self.alts.len() > 0,
+        message: "with-alt: no frames yet — call push-frame first.",
+      )
+      let next = self.alts
+      next.at(next.len() - 1) = a
+      (cls.new)(
+        tree: self.tree,
+        snapshots: self.snapshots,
+        captions: self.captions,
+        steps: self.steps,
+        alts: next,
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
@@ -467,7 +501,7 @@
       // Returns an array of `Frame` records, one per snapshot. Pass to
       // a render helper in `lib.typ` (`last`, `stacked`, `figures`) or
       // build a custom layout from `frame.canvas` / `frame.caption` /
-      // `frame.step`.
+      // `frame.step` / `frame.alt`.
       self.snapshots
         .enumerate()
         .map(((i, snap)) => {
@@ -481,6 +515,7 @@
             canvas: canvas,
             caption: self.captions.at(i),
             step: self.steps.at(i),
+            alt: self.alts.at(i),
           )
         })
     },
@@ -517,6 +552,7 @@
     snapshots: (blank-snapshot(),),
     captions: (none,),
     steps: (none,),
+    alts: (none,),
     default-node-style: default-node-style,
     default-edge-style: default-edge-style,
     sticky: sticky,

@@ -195,6 +195,7 @@
     display: (self) => {
       // Returns a one-element Frame array — the static tree. `step` is none.
       let r = tree-anim.make-renderer(self)
+      r = (r.with-alt)("Binary search tree: " + (self.describe)() + ".")
       (r.render)()
     },
     search-display: (self, v) => {
@@ -226,11 +227,36 @@
 
       let r = tree-anim.make-renderer(self, sticky: true)
       r = (r.with-step)((kind: "init"))
-      for s in steps {
+      r = (r.with-alt)(
+        "Binary search tree: "
+          + (self.describe)()
+          + ". About to search for "
+          + str(v)
+          + ".",
+      )
+      for (i, s) in steps.enumerate() {
         r = (r.push-with-node)(s.path, stroke: color.blue + 2pt)
         r = (r.patch)(f => (f.note-node)(s.path, s.cmp))
         r = (r.with-caption)(s.cmp)
         r = (r.with-step)((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
+        let node-value = str((self.resolve)(s.path).value)
+        let is-last = i == steps.len() - 1
+        let alt = if s.found {
+          "Match found at node " + node-value + "."
+        } else if is-last {
+          (
+            "Comparing "
+              + s.cmp
+              + " at node "
+              + node-value
+              + "; search ends here, "
+              + str(v)
+              + " is not in the tree."
+          )
+        } else {
+          "Comparing " + s.cmp + " at node " + node-value + "; continuing search."
+        }
+        r = (r.with-alt)(alt)
       }
       (r.render)()
     },
@@ -277,9 +303,22 @@
         (new-parent-path, new-middle-path)
       } else { (new-parent-path,) }
 
+      let direction = if is-right { "right" } else { "left" }
+      let parent-value = str(self.value)
+      let child-value-str = str(child-value)
+
       // Phase A: before-tree. r1's initial frame is "init".
       let r1 = tree-anim.make-renderer(self, sticky: true)
       r1 = (r1.with-step)((kind: "init"))
+      r1 = (r1.with-alt)(
+        "Binary search tree: "
+          + (self.describe)()
+          + ". About to "
+          + direction
+          + "-rotate around node "
+          + child-value-str
+          + ".",
+      )
 
       // Frame 2: "pivots" — highlight both rotation nodes orange.
       r1 = (r1.push-with-node)(parent-path, stroke: color.orange + 2pt)
@@ -289,6 +328,13 @@
       ))
       r1 = (r1.with-caption)([Rotate around #child-value])
       r1 = (r1.with-step)((kind: "pivots", paths: (parent-path, child-path)))
+      r1 = (r1.with-alt)(
+        "Rotation pivots identified: parent "
+          + parent-value
+          + " and child "
+          + child-value-str
+          + ".",
+      )
 
       // Frame 3: "break" — hide the edges that will rotate.
       r1 = (r1.push-with-edge)(child-path, hide: true)
@@ -297,6 +343,7 @@
       }
       r1 = (r1.with-caption)([Break edges])
       r1 = (r1.with-step)((kind: "break", paths: broken-paths))
+      r1 = (r1.with-alt)("Breaking the edges that will rotate.")
 
       // Phase B: after-tree. r2's initial frame is "restructure" — the
       // new tree shape is visible, but the rotated edges are still
@@ -316,6 +363,13 @@
       }
       r2 = (r2.with-caption)([Restructure tree])
       r2 = (r2.with-step)((kind: "restructure"))
+      r2 = (r2.with-alt)(
+        "Tree restructured: "
+          + child-value-str
+          + " is now the parent of "
+          + parent-value
+          + "; rotated edges are still hidden.",
+      )
 
       // Frame 5: "connect" — new edges appear in green. `hide: false`
       // overrides the sticky `hide: true` from the previous snapshot.
@@ -333,6 +387,7 @@
       }
       r2 = (r2.with-caption)([Reconnect edges])
       r2 = (r2.with-step)((kind: "connect", paths: new-edge-paths))
+      r2 = (r2.with-alt)("Reconnecting rotated edges.")
 
       // Frame 6: "settle" — reset highlights so the tree reads as the
       // ordinary post-rotation state.
@@ -343,6 +398,7 @@
         r2 = (r2.patch)(f => (f.style-edge)(new-middle-path, stroke: black))
       }
       r2 = (r2.with-step)((kind: "settle"))
+      r2 = (r2.with-alt)("Rotation complete.")
 
       tree-anim.concat-frames(r1, r2)
     },
@@ -362,6 +418,13 @@
 
       let r1 = tree-anim.make-renderer(self, sticky: true)
       r1 = (r1.with-step)((kind: "init"))
+      r1 = (r1.with-alt)(
+        "Binary search tree: "
+          + (self.describe)()
+          + ". About to delete "
+          + str(v)
+          + ".",
+      )
       let r2 = tree-anim.make-renderer(after, sticky: true)
 
       let is-leaf = target.left == none and target.right == none
@@ -373,16 +436,20 @@
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
         r1 = (r1.with-caption)([Delete #v])
         r1 = (r1.with-step)((kind: "highlight", path: target-path))
+        r1 = (r1.with-alt)("Marked leaf node " + str(v) + " for deletion.")
 
         r1 = (r1.push-with-edge)(target-path, stroke: dashed-red)
         r1 = (r1.with-caption)([Remove edge])
         r1 = (r1.with-step)((kind: "break", path: target-path))
+        r1 = (r1.with-alt)("Removing the edge to node " + str(v) + ".")
 
         r2 = (r2.with-caption)([Done])
         r2 = (r2.with-step)((kind: "settle"))
+        r2 = (r2.with-alt)("Deletion of " + str(v) + " complete.")
       } else if is-one-child {
         let has-left = target.left != none
         let child-path = target-path + (if has-left { "L" } else { "R" })
+        let child-value = str((self.resolve)(child-path).value)
 
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
         r1 = (r1.patch)(f => (f.style-node)(
@@ -391,17 +458,26 @@
         ))
         r1 = (r1.with-caption)([Delete #v])
         r1 = (r1.with-step)((kind: "highlight", path: target-path, child: child-path))
+        r1 = (r1.with-alt)(
+          "Marked node "
+            + str(v)
+            + " for deletion; its single child "
+            + child-value
+            + " will be promoted.",
+        )
 
         r1 = (r1.push-with-edge)(target-path, stroke: dashed-red)
         r1 = (r1.patch)(f => (f.style-edge)(child-path, stroke: dashed-red))
         r1 = (r1.with-caption)([Mark edges to remove])
         r1 = (r1.with-step)((kind: "break", paths: (target-path, child-path)))
+        r1 = (r1.with-alt)("Marking edges around node " + str(v) + " for removal.")
 
         r1 = (r1.push-with-edge)(target-path, hide: true)
         r1 = (r1.patch)(f => (f.style-edge)(child-path, hide: true))
         r1 = (r1.patch)(f => (f.style-node)(target-path, hide: true))
         r1 = (r1.with-caption)([Remove])
         r1 = (r1.with-step)((kind: "break", paths: (target-path, child-path), hidden: true))
+        r1 = (r1.with-alt)("Removed node " + str(v) + " and its edges.")
 
         r2 = (r2.patch)(f => (f.style-node)(
           target-path,
@@ -413,6 +489,13 @@
         ))
         r2 = (r2.with-caption)([Reattach])
         r2 = (r2.with-step)((kind: "settle", path: target-path))
+        r2 = (r2.with-alt)(
+          "Child "
+            + child-value
+            + " reattached in place of "
+            + str(v)
+            + "; deletion complete.",
+        )
       } else {
         // Two children — predecessor is rightmost in target's left subtree.
         let walk-max(p) = {
@@ -426,11 +509,18 @@
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
         r1 = (r1.with-caption)([Delete #v])
         r1 = (r1.with-step)((kind: "highlight", path: target-path))
+        r1 = (r1.with-alt)(
+          "Marked node "
+            + str(v)
+            + " for deletion; it has two children, so an in-order predecessor will replace it.",
+        )
 
         for p in predecessor-paths {
           r1 = (r1.push-with-node)(p, stroke: color.blue + 2pt)
           r1 = (r1.with-caption)([Find predecessor])
           r1 = (r1.with-step)((kind: "descend", path: p))
+          let pv = str((self.resolve)(p).value)
+          r1 = (r1.with-alt)("Descending into the left subtree at node " + pv + ".")
         }
 
         r1 = (r1.push-frame)()
@@ -445,6 +535,13 @@
           to: target-path,
           value: predecessor-value,
         ))
+        r1 = (r1.with-alt)(
+          "Replacing "
+            + str(v)
+            + " with predecessor value "
+            + str(predecessor-value)
+            + ".",
+        )
 
         r2 = (r2.patch)(f => (f.style-node)(
           target-path,
@@ -453,6 +550,13 @@
         ))
         r2 = (r2.with-caption)([Done])
         r2 = (r2.with-step)((kind: "settle", path: target-path))
+        r2 = (r2.with-alt)(
+          "Deletion of "
+            + str(v)
+            + " complete; node now holds "
+            + str(predecessor-value)
+            + ".",
+        )
       }
 
       tree-anim.concat-frames(r1, r2)
@@ -488,28 +592,51 @@
       // Phase A: search on the before-tree, with running comparisons.
       let r1 = tree-anim.make-renderer(self, sticky: true)
       r1 = (r1.with-step)((kind: "init"))
-      for s in steps {
+      r1 = (r1.with-alt)(
+        "Binary search tree: "
+          + (self.describe)()
+          + ". About to insert "
+          + str(v)
+          + ".",
+      )
+      for (i, s) in steps.enumerate() {
         r1 = (r1.push-with-node)(s.path, stroke: color.blue + 2pt)
         r1 = (r1.patch)(f => (f.note-node)(s.path, s.cmp))
         r1 = (r1.with-caption)(s.cmp)
         r1 = (r1.with-step)((kind: "compare", path: s.path, cmp: s.cmp))
+        let node-value = str((self.resolve)(s.path).value)
+        let is-last = i == steps.len() - 1
+        let alt = if is-last {
+          (
+            "Comparing "
+              + s.cmp
+              + " at node "
+              + node-value
+              + "; insertion point found below this node."
+          )
+        } else {
+          "Comparing " + s.cmp + " at node " + node-value + "; descending."
+        }
+        r1 = (r1.with-alt)(alt)
       }
 
-      // Phase B: after-tree. Carry the search-path highlights forward
-      // (without notes) so the eye tracks across the topology change, then
-      // make the new node appear in green.
+      // Phase B: after-tree as a single frame — search-path highlights
+      // carry forward (without notes) and the new node appears in green
+      // at the same time. The extra "just-appeared but not yet green"
+      // intermediate frame added no information, so it's elided.
       let r2 = tree-anim.make-renderer(after, sticky: true)
       for p in search-paths {
         r2 = (r2.patch)(f => (f.style-node)(p, stroke: color.blue + 2pt))
       }
-      r2 = (r2.push-with-node)(
+      r2 = (r2.patch)(f => (f.style-node)(
         new-path,
         stroke: color.green + 3pt,
         fill: color.green.lighten(70%),
-      )
+      ))
       r2 = (r2.patch)(f => (f.style-edge)(new-path, stroke: color.green + 2pt))
       r2 = (r2.with-caption)[Inserted #v]
       r2 = (r2.with-step)((kind: "inserted", path: new-path))
+      r2 = (r2.with-alt)("Inserted " + str(v) + " as a new leaf.")
 
       tree-anim.concat-frames(r1, r2)
     },

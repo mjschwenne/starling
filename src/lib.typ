@@ -5,10 +5,14 @@
 /// of the lower-level animation kernel from #raw("tree-anim.typ").
 ///
 /// Animation methods like #raw("(t.search-display)(v)") return arrays
-/// of #raw("Frame") records (#raw("(canvas, caption, step)")); the
-/// helpers below collapse those into a final image, a vertical stack,
-/// or an array of figures suitable for touying's
-/// #raw("alternatives(..)").
+/// of #raw("Frame") records (#raw("(canvas, caption, step, alt)"));
+/// the helpers below collapse those into a final image, a vertical
+/// stack, or an array of figures suitable for touying's
+/// #raw("alternatives(..)"). All three helpers wrap canvases in
+/// #raw("figure") with the frame's #raw("alt") text attached so
+/// screen-reader users get a per-step narration; the wrappers
+/// suppress numbering and supplements so they don't change the
+/// visible layout.
 
 #import "./bst.typ": make-bst
 #import "./tree-anim.typ"
@@ -37,12 +41,37 @@
 /// frames through one of the helpers below.
 #let BST = make-bst()
 
-// _with-caption is private — kept as a regular comment so tidy ignores it.
+// Private helpers — kept as regular comments so tidy ignores them.
+//
+// `_with-caption(frame, spacing)` stacks the caption below the canvas
+// when present, otherwise returns the bare canvas.
+//
+// `_resolve-alt(frame, override, index)` picks the alt-text string for
+// one frame: an explicit override wins; otherwise the frame's own
+// `alt` field is used; otherwise the caption (when it's a plain
+// string) is used as a last-resort fallback; otherwise a generic
+// "Animation frame N" placeholder.
+//
+// `_alt-figure(body, alt)` wraps content in a `figure` carrying the
+// alt text without any visible numbering or supplement, so the helpers
+// can attach alt to a canvas without changing the visible layout.
 #let _with-caption(frame, spacing) = if frame.caption == none {
   frame.canvas
 } else {
   stack(dir: ttb, spacing: spacing, frame.canvas, frame.caption)
 }
+#let _resolve-alt(frame, override, index) = {
+  if override != auto { override } else if frame.alt != none { frame.alt } else if (
+    frame.caption != none and type(frame.caption) == str
+  ) { frame.caption } else { "Animation frame " + str(index) }
+}
+#let _alt-figure(body, alt) = figure(
+  body,
+  kind: image,
+  numbering: none,
+  supplement: none,
+  alt: alt,
+)
 
 /// Final frame as a single piece of content. Useful for static
 /// renderings in print or for "just show me the end state" usage.
@@ -51,6 +80,10 @@
 /// already label what the final step did, so the textual caption is
 /// suppressed by default. Pass #raw("caption: true") to stack the
 /// caption below the canvas.
+///
+/// The returned content is wrapped in an alt-tagged figure for
+/// accessibility. The alt text comes from the frame's #raw("alt")
+/// field; pass an explicit string to #raw("alt") to override.
 ///
 /// -> content
 #let last(
@@ -63,15 +96,23 @@
   /// Vertical spacing between canvas and caption when #raw("caption: true").
   /// -> length
   spacing: 0.5em,
+  /// Alt-text override. #raw("auto") uses the frame's #raw("alt") field.
+  /// -> auto | str
+  alt: auto,
 ) = {
   let f = frames.last()
-  if caption { _with-caption(f, spacing) } else { f.canvas }
+  let body = if caption { _with-caption(f, spacing) } else { f.canvas }
+  _alt-figure(body, _resolve-alt(f, alt, frames.len() - 1))
 }
 
 /// All frames stacked vertically as one block of content. Useful for
 /// handouts that want to show the full animation in a single figure.
 /// Captions are on by default since the stack is read as a sequence —
 /// the caption text annotates which step each tree corresponds to.
+///
+/// Each frame is wrapped individually in an alt-tagged figure so
+/// screen-reader users hear the per-step narration. Pass a string to
+/// #raw("alt") to set the same override on every frame.
 ///
 /// -> content
 #let stacked(
@@ -87,13 +128,22 @@
   /// Spacing between each canvas and its caption.
   /// -> length
   caption-spacing: 0.5em,
+  /// Alt-text override applied to every frame. #raw("auto") uses each
+  /// frame's #raw("alt") field.
+  /// -> auto | str
+  alt: auto,
 ) = {
   stack(
     dir: ttb,
     spacing: spacing,
-    ..frames.map(f => if caption { _with-caption(f, caption-spacing) } else {
-      f.canvas
-    }),
+    ..frames
+      .enumerate()
+      .map(((i, f)) => {
+        let body = if caption { _with-caption(f, caption-spacing) } else {
+          f.canvas
+        }
+        _alt-figure(body, _resolve-alt(f, alt, i))
+      }),
   )
 }
 
@@ -111,8 +161,10 @@
   /// the figure body.
   /// -> bool
   caption: true,
-  /// Alt-text strategy. #raw("auto") generates per-frame alt text
-  /// (#raw("\"Animation frame N\"")); pass a string to override.
+  /// Alt-text override applied to every frame. #raw("auto") uses each
+  /// frame's #raw("alt") field, falling back to the caption (if it's
+  /// a plain string) and then to a generic
+  /// #raw("\"Animation frame N\"") placeholder.
   /// -> auto | str
   alt: auto,
   /// Spacing between canvas and caption when #raw("caption: true").
@@ -125,8 +177,7 @@
       let body = if caption { _with-caption(f, caption-spacing) } else {
         f.canvas
       }
-      let a = if alt == auto { "Animation frame " + str(i) } else { alt }
-      figure(body, alt: a)
+      figure(body, alt: _resolve-alt(f, alt, i))
     })
 }
 
