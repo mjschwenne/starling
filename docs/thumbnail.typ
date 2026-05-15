@@ -1,10 +1,5 @@
 #import "/src/lib.typ" as starling
-#let (BST,) = (starling.configure)(wrap: (..figs) => grid(
-  columns: 3,
-  column-gutter: 1em,
-  row-gutter: 1em,
-  ..figs,
-))
+#import starling: BST
 
 #set page(height: auto, margin: 5mm, fill: none)
 
@@ -16,4 +11,10 @@
 
 #let tree = (BST.new)(value: 5, left: none, right: none)
 #let tree = (tree.insert-many)(1, 10)
-#(tree.insert-display)(7)
+#let frames = (tree.insert-display)(7)
+#grid(
+  columns: 3,
+  column-gutter: 1em,
+  row-gutter: 1em,
+  ..starling.figures(frames, caption: false),
+)

@@ -1,4 +1,5 @@
-#import "/src/lib.typ": BST
+#import "/src/lib.typ" as starling
+#import starling: BST
 
 #let t = (BST.new)(value: 4, left: none, right: none)
 #let t = (t.insert)(1)
@@ -8,4 +9,4 @@
 #let t = (t.insert)(6)
 #let t = (t.insert)(8)
 
-#(t.search-display)(6)
+#starling.stacked((t.search-display)(6))

@@ -1,11 +1,13 @@
 #import "@preview/typsy:0.2.2": Any, Int, None, Union, class
 #import "./tree-anim.typ" as tree-anim
 
-// Builds a BST class with `wrap` baked into the *-display methods via
-// closure capture. `wrap` is called as `wrap(..figs)` where `figs` is a
-// sequence of `figure` content — one per animation frame. See `src/lib.typ`
-// for the public `configure(wrap: ...)` entrypoint that wires this up.
-#let make-bst(wrap) = class(
+// Builds the BST class. The `*-display` methods return `Array(Frame)` —
+// one Frame per animation step, each carrying the rendered cetz canvas,
+// an optional textual caption, and free-form `step` metadata documenting
+// what that frame represents. Pass the result to a render helper in
+// `lib.typ` (`last`, `stacked`, `figures`) or compose your own layout
+// from the frame fields.
+#let make-bst() = class(
   name: "BST",
   fields: (
     value: Int,
@@ -152,14 +154,19 @@
         str(self.value) + " (left: " + l + ", right: " + r + ")"
       }
     },
-    display: (self, alt: none) => {
-      let alt-text = if alt != none { alt } else {
-        "Binary search tree: " + (self.describe)()
-      }
+    display: (self) => {
+      // Returns a one-element Frame array — the static tree. `step` is none.
       let r = tree-anim.make-renderer(self)
-      figure((r.static)(), alt: alt-text)
+      (r.render)()
     },
     search-display: (self, v) => {
+      // Returns one frame per comparison made along the search path.
+      // The first frame is the unmodified tree (kind: "init"). Each
+      // subsequent frame highlights the visited node, draws the
+      // comparison string as an inline note next to it, and sets the
+      // same string as the frame caption. `step` is:
+      //   (kind: "init")                                    — initial frame
+      //   (kind: "compare", path, cmp, found: bool)         — each comparison
       let walk(node, path) = {
         let cmp = if v == node.value {
           str(v) + " = " + str(node.value)
@@ -168,7 +175,7 @@
         } else {
           str(v) + " > " + str(node.value)
         }
-        let step = (path: path, cmp: cmp)
+        let step = (path: path, cmp: cmp, found: v == node.value)
         if v == node.value or node.left == none and node.right == none {
           (step,)
         } else if v < node.value and node.left != none {
@@ -180,29 +187,27 @@
       let steps = walk(self, "")
 
       let r = tree-anim.make-renderer(self, sticky: true)
-      for step in steps {
-        r = (r.push-with-node)(step.path, stroke: color.blue + 2pt)
-        r = (r.patch)(f => (f.note-node)(step.path, step.cmp))
+      r = (r.with-step)((kind: "init"))
+      for s in steps {
+        r = (r.push-with-node)(s.path, stroke: color.blue + 2pt)
+        r = (r.patch)(f => (f.note-node)(s.path, s.cmp))
+        r = (r.with-caption)(s.cmp)
+        r = (r.with-step)((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
       }
-      let canvases = (r.render)()
-      let figs = canvases
-        .enumerate()
-        .map(((i, c)) => figure(
-          c,
-          alt: "BST search for " + str(v) + ", step " + str(i),
-        ))
-      wrap(..figs)
+      (r.render)()
     },
     rotate-display: (self, child-value) => {
       // Animates a rotation at the root of `self`. `child-value` must
       // match a direct child of self; the direction (left/right) is
       // inferred.
       //
-      // Visual story:
-      //   1. Highlight the two pivot nodes orange.
-      //   2. The edges that will break go red+dashed.
-      //   3. Those edges hide entirely (truly broken).
-      //   4. Switch to the rotated tree; new edges show green.
+      // Six-frame sequence (step.kind):
+      //   1. "init"        — before-tree, no styling
+      //   2. "pivots"      — pivot nodes highlighted orange
+      //   3. "break"       — edges that will rotate are hidden
+      //   4. "restructure" — switch to after-tree, new edges still hidden
+      //   5. "connect"     — new edges appear in green
+      //   6. "settle"      — highlights cleared, final settled tree
       let is-right = self.left != none and self.left.value == child-value
       let is-left = self.right != none and self.right.value == child-value
       if not (is-right or is-left) {
@@ -222,34 +227,42 @@
       // Middle child of `child` that moves to the parent after rotation.
       let middle-path = if is-right { "LR" } else { "RL" }
       let has-middle = (self.resolve)(middle-path) != none
+      let broken-paths = if has-middle {
+        (child-path, middle-path)
+      } else { (child-path,) }
 
       // AFTER path-ids
       let new-parent-path = if is-right { "R" } else { "L" }
       let new-middle-path = if is-right { "RL" } else { "LR" }
       let has-new-middle = (after.resolve)(new-middle-path) != none
+      let new-edge-paths = if has-new-middle {
+        (new-parent-path, new-middle-path)
+      } else { (new-parent-path,) }
 
-      let dashed-red = (paint: color.red, thickness: 2pt, dash: "dashed")
-
-      // Phase A: before-tree
+      // Phase A: before-tree. r1's initial frame is "init".
       let r1 = tree-anim.make-renderer(self, sticky: true)
-      // Frame: highlight pivots
+      r1 = (r1.with-step)((kind: "init"))
+
+      // Frame 2: "pivots" — highlight both rotation nodes orange.
       r1 = (r1.push-with-node)(parent-path, stroke: color.orange + 2pt)
       r1 = (r1.patch)(f => (f.style-node)(
         child-path,
         stroke: color.orange + 2pt,
       ))
-      // Frame: edges to break go dashed red
-      r1 = (r1.push-with-edge)(child-path, stroke: dashed-red)
-      if has-middle {
-        r1 = (r1.patch)(f => (f.style-edge)(middle-path, stroke: dashed-red))
-      }
-      // Frame: hide the broken edges
+      r1 = (r1.with-caption)([Rotate around #child-value])
+      r1 = (r1.with-step)((kind: "pivots", paths: (parent-path, child-path)))
+
+      // Frame 3: "break" — hide the edges that will rotate.
       r1 = (r1.push-with-edge)(child-path, hide: true)
       if has-middle {
         r1 = (r1.patch)(f => (f.style-edge)(middle-path, hide: true))
       }
+      r1 = (r1.with-caption)([Break edges])
+      r1 = (r1.with-step)((kind: "break", paths: broken-paths))
 
-      // Phase B: after-tree with new edges highlighted green
+      // Phase B: after-tree. r2's initial frame is "restructure" — the
+      // new tree shape is visible, but the rotated edges are still
+      // hidden (carried by `hide: true` overrides).
       let r2 = tree-anim.make-renderer(after, sticky: true)
       r2 = (r2.patch)(f => (f.style-node)(
         parent-path,
@@ -259,38 +272,58 @@
         new-parent-path,
         stroke: color.orange + 2pt,
       ))
-      r2 = (r2.patch)(f => (f.style-edge)(
+      r2 = (r2.patch)(f => (f.style-edge)(new-parent-path, hide: true))
+      if has-new-middle {
+        r2 = (r2.patch)(f => (f.style-edge)(new-middle-path, hide: true))
+      }
+      r2 = (r2.with-caption)([Restructure tree])
+      r2 = (r2.with-step)((kind: "restructure"))
+
+      // Frame 5: "connect" — new edges appear in green. `hide: false`
+      // overrides the sticky `hide: true` from the previous snapshot.
+      r2 = (r2.push-with-edge)(
         new-parent-path,
         stroke: color.green + 2pt,
-      ))
+        hide: false,
+      )
       if has-new-middle {
         r2 = (r2.patch)(f => (f.style-edge)(
           new-middle-path,
           stroke: color.green + 2pt,
+          hide: false,
         ))
       }
+      r2 = (r2.with-caption)([Reconnect edges])
+      r2 = (r2.with-step)((kind: "connect", paths: new-edge-paths))
 
-      let canvases = tree-anim.concat-frames(r1, r2)
-      let figs = canvases
-        .enumerate()
-        .map(((i, c)) => figure(
-          c,
-          alt: "BST rotation around " + str(child-value) + ", step " + str(i),
-        ))
-      wrap(..figs)
+      // Frame 6: "settle" — reset highlights so the tree reads as the
+      // ordinary post-rotation state.
+      r2 = (r2.push-with-node)(parent-path, stroke: black)
+      r2 = (r2.patch)(f => (f.style-node)(new-parent-path, stroke: black))
+      r2 = (r2.patch)(f => (f.style-edge)(new-parent-path, stroke: black))
+      if has-new-middle {
+        r2 = (r2.patch)(f => (f.style-edge)(new-middle-path, stroke: black))
+      }
+      r2 = (r2.with-step)((kind: "settle"))
+
+      tree-anim.concat-frames(r1, r2)
     },
     delete-display: (self, v) => {
       // Animates a deletion. Dispatches on the target's children:
-      //   leaf       → highlight, dash edge, hide, settle
+      //   leaf       → highlight, dash edge, then settle (r2's after-tree)
       //   one child  → highlight, dash both edges, hide, child reattaches green
-      //   two child  → highlight target + successor, annotate value
-      //                transfer, cut to after-tree with green at target slot
+      //   two child  → highlight target + descend to successor, annotate value
+      //                transfer, settle with green at target slot
+      //
+      // step.kind values: "init", "highlight", "break", "descend",
+      // "transfer", "settle".
       let target-path = (self.by-value)(v)
       let target = (self.resolve)(target-path)
       let after = (self.delete)(v)
       let dashed-red = (paint: color.red, thickness: 2pt, dash: "dashed")
 
       let r1 = tree-anim.make-renderer(self, sticky: true)
+      r1 = (r1.with-step)((kind: "init"))
       let r2 = tree-anim.make-renderer(after, sticky: true)
 
       let is-leaf = target.left == none and target.right == none
@@ -299,25 +332,39 @@
       )
 
       if is-leaf {
-        // Leaf case: no rewiring happens, so "broken" and "settled" would
-        // render nearly identically. Drop the hide frame and let r2's
-        // after-tree serve as the final state.
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
+        r1 = (r1.with-caption)([Delete #v])
+        r1 = (r1.with-step)((kind: "highlight", path: target-path))
+
         r1 = (r1.push-with-edge)(target-path, stroke: dashed-red)
+        r1 = (r1.with-caption)([Remove edge])
+        r1 = (r1.with-step)((kind: "break", path: target-path))
+
+        r2 = (r2.with-caption)([Done])
+        r2 = (r2.with-step)((kind: "settle"))
       } else if is-one-child {
         let has-left = target.left != none
         let child-path = target-path + (if has-left { "L" } else { "R" })
+
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
         r1 = (r1.patch)(f => (f.style-node)(
           child-path,
           stroke: color.blue + 2pt,
         ))
+        r1 = (r1.with-caption)([Delete #v])
+        r1 = (r1.with-step)((kind: "highlight", path: target-path, child: child-path))
+
         r1 = (r1.push-with-edge)(target-path, stroke: dashed-red)
         r1 = (r1.patch)(f => (f.style-edge)(child-path, stroke: dashed-red))
+        r1 = (r1.with-caption)([Mark edges to remove])
+        r1 = (r1.with-step)((kind: "break", paths: (target-path, child-path)))
+
         r1 = (r1.push-with-edge)(target-path, hide: true)
         r1 = (r1.patch)(f => (f.style-edge)(child-path, hide: true))
         r1 = (r1.patch)(f => (f.style-node)(target-path, hide: true))
-        // After tree: the surviving child is now at target-path
+        r1 = (r1.with-caption)([Remove])
+        r1 = (r1.with-step)((kind: "break", paths: (target-path, child-path), hidden: true))
+
         r2 = (r2.patch)(f => (f.style-node)(
           target-path,
           stroke: color.blue + 2pt,
@@ -326,9 +373,10 @@
           target-path,
           stroke: color.green + 2pt,
         ))
+        r2 = (r2.with-caption)([Reattach])
+        r2 = (r2.with-step)((kind: "settle", path: target-path))
       } else {
         // Two children — successor is leftmost in target's right subtree.
-        // Visually walk down from target.right, highlighting each step.
         let walk-min(p) = {
           let n = (self.resolve)(p)
           if n.left == none { (p,) } else { (p,) + walk-min(p + "L") }
@@ -336,38 +384,47 @@
         let successor-paths = walk-min(target-path + "R")
         let successor-path = successor-paths.last()
         let successor-value = (self.resolve)(successor-path).value
-        // Frame: target orange.
+
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
-        // Frames: descend into the right subtree to find the successor.
+        r1 = (r1.with-caption)([Delete #v])
+        r1 = (r1.with-step)((kind: "highlight", path: target-path))
+
         for p in successor-paths {
           r1 = (r1.push-with-node)(p, stroke: color.blue + 2pt)
+          r1 = (r1.with-caption)([Find successor])
+          r1 = (r1.with-step)((kind: "descend", path: p))
         }
-        // Frame: annotate the value transfer.
+
         r1 = (r1.push-frame)()
         r1 = (r1.patch)(f => (f.note-node)(
           target-path,
           "← " + str(successor-value),
         ))
-        // After tree: target-path now holds the successor's value.
+        r1 = (r1.with-caption)[Transfer #successor-value]
+        r1 = (r1.with-step)((
+          kind: "transfer",
+          from: successor-path,
+          to: target-path,
+          value: successor-value,
+        ))
+
         r2 = (r2.patch)(f => (f.style-node)(
           target-path,
           stroke: color.green + 3pt,
           fill: color.green.lighten(70%),
         ))
+        r2 = (r2.with-caption)([Done])
+        r2 = (r2.with-step)((kind: "settle", path: target-path))
       }
 
-      let canvases = tree-anim.concat-frames(r1, r2)
-      let figs = canvases
-        .enumerate()
-        .map(((i, c)) => figure(
-          c,
-          alt: "BST delete " + str(v) + ", step " + str(i),
-        ))
-      wrap(..figs)
+      tree-anim.concat-frames(r1, r2)
     },
     insert-display: (self, v) => {
       // Walks the insertion search path, then transitions to the after-tree
       // to show the new node appearing.
+      //
+      // step.kind values: "init", "compare" (per comparison along the
+      // search path), "inserted" (final frame on the after-tree).
       let walk(node, path) = {
         let cmp = if v < node.value {
           str(v) + " < " + str(node.value)
@@ -392,9 +449,12 @@
 
       // Phase A: search on the before-tree, with running comparisons.
       let r1 = tree-anim.make-renderer(self, sticky: true)
-      for step in steps {
-        r1 = (r1.push-with-node)(step.path, stroke: color.blue + 2pt)
-        r1 = (r1.patch)(f => (f.note-node)(step.path, step.cmp))
+      r1 = (r1.with-step)((kind: "init"))
+      for s in steps {
+        r1 = (r1.push-with-node)(s.path, stroke: color.blue + 2pt)
+        r1 = (r1.patch)(f => (f.note-node)(s.path, s.cmp))
+        r1 = (r1.with-caption)(s.cmp)
+        r1 = (r1.with-step)((kind: "compare", path: s.path, cmp: s.cmp))
       }
 
       // Phase B: after-tree. Carry the search-path highlights forward
@@ -410,15 +470,10 @@
         fill: color.green.lighten(70%),
       )
       r2 = (r2.patch)(f => (f.style-edge)(new-path, stroke: color.green + 2pt))
+      r2 = (r2.with-caption)[Inserted #v]
+      r2 = (r2.with-step)((kind: "inserted", path: new-path))
 
-      let canvases = tree-anim.concat-frames(r1, r2)
-      let figs = canvases
-        .enumerate()
-        .map(((i, c)) => figure(
-          c,
-          alt: "BST insert " + str(v) + ", step " + str(i),
-        ))
-      wrap(..figs)
+      tree-anim.concat-frames(r1, r2)
     },
   ),
 )
