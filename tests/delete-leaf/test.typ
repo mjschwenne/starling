@@ -1,7 +1,7 @@
 #import "/src/lib.typ" as starling
 #import starling: BST
 
-#let t = (BST.new)(value: 4, left: none, right: none)
+#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
 #let t = (t.insert)(1)
 #let t = (t.insert)(0)
 #let t = (t.insert)(7)

@@ -172,7 +172,7 @@
 // TreeRenderer
 // ===================================================================
 
-#let _phantom(path) = (((value: none, path: path, phantom: true),),)
+#let _phantom(path) = (((value: none, label: auto, path: path, phantom: true),),)
 
 #let _build-cetz-tree(node, path) = {
   // BST-shaped accessor. Generalize here for n-ary trees.
@@ -195,7 +195,7 @@
   } else if has-left {
     children.push(.._phantom(path + "R"))
   }
-  ((value: node.value, path: path), ..children)
+  ((value: node.value, label: node.label, path: path), ..children)
 }
 
 /// Emit the cetz draw commands for one styled snapshot of #raw("tree"),
@@ -214,8 +214,11 @@
 ///
 /// -> content
 #let draw-tree(
-  /// The tree to render — any value with #raw("value"), #raw("left"),
-  /// and #raw("right") fields (e.g. a #raw("BST") instance).
+  /// The tree to render — any value with #raw("value"), #raw("label"),
+  /// #raw("left"), and #raw("right") fields (e.g. a #raw("BST") instance).
+  /// #raw("label") of #raw("auto") falls back to #raw("str(value)");
+  /// any other value (string, image, content) is rendered as the node's
+  /// drawn label.
   /// -> dictionary
   tree,
   /// Style overlay for this snapshot. Use @@blank-snapshot() for an
@@ -255,6 +258,8 @@
         }
         let path = node.content.path
         let value = node.content.value
+        let raw-label = node.content.label
+        let label = if raw-label == auto { str(value) } else { raw-label }
         let s = _merge-into(
           default-node-style,
           snapshot.nodes.at(path, default: (:)),
@@ -267,7 +272,7 @@
           stroke: s.at("stroke", default: black),
         )
         let tf = s.at("text-fill", default: black)
-        draw.content((), text(fill: tf)[*#value*])
+        draw.content((), text(fill: tf)[*#label*])
         let n = s.at("note", default: none)
         if n != none {
           let nf = s.at("note-fill", default: rgb("#d4a017"))
@@ -491,8 +496,9 @@
 ///
 /// -> TreeRenderer
 #let make-renderer(
-  /// The tree to render — any value with #raw("value"), #raw("left"),
-  /// and #raw("right") fields.
+  /// The tree to render — any value with #raw("value"), #raw("label"),
+  /// #raw("left"), and #raw("right") fields. See @@draw-tree() for how
+  /// #raw("label") is rendered.
   /// -> dictionary
   tree,
   /// Default node-style overrides applied before per-snapshot overrides.

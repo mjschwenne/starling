@@ -28,10 +28,13 @@
   path-anchor,
 )
 
-/// The default BST class. Build a tree via #raw("(BST.new)(value:, left:, right:)")
-/// and call its #raw("*-display") methods (see the BST API section of the
-/// manual) to get animation frames; pass those frames through one of the
-/// helpers below.
+/// The default BST class. Build a tree via
+/// #raw("(BST.new)(value:, label:, left:, right:)") — set
+/// #raw("label: auto") to render the integer #raw("value") as the
+/// drawn label, or pass content (a string, image, or arbitrary content)
+/// for custom labels. Call its #raw("*-display") methods (see the BST
+/// API section of the manual) to get animation frames; pass those
+/// frames through one of the helpers below.
 #let BST = make-bst()
 
 // _with-caption is private — kept as a regular comment so tidy ignores it.

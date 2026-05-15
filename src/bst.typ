@@ -7,10 +7,18 @@
 // what that frame represents. Pass the result to a render helper in
 // `lib.typ` (`last`, `stacked`, `figures`) or compose your own layout
 // from the frame fields.
+//
+// `value` is the integer key used for ordering. `label` is what gets
+// drawn inside the node — `auto` falls back to `str(value)`; any other
+// value is rendered as-is (strings auto-coerce to content, so images,
+// `[]`, or arbitrary content all work). Captions and step metadata stay
+// keyed on `value`. The field is named `label` rather than `display` to
+// avoid colliding with the `display()` method below.
 #let make-bst() = class(
   name: "BST",
   fields: (
     value: Int,
+    label: Any,
     left: Union(None, Any),
     right: Union(None, Any),
   ),
@@ -56,24 +64,36 @@
       }
       walk(self, path.codepoints())
     },
-    insert: (self, v) => {
+    insert: (self, v, label: auto) => {
       let cls = self.meta.cls
-      if v < self.value {
+      if v <= self.value {
         let new-left = if self.left == none {
-          (cls.new)(value: v, left: none, right: none)
+          (cls.new)(value: v, label: label, left: none, right: none)
         } else {
-          (self.left.insert)(v)
+          (self.left.insert)(v, label: label)
         }
-        (cls.new)(value: self.value, left: new-left, right: self.right)
+        (cls.new)(
+          value: self.value,
+          label: self.label,
+          left: new-left,
+          right: self.right,
+        )
       } else {
         let new-right = if self.right == none {
-          (cls.new)(value: v, left: none, right: none)
+          (cls.new)(value: v, label: label, left: none, right: none)
         } else {
-          (self.right.insert)(v)
+          (self.right.insert)(v, label: label)
         }
-        (cls.new)(value: self.value, left: self.left, right: new-right)
+        (cls.new)(
+          value: self.value,
+          label: self.label,
+          left: self.left,
+          right: new-right,
+        )
       }
     },
+    // `insert-many` is for the common int-only case. For custom labels,
+    // chain `.insert(v, label: ...)` calls directly.
     insert-many: (self, ..vals) => {
       let tree = self
       for v in vals.pos() {
@@ -91,12 +111,22 @@
       if v < self.value {
         if self.left == none { self } else {
           let new-left = (self.left.delete)(v)
-          (cls.new)(value: self.value, left: new-left, right: self.right)
+          (cls.new)(
+            value: self.value,
+            label: self.label,
+            left: new-left,
+            right: self.right,
+          )
         }
       } else if v > self.value {
         if self.right == none { self } else {
           let new-right = (self.right.delete)(v)
-          (cls.new)(value: self.value, left: self.left, right: new-right)
+          (cls.new)(
+            value: self.value,
+            label: self.label,
+            left: self.left,
+            right: new-right,
+          )
         }
       } else if self.left == none and self.right == none {
         none
@@ -105,14 +135,18 @@
       } else if self.right == none {
         self.left
       } else {
-        // Two children — replace value with in-order successor, then
-        // recursively delete the successor from the right subtree.
-        let find-min(n) = if n.left == none { n.value } else {
-          find-min(n.left)
-        }
-        let sv = find-min(self.right)
-        let new-right = (self.right.delete)(sv)
-        (cls.new)(value: sv, left: self.left, right: new-right)
+        // Two children — replace with in-order predecessor's value AND
+        // label, then recursively delete the predecessor from the left
+        // subtree.
+        let find-max(n) = if n.right == none { n } else { find-max(n.right) }
+        let pred = find-max(self.left)
+        let new-left = (self.left.delete)(pred.value)
+        (cls.new)(
+          value: pred.value,
+          label: pred.label,
+          left: new-left,
+          right: self.right,
+        )
       }
     },
     rotate: (self, child) => {
@@ -121,9 +155,11 @@
         // child is left child of self -> right rotation
         (cls.new)(
           value: child.value,
+          label: child.label,
           left: child.left,
           right: (cls.new)(
             value: self.value,
+            label: self.label,
             left: child.right,
             right: self.right,
           ),
@@ -132,8 +168,10 @@
         // child is right child of self -> left rotation
         (cls.new)(
           value: child.value,
+          label: child.label,
           left: (cls.new)(
             value: self.value,
+            label: self.label,
             left: self.left,
             right: child.left,
           ),
@@ -312,7 +350,7 @@
       // Animates a deletion. Dispatches on the target's children:
       //   leaf       → highlight, dash edge, then settle (r2's after-tree)
       //   one child  → highlight, dash both edges, hide, child reattaches green
-      //   two child  → highlight target + descend to successor, annotate value
+      //   two child  → highlight target + descend to predecessor, annotate value
       //                transfer, settle with green at target slot
       //
       // step.kind values: "init", "highlight", "break", "descend",
@@ -376,36 +414,36 @@
         r2 = (r2.with-caption)([Reattach])
         r2 = (r2.with-step)((kind: "settle", path: target-path))
       } else {
-        // Two children — successor is leftmost in target's right subtree.
-        let walk-min(p) = {
+        // Two children — predecessor is rightmost in target's left subtree.
+        let walk-max(p) = {
           let n = (self.resolve)(p)
-          if n.left == none { (p,) } else { (p,) + walk-min(p + "L") }
+          if n.right == none { (p,) } else { (p,) + walk-max(p + "R") }
         }
-        let successor-paths = walk-min(target-path + "R")
-        let successor-path = successor-paths.last()
-        let successor-value = (self.resolve)(successor-path).value
+        let predecessor-paths = walk-max(target-path + "L")
+        let predecessor-path = predecessor-paths.last()
+        let predecessor-value = (self.resolve)(predecessor-path).value
 
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
         r1 = (r1.with-caption)([Delete #v])
         r1 = (r1.with-step)((kind: "highlight", path: target-path))
 
-        for p in successor-paths {
+        for p in predecessor-paths {
           r1 = (r1.push-with-node)(p, stroke: color.blue + 2pt)
-          r1 = (r1.with-caption)([Find successor])
+          r1 = (r1.with-caption)([Find predecessor])
           r1 = (r1.with-step)((kind: "descend", path: p))
         }
 
         r1 = (r1.push-frame)()
         r1 = (r1.patch)(f => (f.note-node)(
           target-path,
-          "← " + str(successor-value),
+          "← " + str(predecessor-value),
         ))
-        r1 = (r1.with-caption)[Transfer #successor-value]
+        r1 = (r1.with-caption)[Transfer #predecessor-value]
         r1 = (r1.with-step)((
           kind: "transfer",
-          from: successor-path,
+          from: predecessor-path,
           to: target-path,
-          value: successor-value,
+          value: predecessor-value,
         ))
 
         r2 = (r2.patch)(f => (f.style-node)(
@@ -434,9 +472,9 @@
           str(v) + " = " + str(node.value)
         }
         let step = (path: path, cmp: cmp)
-        if v < node.value and node.left != none {
+        if v <= node.value and node.left != none {
           (step,) + walk(node.left, path + "L")
-        } else if v >= node.value and node.right != none {
+        } else if v > node.value and node.right != none {
           (step,) + walk(node.right, path + "R")
         } else {
           (step,)

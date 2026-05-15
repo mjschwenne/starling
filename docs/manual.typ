@@ -44,14 +44,14 @@ free to ignore them and lay frames out however your document needs.
 #import "@preview/starling:0.2.0" as starling
 #import starling: BST
 
-#let t = (BST.new)(value: 4, left: none, right: none)
+#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
 #let t = (t.insert)(1)
 #let t = (t.insert)(7)
 #let t = (t.insert)(3)
 #let t = (t.insert)(6)
 ```
 
-#let t = (starling.BST.new)(value: 4, left: none, right: none)
+#let t = (starling.BST.new)(value: 4, label: auto, left: none, right: none)
 #let t = (t.insert)(1)
 #let t = (t.insert)(7)
 #let t = (t.insert)(3)
@@ -316,11 +316,11 @@ to render every frame vertically with its caption.
 We'll use the same sample tree throughout this section:
 
 ```typ
-#let t = (BST.new)(value: 4, left: none, right: none)
+#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
 #let t = (t.insert-many)(1, 7, 3, 6, 8)
 ```
 
-#let tour = (starling.BST.new)(value: 4, left: none, right: none)
+#let tour = (starling.BST.new)(value: 4, label: auto, left: none, right: none)
 #let tour = (tour.insert-many)(1, 7, 3, 6, 8)
 
 == Static display
@@ -356,8 +356,8 @@ ranges over `"init"`, `"highlight"`, `"break"`, `"descend"`,
 `"transfer"`, and `"settle"` depending on case.
 
 The two-children deletion is the most complex: it highlights the
-target, descends into the right subtree to find the in-order
-successor, annotates the value transfer, then jumps to the after-tree
+target, descends into the left subtree to find the in-order
+predecessor, annotates the value transfer, then jumps to the after-tree
 with the new root of the affected subtree highlighted green.
 
 #align(center, starling.stacked((tour.delete-display)(4)))

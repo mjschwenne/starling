@@ -6,7 +6,7 @@
 #import "@preview/cetz:0.5.2"
 #import "/src/lib.typ" as starling
 
-#let t = (starling.BST.new)(value: 4, left: none, right: none)
+#let t = (starling.BST.new)(value: 4, label: auto, left: none, right: none)
 #let t = (t.insert-many)(1, 7, 3, 6, 8)
 
 // Empty snapshot — no per-node style overrides.

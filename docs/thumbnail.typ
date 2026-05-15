@@ -9,7 +9,7 @@
 
 #set text(22pt)
 
-#let tree = (BST.new)(value: 5, left: none, right: none)
+#let tree = (BST.new)(value: 5, label: auto, left: none, right: none)
 #let tree = (tree.insert-many)(1, 10)
 #let frames = (tree.insert-display)(7)
 #grid(

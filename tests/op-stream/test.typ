@@ -1,7 +1,7 @@
 #import "/src/lib.typ" as starling
 #import starling: BST, Op, apply-ops, make-renderer
 
-#let t = (BST.new)(value: 4, left: none, right: none)
+#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
 #let t = (t.insert-many)(2, 6, 1, 7)
 
 // Exercise every remaining Op variant:
