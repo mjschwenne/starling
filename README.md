@@ -28,6 +28,7 @@ structures over time (heaps, hash tables, graphs, etc.).
 #starling.stacked((t.insert-display)(5))   // insert, all frames vertically
 #starling.stacked((t.delete-display)(3))   // delete, all frames vertically
 #starling.stacked((t.rotate-display)(1))   // rotation, all frames vertically
+#starling.stacked((t.in-order-display)())  // traversal (also pre-/post-/level-order-display)
 ```
 
 ## Frames and helpers

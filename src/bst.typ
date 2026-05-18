@@ -1,6 +1,73 @@
 #import "@preview/typsy:0.2.2": Any, Int, None, Union, class
 #import "./tree-anim.typ" as tree-anim
 
+// Pick a readable text fill for a given background color by inspecting the
+// oklab L component. Used by the traversal-display methods so the value
+// inside a gradient-filled node stays legible across the palette.
+#let _text-fill-for(bg) = {
+  let l = bg.oklab().components().first()
+  if l < 60% { white } else { black }
+}
+
+// Concise per-visit animation shared by the four `*-order-display` methods.
+// `paths` is the precomputed visit order; `name` appears in the initial
+// alt text. One frame per visit: highlighted node gets a gradient fill
+// sampled from `palette` and a badge note showing its 1-indexed position;
+// the caption accumulates the output sequence (monospace list).
+//
+// step.kind values: "init" (initial frame), "visit" (per node, with path,
+// index, value).
+#let _render-traversal(self, paths, name, palette) = {
+  let n = paths.len()
+  let g = gradient.linear(..palette)
+
+  let r = tree-anim.make-renderer(self, sticky: true)
+  r = (r.with-step)((kind: "init"))
+  r = (r.with-alt)(
+    "Binary search tree: "
+      + (self.describe)()
+      + ". About to traverse "
+      + name
+      + ".",
+  )
+
+  let output = ()
+  for (i, p) in paths.enumerate() {
+    let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
+    let fill = g.sample(t)
+    let txt-fill = _text-fill-for(fill)
+    let value = (self.resolve)(p).value
+    output.push(str(value))
+
+    r = (r.push-with-node)(
+      p,
+      fill: fill,
+      text-fill: txt-fill,
+      note: str(i + 1),
+    )
+    r = (r.with-caption)[Output: #raw("[" + output.join(", ") + "]")]
+    r = (r.with-step)((
+      kind: "visit",
+      path: p,
+      index: i + 1,
+      value: value,
+    ))
+    r = (r.with-alt)(
+      "Visited "
+        + str(value)
+        + " (visit "
+        + str(i + 1)
+        + " of "
+        + str(n)
+        + "); output so far: "
+        + output.join(", ")
+        + ".",
+    )
+  }
+
+  (r.render)()
+}
+
 // Builds the BST class. The `*-display` methods return `Array(Frame)` —
 // one Frame per animation step, each carrying the rendered cetz canvas,
 // an optional textual caption, and free-form `step` metadata documenting
@@ -192,6 +259,70 @@
         str(self.value) + " (left: " + l + ", right: " + r + ")"
       }
     },
+    // Traversal-order helpers. Each returns an array of L/R path strings
+    // in the order the corresponding traversal would visit them.
+    in-order: (self) => {
+      let walk(node, path) = if node == none { () } else {
+        walk(node.left, path + "L") + (path,) + walk(node.right, path + "R")
+      }
+      walk(self, "")
+    },
+    pre-order: (self) => {
+      let walk(node, path) = if node == none { () } else {
+        (path,) + walk(node.left, path + "L") + walk(node.right, path + "R")
+      }
+      walk(self, "")
+    },
+    post-order: (self) => {
+      let walk(node, path) = if node == none { () } else {
+        walk(node.left, path + "L") + walk(node.right, path + "R") + (path,)
+      }
+      walk(self, "")
+    },
+    level-order: (self) => {
+      let result = ()
+      let queue = ("",)
+      while queue.len() > 0 {
+        let path = queue.first()
+        queue = queue.slice(1)
+        let n = (self.resolve)(path)
+        if n != none {
+          result.push(path)
+          queue.push(path + "L")
+          queue.push(path + "R")
+        }
+      }
+      result
+    },
+    // One frame per visit. The visited node gets a gradient fill sampled
+    // from `palette` and a badge note showing its 1-indexed visit position;
+    // the running output sequence accumulates in the caption. The final
+    // frame wears the traversal's full color signature — stacking four
+    // `last`-rendered displays gives the "compare four traversals" view.
+    in-order-display: (self, palette: color.map.magma) => _render-traversal(
+      self,
+      (self.in-order)(),
+      "in-order",
+      palette,
+    ),
+    pre-order-display: (self, palette: color.map.magma) => _render-traversal(
+      self,
+      (self.pre-order)(),
+      "pre-order",
+      palette,
+    ),
+    post-order-display: (self, palette: color.map.magma) => _render-traversal(
+      self,
+      (self.post-order)(),
+      "post-order",
+      palette,
+    ),
+    level-order-display: (self, palette: color.map.magma) => _render-traversal(
+      self,
+      (self.level-order)(),
+      "level-order",
+      palette,
+    ),
     display: (self) => {
       // Returns a one-element Frame array — the static tree. `step` is none.
       let r = tree-anim.make-renderer(self)

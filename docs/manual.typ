@@ -370,6 +370,49 @@ is `c`. The six-frame sequence is described in
 
 #align(center, starling.stacked((tour.rotate-display)(1)))
 
+== Traversals
+
+`(t.in-order-display)()`, `(t.pre-order-display)()`,
+`(t.post-order-display)()`, and `(t.level-order-display)()` animate
+the four standard traversals. Each returns one frame per visit (plus
+the initial frame): the visited node is filled with the next color in
+a perceptually-uniform palette (magma by default) and tagged with a
+numbered badge marking its visit order, and the caption accumulates
+the running output sequence. `step.kind` is `"init"` for the initial
+frame and `"visit"` thereafter, with `step.value` and `step.index`
+(1-indexed) recording each visit. Pass a different `palette:` argument
+(e.g. `palette: color.map.viridis`) to switch color maps.
+
+Pure-data variants `(t.in-order)()`, `(t.pre-order)()`,
+`(t.post-order)()`, and `(t.level-order)()` return the visit sequence
+as an array of path strings without producing any animation, in case
+you want to drive a custom layout.
+
+#align(center, starling.stacked((tour.in-order-display)()))
+
+The final frame of each traversal carries the algorithm's full color
+signature. Laying all four out side-by-side gives a fast visual
+comparison — especially useful as a recall cue in review material
+where students already understand the algorithms and the gradient
+pattern reads as "oh right, post-order goes leaves-cool to
+root-warm":
+
+#let traversal-panel(label, frames) = block(breakable: false, stack(
+  dir: ttb,
+  spacing: 0.4em,
+  align(center, strong(label)),
+  starling.last(frames, caption: true),
+))
+
+#align(center, grid(
+  columns: 2,
+  gutter: 1.5em,
+  traversal-panel([In-order], (tour.in-order-display)()),
+  traversal-panel([Pre-order], (tour.pre-order-display)()),
+  traversal-panel([Post-order], (tour.post-order-display)()),
+  traversal-panel([Level-order], (tour.level-order-display)()),
+))
+
 = Touying composition examples
 
 Starling is layout-agnostic. In a touying deck, the simplest use

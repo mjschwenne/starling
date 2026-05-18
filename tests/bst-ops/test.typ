@@ -107,6 +107,20 @@
 #assert.eq(((t.resolve)("LR")).value, 3)
 #assert.eq((t.resolve)("RRR"), none)
 
+// traversal orders. Tree values are 4,1,7,0,3,8,2 with shape
+//         4
+//        / \
+//       1   7
+//      / \   \
+//     0   3   8
+//        /
+//       2
+#let values-of(paths) = paths.map(p => ((t.resolve)(p)).value)
+#assert.eq(values-of((t.in-order)()), (0, 1, 2, 3, 4, 7, 8))
+#assert.eq(values-of((t.pre-order)()), (4, 1, 0, 3, 2, 7, 8))
+#assert.eq(values-of((t.post-order)()), (0, 2, 3, 1, 8, 7, 4))
+#assert.eq(values-of((t.level-order)()), (4, 1, 7, 0, 3, 8, 2))
+
 // label preservation: a custom label attached via insert is reachable
 // through resolve, survives a non-affecting delete, and travels with
 // its key when the node is the in-order predecessor in a two-children
