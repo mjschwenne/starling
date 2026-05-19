@@ -121,10 +121,16 @@
 //   captions/steps/alts — parallel arrays of theme-independent metadata
 //   theme/render-theme — pre-resolved (`auto` or merged dict)
 //
-// Each frame's canvas is a `context { }` block that, when laid out,
-// reads any required state and calls `build-snapshots` once. With Typst's
-// function-result cache, repeated calls with the same theme dicts hit
-// the cache, so an n-frame animation pays O(n) snapshot work total.
+// Each frame's `render` field is a builder
+// `(bst-theme, render-theme) => content` — the lib.typ helpers resolve
+// state once per call and feed the resolved themes into every frame's
+// builder. With Typst's function-result cache, repeated `build-snapshots`
+// calls inside one helper invocation share results, so an n-frame
+// animation pays O(n) snapshot work for one state read total.
+//
+// `theme` and `render-theme` arguments here are the per-call overrides
+// (or `auto` to defer to the caller's resolved theme): a non-auto
+// argument shadows whatever the helper passes in.
 #let _make-frames(
   tree,
   build-snapshots,
@@ -136,14 +142,12 @@
 ) = {
   let n = captions.len()
   range(n).map(i => (tree-anim.Frame.new)(
-    canvas: context {
-      let bt = if theme == auto { _bst-theme-state.get() } else { theme }
-      let rt = if render-theme == auto {
-        tree-anim._render-theme-state.get()
-      } else { render-theme }
+    _builder: (fn: (bt-arg, rt-arg) => {
+      let bt = if theme == auto { bt-arg } else { theme }
+      let rt = if render-theme == auto { rt-arg } else { render-theme }
       let snaps = build-snapshots(bt, rt)
       tree-anim._render-canvas(tree, snaps.at(i), (:), (:), rt)
-    },
+    }),
     caption: captions.at(i),
     step: steps-meta.at(i),
     alt: alts.at(i),

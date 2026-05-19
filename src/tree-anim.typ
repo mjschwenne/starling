@@ -246,31 +246,60 @@
 // `*-display` BST method documents what it puts there so callers can
 // drive custom layouts off it.
 
-/// Typsy class representing one rendered animation frame. Fields:
-/// #raw("canvas") (cetz content, no caption baked in),
-/// #raw("caption") (optional textual track for the step, possibly
-/// #raw("none")), #raw("step") (optional free-form per-method
-/// metadata, possibly #raw("none")), and #raw("alt") (optional
-/// accessible text describing what the frame depicts, possibly
-/// #raw("none")). Produced by #raw("TreeRenderer.render()"); the
-/// BST's #raw("*-display") methods return arrays of these.
+/// Typsy class representing one frame in an animation. Fields and
+/// methods:
 ///
-/// The #raw("alt") field carries text destined for the #raw("alt:")
-/// argument on a Typst #raw("figure"). The first frame of each
-/// operation includes the full tree structure (via the BST
-/// #raw("describe") method) so screen-reader users have a baseline;
-/// subsequent frames describe only the per-step change.
+/// - #raw("render(bst-theme, render-theme)") — method that, given
+///   resolved theme dicts, produces the cetz canvas for this frame.
+///   Theming-aware deferral lives here: by carrying a builder rather
+///   than pre-baked content, the lib.typ helpers (#raw("last"),
+///   #raw("stacked"), #raw("figures")) can resolve theme state once
+///   per call instead of once per frame, which is meaningfully faster
+///   in many-tree documents.
+/// - #raw("caption") — optional textual track for the step (possibly
+///   #raw("none")).
+/// - #raw("step") — optional free-form per-method metadata (possibly
+///   #raw("none")).
+/// - #raw("alt") — optional accessible text describing the frame
+///   (possibly #raw("none")). Carried verbatim into the #raw("alt:")
+///   argument on the Typst #raw("figure") wrapping the canvas. The
+///   first frame of each operation includes the full tree structure
+///   (via the BST #raw("describe") method) so screen-reader users have
+///   a baseline; subsequent frames describe only the per-step change.
+///
+/// Direct rendering pattern for custom layouts:
+/// ```typc
+/// context {
+///   let bt = _bst-theme-state.get()
+///   let rt = _render-theme-state.get()
+///   ... (frame.render)(bt, rt) ...
+/// }
+/// ```
+/// Or simply pass the frame array to one of the lib.typ helpers, which
+/// handle the state wrap for you.
+///
+/// The internal #raw("_builder") field carries the actual rendering
+/// closure wrapped in a singleton dict so typsy's auto-self-injection
+/// doesn't fire on it; treat it as private and call #raw("render")
+/// instead.
 #let Frame = class(
   name: "Frame",
   fields: (
-    canvas: Content,
+    // Singleton dict `(fn: ..)` rather than a bare function so typsy's
+    // class-field accessor doesn't auto-wrap it with a self-injecting
+    // shim (any function-typed field gets that treatment, which would
+    // turn `(frame._builder)(bt, rt)` into a 3-arg call). Read through
+    // the `render` method below.
+    _builder: Dictionary(..Any),
     // Caption is `Any` (not `Content`) because Typst auto-coerces strings
     // to content; users should be able to pass `[6 < 7]` or `"6 < 7"`.
     caption: Union(None, Any),
     step: Union(None, Dictionary(..Any)),
     alt: Union(None, Any),
   ),
-  methods: (:),
+  methods: (
+    render: (self, bt, rt) => (self._builder.fn)(bt, rt),
+  ),
 )
 
 // ===================================================================
@@ -624,13 +653,17 @@
     render: (self) => {
       // Returns an array of `Frame` records, one per snapshot. Pass to
       // a render helper in `lib.typ` (`last`, `stacked`, `figures`) or
-      // build a custom layout from `frame.canvas` / `frame.caption` /
+      // build a custom layout from `frame.render` / `frame.caption` /
       // `frame.step` / `frame.alt`.
       //
-      // Each frame's `canvas` is wrapped in `context { }` so the active
-      // render theme (`set-render-theme(..)`) is resolved at layout
-      // time. When `self.theme` is a dict (explicit override via
-      // `make-renderer(theme: ..)`), state is bypassed.
+      // Each frame's `render` field is a function
+      // `(bst-theme, render-theme) => content`. The lib.typ helpers
+      // resolve theme state once per call and feed the result to every
+      // frame's builder; for direct use, see the `Frame` docstring.
+      //
+      // When `self.theme` is a dict (explicit override via
+      // `make-renderer(theme: ..)`), the supplied render-theme argument
+      // is ignored in favour of the baked-in dict.
       let theme = self.theme
       let tree = self.tree
       let dns = self.default-node-style
@@ -638,14 +671,12 @@
       self.snapshots
         .enumerate()
         .map(((i, snap)) => {
-          let canvas = context {
-            let rt = if theme == auto {
-              _render-theme-state.get()
-            } else { theme }
-            _render-canvas(tree, snap, dns, des, rt)
+          let render-fn = (_bt, rt) => {
+            let effective-rt = if theme == auto { rt } else { theme }
+            _render-canvas(tree, snap, dns, des, effective-rt)
           }
           (Frame.new)(
-            canvas: canvas,
+            _builder: (fn: render-fn),
             caption: self.captions.at(i),
             step: self.steps.at(i),
             alt: self.alts.at(i),

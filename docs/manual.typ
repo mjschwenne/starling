@@ -96,7 +96,7 @@ class at all.
 
 == Snapshots, frames, and the renderer
 
-Three types do most of the work. Their roles are intentionally
+Four types do most of the work. Their roles are intentionally
 distinct:
 
 #table(
@@ -108,22 +108,42 @@ distinct:
   [A _sparse style overlay_ for one moment in time — which nodes are
    filled what colour, which edges are dashed or hidden, which notes
    are attached to which nodes. Built up by chaining
-   `style-node` / `style-edge` / `note-node` calls.],
+   `style-node` / `style-edge` / `note-node` calls. Pure data; no
+   theme awareness, no content.],
   [`TreeRenderer`],
   [A tree plus an ordered list of snapshots plus optional caption /
    step-metadata for each snapshot. The thing you build up while
    describing an animation.],
   [`Frame`],
-  [The _output_ record: `(canvas, caption, step)`. `TreeRenderer.render`
-   produces an array of these, one per snapshot. This is what
-   `*-display` methods return.],
+  [The _output_ record: `(render, caption, step, alt)`. `render` is a
+   builder function `(bst-theme, render-theme) -> content` — not
+   pre-baked content — so callers can resolve theme state at layout
+   time and reuse the same animation across documents with different
+   themes. `TreeRenderer.render` produces an array of these, one per
+   snapshot. This is what `*-display` methods return.],
+  [Theme dict],
+  [Either a `render-theme` (structural defaults like node fill, edge
+   stroke, note colour) or a `bst-theme` (semantic strokes/fills like
+   `search-stroke`, `success-fill`). Frames are theme-agnostic until
+   a render helper feeds resolved themes into each frame's `render`
+   builder.],
 )
 
-The data flow is:
+The data flow, end to end:
 
 #align(center)[
-  `Snapshot` array #h(0.5em) → #h(0.5em) `TreeRenderer.render` #h(0.5em) → #h(0.5em) `Array(Frame)` #h(0.5em) → #h(0.5em) helper #h(0.5em) → #h(0.5em) document content
+  `Snapshot` array #h(0.5em) → #h(0.5em) `TreeRenderer.render`\
+  #h(0.5em) → #h(0.5em) `Array(Frame)` _(builders, theme-agnostic)_\
+  #h(0.5em) → #h(0.5em) helper resolves theme state once\
+  #h(0.5em) → #h(0.5em) helper calls each `(f.render)(bt, rt)`\
+  #h(0.5em) → #h(0.5em) document content
 ]
+
+The shape matters: snapshots and frames are both pure data until the
+final step. That makes them inspectable, slicable, and composable —
+you can pull a frame out, look at its `step` metadata, swap its
+caption, or thread it into a custom layout without rendering. The
+theming-aware materialisation is concentrated at the helper boundary.
 
 == Path identity
 
@@ -223,10 +243,99 @@ animation plays? Pull them out yourself:
 A historical note worth preserving: closure-captured `wrap` was
 itself chosen over a state-based approach (`std.state`, typsy's
 `safe-state`) because touying's `alternatives` is a layout-time
-"mark" that touying rejects inside `context { ... }` blocks, and
-reading from state requires being inside a `context`. With the new
-frames-based API this constraint goes away entirely — frames are
-plain data, no state, no `context`.
+"mark" that touying rejects inside `context { ... }` blocks. With
+frames as plain data, that constraint no longer applies to the
+animation API — and state did become viable later for the theming
+layer (see _State for ergonomics, per-call for perf_ below).
+
+== Two theme layers, one per concern
+
+Theming is split into two dicts that live in different files:
+
+- *Render theme* (`default-render-theme`, in `tree-anim.typ`) holds
+  structural defaults — node fill, node stroke, node text fill, edge
+  stroke, note fill. Anything that a future data structure (heap,
+  trie, B-tree) would also need.
+- *BST theme* (`default-bst-theme`, in `bst.typ`) holds semantic
+  strokes and fills tied to BST operations — `search-stroke`,
+  `pivot-stroke`, `success-stroke`, `settled-stroke`, `success-fill`,
+  `danger-stroke`, `reset-stroke`, `traversal-palette`.
+
+The split lets each layer own its own concerns. When a new data
+structure lands, it brings its own semantic theme dict
+(`default-heap-theme`, say) and reuses the render-theme as-is. If
+the structural defaults were tangled into the BST theme, every new
+data structure would either duplicate them or grow a coupling to BST.
+
+The render theme also has a clear "lowest in the chain" role:
+`draw-tree` falls back to it when neither a snapshot override nor a
+`make-renderer(default-node-style:, default-edge-style:)` argument
+specifies a property. So the merge order, lowest precedence first, is:
+`default-render-theme` → user render-theme override → renderer
+defaults → per-snapshot per-path overrides. Each layer adds more
+specificity.
+
+Strokes throughout the BST theme are full stroke dictionaries
+(`(paint:, thickness:, dash:)`), not bare colours. That lets users
+change any aspect of a stroke (dash pattern, cap, width) without us
+adding more theme keys for each possibility.
+
+== Frames carry builders, not pre-rendered content
+
+`Frame.render` is a function `(bst-theme, render-theme) -> content`,
+not a piece of pre-baked content. This is so render helpers (`last`,
+`stacked`, `figures`) can resolve theme state _once per call_ and
+feed those resolved themes into every frame's builder, rather than
+each frame independently resolving theme inside its own context
+block.
+
+The frame-as-builder shape also has a non-perf benefit: an
+`Array(Frame)` is now a portable, theme-agnostic description of an
+animation. The same frames can render against different themes in
+different contexts without re-running the `*-display` method. That's
+a cleaner separation than the older `(canvas, caption, step)` shape,
+where `canvas` baked in whatever theme was active at construction
+time.
+
+A typsy quirk worth noting: typsy auto-injects `self` into any
+function-typed field on a class. To keep `(frame.render)(bt, rt)`
+from getting a spurious third argument, the actual closure is stored
+as `_builder: (fn: ...)` — a singleton dict around the function — and
+exposed through a `render` method that dereferences it. Users only
+see `(frame.render)(bt, rt)`; the dict wrap is private.
+
+== State for ergonomics, per-call for perf
+
+Theme overrides come in two flavours:
+
+#table(
+  columns: (auto, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*Form*][*Behaviour*],
+  [`set-bst-theme((..))` / `set-render-theme((..))`],
+  [State-based. One declaration at the top of the document propagates
+   through every subsequent `*-display` call. Ergonomic and intent-
+   matching, but participates in Typst's state-convergence machinery
+   — see @theming-perf.],
+  [`(t.search-display)(v, theme: (..))`],
+  [Per-call. Overrides the theme for one call; ignores state for that
+   call. Verbose if you have many calls, but skips the state-cost
+   path entirely. Run at the no-state baseline.],
+)
+
+Both paths exist because there's no single answer. State is right
+for a document that uses one theme throughout — write
+`set-bst-theme(my-palette)` once, forget about it. Per-call is right
+when compile speed dominates and the user is happy threading a `let
+palette = (..)` value through their calls. The library does not pick
+a winner.
+
+The cost being structural to Typst — not something starling can
+optimise away — meant choosing whether to expose state at all was a
+real call. Skipping state would have removed the perf footgun but
+also removed the ergonomic win. Exposing both, with the cost
+documented up-front, lets users decide.
 
 == Two-channel captions
 
@@ -465,6 +574,47 @@ defaults and used in place of the state value for that call only.
 (t.search-display)(6, theme: (search-stroke: (paint: olive, thickness: 2pt)))
 ```
 
+== Performance: state-based theming costs a layout pass <theming-perf>
+
+Typst's state machinery is what makes `set-bst-theme` / `set-render-theme`
+work: a `state.update` later in the document can affect renders earlier
+in document order, so Typst evaluates the document, propagates state,
+and re-evaluates anything that observed it. In practice that means
+*using either state setter roughly doubles the compile time of the
+state-observed portion of the document* — a small fixed cost on top of
+each tree, plus a full extra layout pass through everything that placed
+a starling render helper or rendered a frame's `render` builder against
+that state.
+
+Concretely, a 50-tree synthetic benchmark goes from ~1.85s to ~3.1s
+when `set-bst-theme` is added. The cost scales with document size, not
+with the number of state reads (one read or a thousand is the same),
+because the price is "Typst does a second layout pass", not "the read
+is slow".
+
+This is a structural property of Typst's state model, not something
+starling can work around without giving up state. If compile speed
+matters more than the ergonomic win, hoist your theme dict into a
+plain `let` and pass it to each `*-display` call via the per-call
+`theme:` argument — that path skips state entirely and runs at the
+no-state baseline:
+
+```typ
+#let palette = (
+  search-stroke: (paint: teal, thickness: 2.5pt),
+  success-stroke: (paint: olive, thickness: 2.5pt),
+  // ...
+)
+
+#starling.stacked((t.search-display)(6, theme: palette))
+#starling.stacked((t.insert-display)(5, theme: palette))
+// ...
+```
+
+This is the usual perf/ergonomics tradeoff: `set-bst-theme` is one
+declaration at the top of the document and "just works"; per-call
+`theme:` is more typing but avoids the extra pass.
+
 = Touying composition examples
 
 Starling is layout-agnostic. In a touying deck, the simplest use
@@ -506,16 +656,23 @@ that wants to colour-code its narration by step kind:
 ```typ
 #let kind-colors = (compare: blue, inserted: green)
 
-#let captioned-frames = frames.map(f => {
+#let captioned-frames = frames.map(f => figure(context {
+  let bt = starling._bst-theme-state.get()
+  let rt = starling._render-theme-state.get()
   let color = kind-colors.at(f.step.kind, default: black)
-  figure(
-    stack(dir: ttb, spacing: 0.5em,
-      f.canvas, text(fill: color, f.caption)),
-  )
-})
+  stack(dir: ttb, spacing: 0.5em,
+    (f.render)(bt, rt), text(fill: color, f.caption))
+}))
 
 #alternatives(..captioned-frames)
 ```
+
+#raw("frame.render") is a builder #raw("(bt, rt) => content") rather
+than pre-baked content, so themes resolve at layout time. The
+#raw("context") block above reads the active themes and feeds them
+in; if you don't need state-driven theming, you can call
+#raw("(f.render)(starling.default-bst-theme, starling.default-render-theme)")
+without the wrapper.
 
 = Composing with cetz annotations <composing-with-cetz-annotations>
 
