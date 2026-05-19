@@ -586,15 +586,19 @@
 //
 // A declarative layer over the per-frame patch API. Each Op describes a
 // single change to the in-progress frame; `Op.Commit` finalizes that
-// frame and opens a fresh one. Fold a sequence of Ops into a renderer
-// with `apply-ops`.
+// frame (attaching its alt text) and opens a fresh one. Fold a sequence
+// of Ops into a renderer with `apply-ops`.
 //
 // Variants:
 //   Highlight(path, color)     — set node stroke to `color + 2pt`
 //   Annotate(path, text)       — attach a note to a node (drawn in-canvas)
 //   StyleNode(path, style)     — arbitrary node-style overrides
 //   StyleEdge(path, style)     — arbitrary edge-style overrides
-//   Commit                     — finalize the current frame
+//   Commit(alt)                — finalize the current frame with alt text
+//                                and open a new blank one
+//   Alt(text)                  — set alt text on the in-progress frame
+//                                without committing (use for the trailing
+//                                frame, which has no following Commit)
 //   ClearNotes                 — drop all notes on the current frame
 //
 // Captions and step metadata are renderer-level (not snapshot-level), so
@@ -606,14 +610,16 @@
 //   let ops = (
 //     (Op.Highlight.new)(path: "", color: blue),
 //     (Op.Annotate.new)(path: "", text: [7 < 14]),
-//     (Op.Commit.new)(),
+//     (Op.Commit.new)(alt: "Comparing 7 against the root 14."),
 //     (Op.Highlight.new)(path: "L", color: blue),
+//     (Op.Alt.new)(text: "Descended into the left subtree."),
 //   )
 //   let r = apply-ops(make-renderer(t), ops)
 //   let frames = (r.render)()
 //
 // The trailing in-progress frame is kept — no explicit `Commit` is needed
-// after the last batch of edits.
+// after the last batch of edits, but its alt text must be attached via
+// `Op.Alt` (or `r.with-alt(...)` after the fold).
 
 /// Typsy enumeration describing a declarative command stream for
 /// building animations. Variants:
@@ -626,8 +632,14 @@
 ///   overrides.
 /// - #raw("Op.StyleEdge(path, style)") — arbitrary edge-style
 ///   overrides.
-/// - #raw("Op.Commit()") — finalise the current frame and open a
-///   fresh one.
+/// - #raw("Op.Commit(alt)") — finalise the current frame, attach
+///   #raw("alt") text to it, and open a fresh blank frame.
+///   #raw("alt") is required so every frame the command stream
+///   produces carries accessible text.
+/// - #raw("Op.Alt(text)") — set alt text on the in-progress frame
+///   without committing. Primary use is the trailing frame, which has
+///   no following #raw("Op.Commit") to carry its alt; can also be
+///   used to set alt earlier in a frame's lifecycle if convenient.
 /// - #raw("Op.ClearNotes()") — drop all notes from the current
 ///   frame's snapshot.
 ///
@@ -653,7 +665,8 @@
     name: "Op.StyleEdge",
     fields: (path: PathId, style: EdgeStyle),
   ),
-  Commit: class(name: "Op.Commit", fields: (:)),
+  Commit: class(name: "Op.Commit", fields: (alt: Any)),
+  Alt: class(name: "Op.Alt", fields: (text: Any)),
   ClearNotes: class(name: "Op.ClearNotes", fields: (:)),
 )
 
@@ -663,13 +676,20 @@
   case(Op.Annotate, () => (r.patch)(f => (f.note-node)(op.path, op.text))),
   case(Op.StyleNode, () => (r.patch)(f => (f.style-node)(op.path, ..op.style))),
   case(Op.StyleEdge, () => (r.patch)(f => (f.style-edge)(op.path, ..op.style))),
-  case(Op.Commit, () => (r.push-frame)()),
+  case(Op.Commit, () => {
+    let r2 = (r.with-alt)(op.alt)
+    (r2.push-frame)()
+  }),
+  case(Op.Alt, () => (r.with-alt)(op.text)),
   case(Op.ClearNotes, () => (r.patch)(f => (f.clear-notes)())),
 )
 
 /// Fold a sequence of @@Op values into a renderer, returning the
 /// updated renderer. The trailing in-progress frame is kept — no
-/// explicit #raw("Op.Commit") is needed after the last batch of edits.
+/// explicit #raw("Op.Commit") is needed after the last batch of edits,
+/// but attach alt text to that trailing frame via #raw("Op.Alt") (or
+/// #raw("r.with-alt(...)") on the returned renderer) so it has
+/// accessible text like the committed frames do.
 ///
 /// -> TreeRenderer
 #let apply-ops(

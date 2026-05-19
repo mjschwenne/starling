@@ -508,8 +508,10 @@ them into a renderer with `apply-ops`:
 #let r = starling.apply-ops(r, (
   (starling.Op.Highlight.new)(path: "", color: blue),
   (starling.Op.Annotate.new)(path: "", text: [1 < 4]),
+  (starling.Op.Commit.new)(
+    alt: "Comparing the target 1 against the root 4.",
+  ),
 ))
-#let r = (r.push-frame)()
 #let r = (r.with-caption)([descend left])
 #let r = starling.apply-ops(r, (
   (starling.Op.ClearNotes.new)(),
@@ -517,6 +519,9 @@ them into a renderer with `apply-ops`:
   (starling.Op.StyleEdge.new)(path: "L", style: (stroke: blue + 2pt)),
   (starling.Op.StyleNode.new)(path: "L", style: (fill: green.lighten(70%))),
   (starling.Op.Annotate.new)(path: "L", text: [1 = 1]),
+  (starling.Op.Alt.new)(
+    text: "Descended into the left subtree; 1 matches the left child.",
+  ),
 ))
 #starling.stacked((r.render)())
 ```
@@ -526,8 +531,10 @@ them into a renderer with `apply-ops`:
 #let op-r = (starling.apply-ops)(op-r, (
   (starling.Op.Highlight.new)(path: "", color: blue),
   (starling.Op.Annotate.new)(path: "", text: [1 < 4]),
+  (starling.Op.Commit.new)(
+    alt: "Comparing the target 1 against the root 4.",
+  ),
 ))
-#let op-r = (op-r.push-frame)()
 #let op-r = (op-r.with-caption)([descend left])
 #let op-r = (starling.apply-ops)(op-r, (
   (starling.Op.ClearNotes.new)(),
@@ -535,12 +542,19 @@ them into a renderer with `apply-ops`:
   (starling.Op.StyleEdge.new)(path: "L", style: (stroke: blue + 2pt)),
   (starling.Op.StyleNode.new)(path: "L", style: (fill: green.lighten(70%))),
   (starling.Op.Annotate.new)(path: "L", text: [1 = 1]),
+  (starling.Op.Alt.new)(
+    text: "Descended into the left subtree; 1 matches the left child.",
+  ),
 ))
 
 #align(center, starling.stacked((op-r.render)()))
 
+`Op.Commit` closes the current frame, attaches the supplied `alt` text
+to it, and opens a fresh blank frame. The `alt` argument is required
+so every frame the command stream produces carries accessible text.
 The trailing in-progress frame is kept implicitly — no final
-`Op.Commit` is needed.
+`Op.Commit` is needed — but use `Op.Alt(text)` (or `r.with-alt(...)`
+on the returned renderer) to give that last frame its alt text too.
 
 `Op.Caption` does _not_ exist; captions and step metadata are
 renderer-level, set via `r.with-caption(...)` / `r.with-step(...)`

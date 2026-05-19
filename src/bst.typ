@@ -533,15 +533,21 @@
 
       tree-anim.concat-frames(r1, r2)
     },
-    delete-display: (self, v) => {
+    delete-display: (self, v, search: false) => {
       // Animates a deletion. Dispatches on the target's children:
       //   leaf       → highlight, dash edge, then settle (r2's after-tree)
       //   one child  → highlight, dash both edges, hide, child reattaches green
       //   two child  → highlight target + descend to predecessor, annotate value
       //                transfer, settle with green at target slot
       //
-      // step.kind values: "init", "highlight", "break", "descend",
-      // "transfer", "settle".
+      // With `search: true`, the deletion is preceded by a
+      // search-display-style walk: one "compare" frame per node visited
+      // along the path to the target. The comparison notes are cleared
+      // on the first deletion frame so they don't compete with the
+      // deletion-specific highlights.
+      //
+      // step.kind values: "init", "compare" (only with search: true),
+      // "highlight", "break", "descend", "transfer", "settle".
       let target-path = (self.by-value)(v)
       let target = (self.resolve)(target-path)
       let after = (self.delete)(v)
@@ -556,6 +562,43 @@
           + str(v)
           + ".",
       )
+
+      if search {
+        // `by-value` has already confirmed v is in the tree, so this
+        // walk always terminates at a match.
+        let walk(node, path) = {
+          let cmp = if v == node.value {
+            str(v) + " = " + str(node.value)
+          } else if v < node.value {
+            str(v) + " < " + str(node.value)
+          } else {
+            str(v) + " > " + str(node.value)
+          }
+          let step = (path: path, cmp: cmp, found: v == node.value)
+          if v == node.value {
+            (step,)
+          } else if v < node.value {
+            (step,) + walk(node.left, path + "L")
+          } else {
+            (step,) + walk(node.right, path + "R")
+          }
+        }
+        let steps = walk(self, "")
+        for s in steps {
+          r1 = (r1.push-with-node)(s.path, stroke: color.blue + 2pt)
+          r1 = (r1.patch)(f => (f.note-node)(s.path, s.cmp))
+          r1 = (r1.with-caption)(s.cmp)
+          r1 = (r1.with-step)((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
+          let node-value = str((self.resolve)(s.path).value)
+          let alt = if s.found {
+            "Found target node " + node-value + "; ready to delete."
+          } else {
+            "Comparing " + s.cmp + " at node " + node-value + "; descending."
+          }
+          r1 = (r1.with-alt)(alt)
+        }
+      }
+
       let r2 = tree-anim.make-renderer(after, sticky: true)
 
       let is-leaf = target.left == none and target.right == none
@@ -565,6 +608,7 @@
 
       if is-leaf {
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
+        if search { r1 = (r1.patch)(f => (f.clear-notes)()) }
         r1 = (r1.with-caption)([Delete #v])
         r1 = (r1.with-step)((kind: "highlight", path: target-path))
         r1 = (r1.with-alt)("Marked leaf node " + str(v) + " for deletion.")
@@ -583,6 +627,7 @@
         let child-value = str((self.resolve)(child-path).value)
 
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
+        if search { r1 = (r1.patch)(f => (f.clear-notes)()) }
         r1 = (r1.patch)(f => (f.style-node)(
           child-path,
           stroke: color.blue + 2pt,
@@ -638,6 +683,7 @@
         let predecessor-value = (self.resolve)(predecessor-path).value
 
         r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
+        if search { r1 = (r1.patch)(f => (f.clear-notes)()) }
         r1 = (r1.with-caption)([Delete #v])
         r1 = (r1.with-step)((kind: "highlight", path: target-path))
         r1 = (r1.with-alt)(
