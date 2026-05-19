@@ -383,7 +383,13 @@
           stroke: s.at("stroke", default: render-theme.node-stroke),
         )
         let tf = s.at("text-fill", default: render-theme.node-text-fill)
-        draw.content((), text(fill: tf)[*#label*])
+        // Bold the label via `weight:` rather than `*..*` markup so a
+        // user `show strong: set text(fill: ..)` rule in the document
+        // can't override our computed `tf` — the contrast-aware fill
+        // in `_text-fill-for` exists precisely so labels stay readable
+        // against gradient-filled traversal nodes, and we don't want it
+        // silently undone by ambient styling.
+        draw.content((), text(weight: "bold", fill: tf, label))
         let n = s.at("note", default: none)
         if n != none {
           let nf = s.at("note-fill", default: render-theme.note-fill)
