@@ -380,8 +380,10 @@ a perceptually-uniform palette (magma by default) and tagged with a
 numbered badge marking its visit order, and the caption accumulates
 the running output sequence. `step.kind` is `"init"` for the initial
 frame and `"visit"` thereafter, with `step.value` and `step.index`
-(1-indexed) recording each visit. Pass a different `palette:` argument
-(e.g. `palette: color.map.viridis`) to switch color maps.
+(1-indexed) recording each visit. Switch palettes via the theme
+system (see #link(label("theming"))[Theming]) — either doc-wide with
+`set-bst-theme((traversal-palette: color.map.viridis))` or per-call
+with `(t.in-order-display)(theme: (traversal-palette: ...))`.
 
 Pure-data variants `(t.in-order)()`, `(t.pre-order)()`,
 `(t.post-order)()`, and `(t.level-order)()` return the visit sequence
@@ -412,6 +414,56 @@ root-warm":
   traversal-panel([Post-order], (tour.post-order-display)()),
   traversal-panel([Level-order], (tour.level-order-display)()),
 ))
+
+= Theming <theming>
+
+Starling exposes two theme layers so document authors can match
+starling's palette to their own document style:
+
+- *Render theme* (#raw("default-render-theme")) — the structural
+  defaults the renderer falls back on for the unstyled tree:
+  `node-fill`, `node-stroke`, `node-text-fill`, `edge-stroke`,
+  `note-fill`.
+- *BST theme* (#raw("default-bst-theme")) — the semantic colors and
+  strokes the BST `*-display` methods use to communicate operation
+  state: `search-stroke`, `pivot-stroke`, `success-stroke`,
+  `settled-stroke`, `success-fill`, `danger-stroke`, `reset-stroke`,
+  `traversal-palette`. Strokes are full stroke dicts
+  (`(paint:, thickness:, dash:)`) so any aspect — color, width, dash —
+  is overridable without adding more keys.
+
+== Setting a theme for the whole document
+
+Call `set-bst-theme` and/or `set-render-theme` once near the top of
+your document. The override is state-based and scoped by Typst's
+normal layout flow, so it propagates to every subsequent
+`*-display` call.
+
+```typ
+#import "@preview/starling:0.1.0": BST, set-bst-theme, set-render-theme
+
+#set-bst-theme((
+  search-stroke: (paint: teal, thickness: 2.5pt),
+  success-stroke: (paint: olive, thickness: 2.5pt),
+  settled-stroke: (paint: olive, thickness: 3.5pt),
+  success-fill: olive.lighten(75%),
+))
+#set-render-theme((node-fill: yellow.lighten(85%)))
+```
+
+Pass a partial dictionary — only the keys you list are changed.
+Unknown keys panic so typos surface immediately rather than silently
+falling back to defaults.
+
+== Per-call overrides
+
+For one-off variations, every `*-display` method accepts `theme:`
+and `render-theme:` arguments. A partial dict is merged into the
+defaults and used in place of the state value for that call only.
+
+```typ
+(t.search-display)(6, theme: (search-stroke: (paint: olive, thickness: 2pt)))
+```
 
 = Touying composition examples
 

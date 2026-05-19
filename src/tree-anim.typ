@@ -68,6 +68,103 @@
 )
 
 // ===================================================================
+// Render theme — structural defaults for the unstyled tree
+// ===================================================================
+//
+// The render theme is the lowest layer in the style chain: it supplies
+// the literal whites/blacks/etc. that `draw-tree` falls back on when a
+// snapshot doesn't override a property. Above this layer sit (in
+// merge order, lowest precedence first):
+//
+//   1. `default-render-theme` (this dict)
+//   2. user overrides set via `set-render-theme(...)` or passed as
+//      `theme: (...)` to `make-renderer`
+//   3. `default-node-style` / `default-edge-style` on `make-renderer`
+//   4. per-snapshot per-path overrides
+//
+// Users who want operation-specific colors (search/insert/delete
+// highlights, rotation pivots, etc.) should look at `default-bst-theme`
+// in `bst.typ` instead — that's the semantic layer.
+
+/// Default render theme. The structural defaults the renderer falls
+/// back on when neither a snapshot nor `default-node-style`/
+/// `default-edge-style` specifies otherwise.
+#let default-render-theme = (
+  node-fill: white,
+  node-stroke: black,
+  node-text-fill: black,
+  edge-stroke: black,
+  note-fill: rgb("#d4a017"),
+)
+
+#let _render-theme-keys = (
+  "node-fill",
+  "node-stroke",
+  "node-text-fill",
+  "edge-stroke",
+  "note-fill",
+)
+
+/// Typsy refinement: a dictionary whose keys are a subset of the
+/// render-theme keys (#raw("node-fill"), #raw("node-stroke"),
+/// #raw("node-text-fill"), #raw("edge-stroke"), #raw("note-fill")).
+#let RenderTheme = Refine(
+  Dictionary(..Any),
+  d => d.keys().all(k => _render-theme-keys.contains(k)),
+)
+
+// Internal Typst state holding the active render theme. Read inside
+// `context { }` blocks at render time so a `set-render-theme(..)` in
+// the document body propagates to canvases placed after it.
+#let _render-theme-state = state(
+  "starling:render-theme",
+  default-render-theme,
+)
+
+/// Override one or more render-theme keys for the rest of the
+/// document (state-based, scoped by Typst's normal layout flow). Pass
+/// a partial dictionary — only the keys you list are changed; the rest
+/// stay at their current values. Unknown keys panic.
+#let set-render-theme(theme) = {
+  for k in theme.keys() {
+    if not _render-theme-keys.contains(k) {
+      panic(
+        "set-render-theme: unknown key '"
+          + k
+          + "'. Valid keys: "
+          + _render-theme-keys.join(", ")
+          + ".",
+      )
+    }
+  }
+  _render-theme-state.update(prev => {
+    let next = prev
+    for (k, v) in theme.pairs() { next.insert(k, v) }
+    next
+  })
+}
+
+// Merge a partial render-theme override into `default-render-theme`,
+// panicking on unknown keys. Used by `make-renderer`'s explicit
+// `theme:` argument (the non-state path).
+#let _merge-render-theme(override) = {
+  for k in override.keys() {
+    if not _render-theme-keys.contains(k) {
+      panic(
+        "render-theme: unknown key '"
+          + k
+          + "'. Valid keys: "
+          + _render-theme-keys.join(", ")
+          + ".",
+      )
+    }
+  }
+  let next = default-render-theme
+  for (k, v) in override.pairs() { next.insert(k, v) }
+  next
+}
+
+// ===================================================================
 // Snapshot — one styled snapshot
 // ===================================================================
 
@@ -239,6 +336,12 @@
   /// Default edge-style overrides applied before per-edge overrides.
   /// -> dictionary
   default-edge-style: (:),
+  /// Structural defaults — the lowest layer of the style chain.
+  /// Defaults to #raw("default-render-theme"); pass an already-merged
+  /// dict (e.g. read from #raw("set-render-theme")'s state inside a
+  /// #raw("context") block) to apply user overrides.
+  /// -> dictionary
+  render-theme: default-render-theme,
   /// Outer group name for the whole tree. Must match the #raw("tree-name")
   /// argument to @@path-anchor() for anchors to resolve.
   /// -> str
@@ -276,14 +379,14 @@
         draw.circle(
           (),
           radius: 0.6,
-          fill: s.at("fill", default: white),
-          stroke: s.at("stroke", default: black),
+          fill: s.at("fill", default: render-theme.node-fill),
+          stroke: s.at("stroke", default: render-theme.node-stroke),
         )
-        let tf = s.at("text-fill", default: black)
+        let tf = s.at("text-fill", default: render-theme.node-text-fill)
         draw.content((), text(fill: tf)[*#label*])
         let n = s.at("note", default: none)
         if n != none {
-          let nf = s.at("note-fill", default: rgb("#d4a017"))
+          let nf = s.at("note-fill", default: render-theme.note-fill)
           draw.content(
             (0.75, 0),
             anchor: "west",
@@ -304,12 +407,12 @@
         draw.line(
           (from.group-name, 0.4, to.group-name),
           (to.group-name, 0.4, from.group-name),
-          stroke: s.at("stroke", default: black),
+          stroke: s.at("stroke", default: render-theme.edge-stroke),
           ..if mark != none { (mark: mark) },
         )
         let n = s.at("note", default: none)
         if n != none {
-          let nf = s.at("note-fill", default: rgb("#d4a017"))
+          let nf = s.at("note-fill", default: render-theme.note-fill)
           draw.content(
             (from.group-name, 0.5, to.group-name),
             text(fill: nf, size: 0.8em, n),
@@ -320,13 +423,20 @@
 }
 
 // Convenience wrapper: `draw-tree` inside a `cetz.canvas`.
-#let _render-canvas(tree, snapshot, default-node-style, default-edge-style) = {
+#let _render-canvas(
+  tree,
+  snapshot,
+  default-node-style,
+  default-edge-style,
+  render-theme,
+) = {
   cetz.canvas(
     draw-tree(
       tree,
       snapshot,
       default-node-style: default-node-style,
       default-edge-style: default-edge-style,
+      render-theme: render-theme,
     ),
   )
 }
@@ -385,6 +495,9 @@
     default-node-style: NodeStyle,
     default-edge-style: EdgeStyle,
     sticky: Bool,
+    // `auto` => read render-theme from state at render time.
+    // dict   => baked-in merged render-theme (no state lookup).
+    theme: Any,
   ),
   methods: (
     push-frame: (self) => {
@@ -403,6 +516,7 @@
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
+        theme: self.theme,
       )
     },
     patch: (self, fn) => {
@@ -422,6 +536,7 @@
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
+        theme: self.theme,
       )
     },
     with-caption: (self, c) => {
@@ -441,6 +556,7 @@
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
+        theme: self.theme,
       )
     },
     with-step: (self, s) => {
@@ -460,6 +576,7 @@
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
+        theme: self.theme,
       )
     },
     with-alt: (self, a) => {
@@ -479,6 +596,7 @@
         default-node-style: self.default-node-style,
         default-edge-style: self.default-edge-style,
         sticky: self.sticky,
+        theme: self.theme,
       )
     },
     push-with-node: (self, path, ..style) => {
@@ -502,15 +620,24 @@
       // a render helper in `lib.typ` (`last`, `stacked`, `figures`) or
       // build a custom layout from `frame.canvas` / `frame.caption` /
       // `frame.step` / `frame.alt`.
+      //
+      // Each frame's `canvas` is wrapped in `context { }` so the active
+      // render theme (`set-render-theme(..)`) is resolved at layout
+      // time. When `self.theme` is a dict (explicit override via
+      // `make-renderer(theme: ..)`), state is bypassed.
+      let theme = self.theme
+      let tree = self.tree
+      let dns = self.default-node-style
+      let des = self.default-edge-style
       self.snapshots
         .enumerate()
         .map(((i, snap)) => {
-          let canvas = _render-canvas(
-            self.tree,
-            snap,
-            self.default-node-style,
-            self.default-edge-style,
-          )
+          let canvas = context {
+            let rt = if theme == auto {
+              _render-theme-state.get()
+            } else { theme }
+            _render-canvas(tree, snap, dns, des, rt)
+          }
           (Frame.new)(
             canvas: canvas,
             caption: self.captions.at(i),
@@ -529,6 +656,12 @@
 /// snapshot — so highlights accumulate over the course of an animation.
 /// Set #raw("sticky: false") to start each frame from a clean slate.
 ///
+/// With #raw("theme: auto") (the default), each rendered canvas reads
+/// the active render theme from state at layout time, so a
+/// #raw("set-render-theme(..)") earlier in the document propagates.
+/// Pass an explicit dictionary to bake a theme in and skip the state
+/// lookup.
+///
 /// -> TreeRenderer
 #let make-renderer(
   /// The tree to render — any value with #raw("value"), #raw("label"),
@@ -546,7 +679,17 @@
   /// When #raw("false"), each new frame starts blank.
   /// -> bool
   sticky: true,
+  /// Render-theme override for this renderer. #raw("auto") reads the
+  /// active render-theme from state at layout time. A dict is merged
+  /// into #raw("default-render-theme") once and baked in.
+  /// -> auto | dictionary
+  theme: auto,
 ) = {
+  let resolved-theme = if theme == auto {
+    auto
+  } else {
+    _merge-render-theme(theme)
+  }
   (TreeRenderer.new)(
     tree: tree,
     snapshots: (blank-snapshot(),),
@@ -556,6 +699,7 @@
     default-node-style: default-node-style,
     default-edge-style: default-edge-style,
     sticky: sticky,
+    theme: resolved-theme,
   )
 }
 

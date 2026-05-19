@@ -1,5 +1,154 @@
-#import "@preview/typsy:0.2.2": Any, Int, None, Union, class
+#import "@preview/typsy:0.2.2": Any, Int, None, Refine, Dictionary, Union, class
 #import "./tree-anim.typ" as tree-anim
+
+// ===================================================================
+// BST theme — semantic styling for BST operations
+// ===================================================================
+//
+// The semantic layer above `default-render-theme` (in `tree-anim.typ`).
+// Each key names a "role" that one or more `*-display` methods read at
+// render time:
+//
+//   search-stroke  — search/insert walk; descend in delete
+//   pivot-stroke   — rotation pivots; deletion target
+//   success-stroke — newly-connected edges
+//   settled-stroke — final new-node ring (insert, two-child delete)
+//   success-fill   — final new-node fill (insert, two-child delete)
+//   danger-stroke  — broken/removed edges (dashed by default)
+//   reset-stroke   — used by rotate-display to clear pivot highlights;
+//                    should look like an unstyled node/edge stroke
+//   traversal-palette — gradient palette for *-order-display methods
+//
+// Strokes are full stroke dicts (`(paint:, thickness:, dash:)`) so users
+// can change any aspect — color, width, dash — without us adding more
+// keys.
+
+/// Default semantic theme for BST operations. Pass a partial dict to
+/// #raw("set-bst-theme(..)") to override individual roles.
+#let default-bst-theme = (
+  search-stroke: (paint: blue, thickness: 2pt),
+  pivot-stroke: (paint: orange, thickness: 2pt),
+  success-stroke: (paint: green, thickness: 2pt),
+  settled-stroke: (paint: green, thickness: 3pt),
+  success-fill: green.lighten(70%),
+  danger-stroke: (paint: red, thickness: 2pt, dash: "dashed"),
+  reset-stroke: (paint: black, thickness: 1pt),
+  traversal-palette: color.map.magma,
+)
+
+#let _bst-theme-keys = (
+  "search-stroke",
+  "pivot-stroke",
+  "success-stroke",
+  "settled-stroke",
+  "success-fill",
+  "danger-stroke",
+  "reset-stroke",
+  "traversal-palette",
+)
+
+/// Typsy refinement: a dictionary whose keys are a subset of the
+/// BST-theme keys. Used by #raw("set-bst-theme") and the per-call
+/// #raw("theme:") arguments to give early errors on typos.
+#let BstTheme = Refine(
+  Dictionary(..Any),
+  d => d.keys().all(k => _bst-theme-keys.contains(k)),
+)
+
+#let _bst-theme-state = state("starling:bst-theme", default-bst-theme)
+
+/// Override one or more BST-theme keys for the rest of the document
+/// (state-based, scoped by Typst's normal layout flow). Pass a partial
+/// dictionary — only the keys you list are changed; the rest stay at
+/// their current values. Unknown keys panic.
+#let set-bst-theme(theme) = {
+  for k in theme.keys() {
+    if not _bst-theme-keys.contains(k) {
+      panic(
+        "set-bst-theme: unknown key '"
+          + k
+          + "'. Valid keys: "
+          + _bst-theme-keys.join(", ")
+          + ".",
+      )
+    }
+  }
+  _bst-theme-state.update(prev => {
+    let next = prev
+    for (k, v) in theme.pairs() { next.insert(k, v) }
+    next
+  })
+}
+
+// Merge a partial bst-theme override into `default-bst-theme`,
+// panicking on unknown keys. Used by per-call `theme:` arguments
+// (the non-state path).
+#let _merge-bst-theme(override) = {
+  for k in override.keys() {
+    if not _bst-theme-keys.contains(k) {
+      panic(
+        "bst-theme: unknown key '"
+          + k
+          + "'. Valid keys: "
+          + _bst-theme-keys.join(", ")
+          + ".",
+      )
+    }
+  }
+  let next = default-bst-theme
+  for (k, v) in override.pairs() { next.insert(k, v) }
+  next
+}
+
+// Resolve a `theme:` argument that may be `auto` (read state) or a
+// partial dict (merge into default). Returns either `auto` (signalling
+// "read state inside the context block") or a fully merged dict ready
+// to use directly. The auto-passthrough lets us defer state reads to
+// inside the canvas's context block.
+#let _resolve-bst-theme-arg(theme) = if theme == auto {
+  auto
+} else { _merge-bst-theme(theme) }
+#let _resolve-render-theme-arg(theme) = if theme == auto {
+  auto
+} else { tree-anim._merge-render-theme(theme) }
+
+// Build an array of `Frame` records for one phase of a display:
+//
+//   tree             — the BST being rendered (one tree per phase)
+//   build-snapshots  — closure (bst-theme, render-theme) => Array(Snapshot);
+//                      one closure per phase, shared across all its frames
+//                      so Typst's call cache amortizes the snapshot build
+//   captions/steps/alts — parallel arrays of theme-independent metadata
+//   theme/render-theme — pre-resolved (`auto` or merged dict)
+//
+// Each frame's canvas is a `context { }` block that, when laid out,
+// reads any required state and calls `build-snapshots` once. With Typst's
+// function-result cache, repeated calls with the same theme dicts hit
+// the cache, so an n-frame animation pays O(n) snapshot work total.
+#let _make-frames(
+  tree,
+  build-snapshots,
+  captions,
+  steps-meta,
+  alts,
+  theme,
+  render-theme,
+) = {
+  let n = captions.len()
+  range(n).map(i => (tree-anim.Frame.new)(
+    canvas: context {
+      let bt = if theme == auto { _bst-theme-state.get() } else { theme }
+      let rt = if render-theme == auto {
+        tree-anim._render-theme-state.get()
+      } else { render-theme }
+      let snaps = build-snapshots(bt, rt)
+      tree-anim._render-canvas(tree, snaps.at(i), (:), (:), rt)
+    },
+    caption: captions.at(i),
+    step: steps-meta.at(i),
+    alt: alts.at(i),
+  ))
+}
 
 // Pick a readable text fill for a given background color by inspecting the
 // oklab L component. Used by the traversal-display methods so the value
@@ -12,18 +161,18 @@
 // Concise per-visit animation shared by the four `*-order-display` methods.
 // `paths` is the precomputed visit order; `name` appears in the initial
 // alt text. One frame per visit: highlighted node gets a gradient fill
-// sampled from `palette` and a badge note showing its 1-indexed position;
-// the caption accumulates the output sequence (monospace list).
+// sampled from the active BST theme's `traversal-palette` and a badge
+// note showing its 1-indexed position; the caption accumulates the
+// output sequence (monospace list).
 //
 // step.kind values: "init" (initial frame), "visit" (per node, with path,
 // index, value).
-#let _render-traversal(self, paths, name, palette) = {
+#let _render-traversal(self, paths, name, theme, render-theme) = {
   let n = paths.len()
-  let g = gradient.linear(..palette)
 
-  let r = tree-anim.make-renderer(self, sticky: true)
-  r = (r.with-step)((kind: "init"))
-  r = (r.with-alt)(
+  let captions = (none,)
+  let steps-meta = ((kind: "init"),)
+  let alts = (
     "Binary search tree: "
       + (self.describe)()
       + ". About to traverse "
@@ -33,26 +182,16 @@
 
   let output = ()
   for (i, p) in paths.enumerate() {
-    let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
-    let fill = g.sample(t)
-    let txt-fill = _text-fill-for(fill)
     let value = (self.resolve)(p).value
     output.push(str(value))
-
-    r = (r.push-with-node)(
-      p,
-      fill: fill,
-      text-fill: txt-fill,
-      note: str(i + 1),
-    )
-    r = (r.with-caption)[Output: #raw("[" + output.join(", ") + "]")]
-    r = (r.with-step)((
+    captions.push([Output: #raw("[" + output.join(", ") + "]")])
+    steps-meta.push((
       kind: "visit",
       path: p,
       index: i + 1,
       value: value,
     ))
-    r = (r.with-alt)(
+    alts.push(
       "Visited "
         + str(value)
         + " (visit "
@@ -65,10 +204,35 @@
     )
   }
 
-  (r.render)()
+  let build-snapshots = (bst-theme, _rt) => {
+    let g = gradient.linear(..bst-theme.traversal-palette)
+    let r = tree-anim.make-renderer(self, sticky: true)
+    for (i, p) in paths.enumerate() {
+      let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
+      let fill = g.sample(t)
+      let txt-fill = _text-fill-for(fill)
+      r = (r.push-with-node)(
+        p,
+        fill: fill,
+        text-fill: txt-fill,
+        note: str(i + 1),
+      )
+    }
+    r.snapshots
+  }
+
+  _make-frames(
+    self,
+    build-snapshots,
+    captions,
+    steps-meta,
+    alts,
+    theme,
+    render-theme,
+  )
 }
 
-// Builds the BST class. The `*-display` methods return `Array(Frame)` —
+// The BST class. The `*-display` methods return `Array(Frame)` —
 // one Frame per animation step, each carrying the rendered cetz canvas,
 // an optional textual caption, and free-form `step` metadata documenting
 // what that frame represents. Pass the result to a render helper in
@@ -81,7 +245,13 @@
 // `[]`, or arbitrary content all work). Captions and step metadata stay
 // keyed on `value`. The field is named `label` rather than `display` to
 // avoid colliding with the `display()` method below.
-#let make-bst() = class(
+//
+// `*-display` methods accept optional `theme:` and `render-theme:`
+// arguments. `auto` (the default) reads the active theme from state at
+// layout time, so `set-bst-theme(..)` / `set-render-theme(..)` earlier
+// in the document propagate. Passing a partial dict bakes that override
+// in for this one call and skips state entirely.
+#let BST = class(
   name: "BST",
   fields: (
     value: Int,
@@ -299,37 +469,51 @@
     // the running output sequence accumulates in the caption. The final
     // frame wears the traversal's full color signature — stacking four
     // `last`-rendered displays gives the "compare four traversals" view.
-    in-order-display: (self, palette: color.map.magma) => _render-traversal(
+    in-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
       self,
       (self.in-order)(),
       "in-order",
-      palette,
+      _resolve-bst-theme-arg(theme),
+      _resolve-render-theme-arg(render-theme),
     ),
-    pre-order-display: (self, palette: color.map.magma) => _render-traversal(
+    pre-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
       self,
       (self.pre-order)(),
       "pre-order",
-      palette,
+      _resolve-bst-theme-arg(theme),
+      _resolve-render-theme-arg(render-theme),
     ),
-    post-order-display: (self, palette: color.map.magma) => _render-traversal(
+    post-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
       self,
       (self.post-order)(),
       "post-order",
-      palette,
+      _resolve-bst-theme-arg(theme),
+      _resolve-render-theme-arg(render-theme),
     ),
-    level-order-display: (self, palette: color.map.magma) => _render-traversal(
+    level-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
       self,
       (self.level-order)(),
       "level-order",
-      palette,
+      _resolve-bst-theme-arg(theme),
+      _resolve-render-theme-arg(render-theme),
     ),
-    display: (self) => {
+    display: (self, theme: auto, render-theme: auto) => {
       // Returns a one-element Frame array — the static tree. `step` is none.
-      let r = tree-anim.make-renderer(self)
-      r = (r.with-alt)("Binary search tree: " + (self.describe)() + ".")
-      (r.render)()
+      let captions = (none,)
+      let steps-meta = (none,)
+      let alts = ("Binary search tree: " + (self.describe)() + ".",)
+      let build-snapshots = (_bt, _rt) => (tree-anim.blank-snapshot(),)
+      _make-frames(
+        self,
+        build-snapshots,
+        captions,
+        steps-meta,
+        alts,
+        _resolve-bst-theme-arg(theme),
+        _resolve-render-theme-arg(render-theme),
+      )
     },
-    search-display: (self, v) => {
+    search-display: (self, v, theme: auto, render-theme: auto) => {
       // Returns one frame per comparison made along the search path.
       // The first frame is the unmodified tree (kind: "init"). Each
       // subsequent frame highlights the visited node, draws the
@@ -356,9 +540,9 @@
       }
       let steps = walk(self, "")
 
-      let r = tree-anim.make-renderer(self, sticky: true)
-      r = (r.with-step)((kind: "init"))
-      r = (r.with-alt)(
+      let captions = (none,)
+      let steps-meta = ((kind: "init"),)
+      let alts = (
         "Binary search tree: "
           + (self.describe)()
           + ". About to search for "
@@ -366,10 +550,8 @@
           + ".",
       )
       for (i, s) in steps.enumerate() {
-        r = (r.push-with-node)(s.path, stroke: color.blue + 2pt)
-        r = (r.patch)(f => (f.note-node)(s.path, s.cmp))
-        r = (r.with-caption)(s.cmp)
-        r = (r.with-step)((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
+        captions.push(s.cmp)
+        steps-meta.push((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
         let node-value = str((self.resolve)(s.path).value)
         let is-last = i == steps.len() - 1
         let alt = if s.found {
@@ -387,21 +569,39 @@
         } else {
           "Comparing " + s.cmp + " at node " + node-value + "; continuing search."
         }
-        r = (r.with-alt)(alt)
+        alts.push(alt)
       }
-      (r.render)()
+
+      let build-snapshots = (bt, _rt) => {
+        let r = tree-anim.make-renderer(self, sticky: true)
+        for s in steps {
+          r = (r.push-with-node)(s.path, stroke: bt.search-stroke)
+          r = (r.patch)(f => (f.note-node)(s.path, s.cmp))
+        }
+        r.snapshots
+      }
+
+      _make-frames(
+        self,
+        build-snapshots,
+        captions,
+        steps-meta,
+        alts,
+        _resolve-bst-theme-arg(theme),
+        _resolve-render-theme-arg(render-theme),
+      )
     },
-    rotate-display: (self, child-value) => {
+    rotate-display: (self, child-value, theme: auto, render-theme: auto) => {
       // Animates a rotation at the root of `self`. `child-value` must
       // match a direct child of self; the direction (left/right) is
       // inferred.
       //
       // Six-frame sequence (step.kind):
       //   1. "init"        — before-tree, no styling
-      //   2. "pivots"      — pivot nodes highlighted orange
+      //   2. "pivots"      — pivot nodes highlighted
       //   3. "break"       — edges that will rotate are hidden
       //   4. "restructure" — switch to after-tree, new edges still hidden
-      //   5. "connect"     — new edges appear in green
+      //   5. "connect"     — new edges appear in success-stroke
       //   6. "settle"      — highlights cleared, final settled tree
       let is-right = self.left != none and self.left.value == child-value
       let is-left = self.right != none and self.right.value == child-value
@@ -438,10 +638,21 @@
       let parent-value = str(self.value)
       let child-value-str = str(child-value)
 
-      // Phase A: before-tree. r1's initial frame is "init".
-      let r1 = tree-anim.make-renderer(self, sticky: true)
-      r1 = (r1.with-step)((kind: "init"))
-      r1 = (r1.with-alt)(
+      let resolved-theme = _resolve-bst-theme-arg(theme)
+      let resolved-render-theme = _resolve-render-theme-arg(render-theme)
+
+      // Phase A metadata
+      let captions-a = (
+        none,
+        [Rotate around #child-value],
+        [Break edges],
+      )
+      let steps-meta-a = (
+        (kind: "init"),
+        (kind: "pivots", paths: (parent-path, child-path)),
+        (kind: "break", paths: broken-paths),
+      )
+      let alts-a = (
         "Binary search tree: "
           + (self.describe)()
           + ". About to "
@@ -449,96 +660,111 @@
           + "-rotate around node "
           + child-value-str
           + ".",
-      )
-
-      // Frame 2: "pivots" — highlight both rotation nodes orange.
-      r1 = (r1.push-with-node)(parent-path, stroke: color.orange + 2pt)
-      r1 = (r1.patch)(f => (f.style-node)(
-        child-path,
-        stroke: color.orange + 2pt,
-      ))
-      r1 = (r1.with-caption)([Rotate around #child-value])
-      r1 = (r1.with-step)((kind: "pivots", paths: (parent-path, child-path)))
-      r1 = (r1.with-alt)(
         "Rotation pivots identified: parent "
           + parent-value
           + " and child "
           + child-value-str
           + ".",
+        "Breaking the edges that will rotate.",
       )
 
-      // Frame 3: "break" — hide the edges that will rotate.
-      r1 = (r1.push-with-edge)(child-path, hide: true)
-      if has-middle {
-        r1 = (r1.patch)(f => (f.style-edge)(middle-path, hide: true))
+      let build-snapshots-a = (bt, _rt) => {
+        let r = tree-anim.make-renderer(self, sticky: true)
+        // Frame 2: pivots
+        r = (r.push-with-node)(parent-path, stroke: bt.pivot-stroke)
+        r = (r.patch)(f => (f.style-node)(child-path, stroke: bt.pivot-stroke))
+        // Frame 3: break
+        r = (r.push-with-edge)(child-path, hide: true)
+        if has-middle {
+          r = (r.patch)(f => (f.style-edge)(middle-path, hide: true))
+        }
+        r.snapshots
       }
-      r1 = (r1.with-caption)([Break edges])
-      r1 = (r1.with-step)((kind: "break", paths: broken-paths))
-      r1 = (r1.with-alt)("Breaking the edges that will rotate.")
 
-      // Phase B: after-tree. r2's initial frame is "restructure" — the
-      // new tree shape is visible, but the rotated edges are still
-      // hidden (carried by `hide: true` overrides).
-      let r2 = tree-anim.make-renderer(after, sticky: true)
-      r2 = (r2.patch)(f => (f.style-node)(
-        parent-path,
-        stroke: color.orange + 2pt,
-      ))
-      r2 = (r2.patch)(f => (f.style-node)(
-        new-parent-path,
-        stroke: color.orange + 2pt,
-      ))
-      r2 = (r2.patch)(f => (f.style-edge)(new-parent-path, hide: true))
-      if has-new-middle {
-        r2 = (r2.patch)(f => (f.style-edge)(new-middle-path, hide: true))
-      }
-      r2 = (r2.with-caption)([Restructure tree])
-      r2 = (r2.with-step)((kind: "restructure"))
-      r2 = (r2.with-alt)(
+      // Phase B metadata
+      let captions-b = (
+        [Restructure tree],
+        [Reconnect edges],
+        none,
+      )
+      let steps-meta-b = (
+        (kind: "restructure"),
+        (kind: "connect", paths: new-edge-paths),
+        (kind: "settle"),
+      )
+      let alts-b = (
         "Tree restructured: "
           + child-value-str
           + " is now the parent of "
           + parent-value
           + "; rotated edges are still hidden.",
+        "Reconnecting rotated edges.",
+        "Rotation complete.",
       )
 
-      // Frame 5: "connect" — new edges appear in green. `hide: false`
-      // overrides the sticky `hide: true` from the previous snapshot.
-      r2 = (r2.push-with-edge)(
-        new-parent-path,
-        stroke: color.green + 2pt,
-        hide: false,
-      )
-      if has-new-middle {
-        r2 = (r2.patch)(f => (f.style-edge)(
-          new-middle-path,
-          stroke: color.green + 2pt,
-          hide: false,
+      let build-snapshots-b = (bt, _rt) => {
+        let r = tree-anim.make-renderer(after, sticky: true)
+        // Frame 4 (initial): "restructure" — new shape, pivots still
+        // highlighted, rotated edges hidden.
+        r = (r.patch)(f => (f.style-node)(parent-path, stroke: bt.pivot-stroke))
+        r = (r.patch)(f => (f.style-node)(
+          new-parent-path,
+          stroke: bt.pivot-stroke,
         ))
+        r = (r.patch)(f => (f.style-edge)(new-parent-path, hide: true))
+        if has-new-middle {
+          r = (r.patch)(f => (f.style-edge)(new-middle-path, hide: true))
+        }
+        // Frame 5: connect — new edges appear in success-stroke.
+        r = (r.push-with-edge)(
+          new-parent-path,
+          stroke: bt.success-stroke,
+          hide: false,
+        )
+        if has-new-middle {
+          r = (r.patch)(f => (f.style-edge)(
+            new-middle-path,
+            stroke: bt.success-stroke,
+            hide: false,
+          ))
+        }
+        // Frame 6: settle — reset highlights to the theme's reset
+        // stroke (which should look like an unstyled stroke).
+        r = (r.push-with-node)(parent-path, stroke: bt.reset-stroke)
+        r = (r.patch)(f => (f.style-node)(new-parent-path, stroke: bt.reset-stroke))
+        r = (r.patch)(f => (f.style-edge)(new-parent-path, stroke: bt.reset-stroke))
+        if has-new-middle {
+          r = (r.patch)(f => (f.style-edge)(new-middle-path, stroke: bt.reset-stroke))
+        }
+        r.snapshots
       }
-      r2 = (r2.with-caption)([Reconnect edges])
-      r2 = (r2.with-step)((kind: "connect", paths: new-edge-paths))
-      r2 = (r2.with-alt)("Reconnecting rotated edges.")
 
-      // Frame 6: "settle" — reset highlights so the tree reads as the
-      // ordinary post-rotation state.
-      r2 = (r2.push-with-node)(parent-path, stroke: black)
-      r2 = (r2.patch)(f => (f.style-node)(new-parent-path, stroke: black))
-      r2 = (r2.patch)(f => (f.style-edge)(new-parent-path, stroke: black))
-      if has-new-middle {
-        r2 = (r2.patch)(f => (f.style-edge)(new-middle-path, stroke: black))
-      }
-      r2 = (r2.with-step)((kind: "settle"))
-      r2 = (r2.with-alt)("Rotation complete.")
-
-      tree-anim.concat-frames(r1, r2)
+      let frames-a = _make-frames(
+        self,
+        build-snapshots-a,
+        captions-a,
+        steps-meta-a,
+        alts-a,
+        resolved-theme,
+        resolved-render-theme,
+      )
+      let frames-b = _make-frames(
+        after,
+        build-snapshots-b,
+        captions-b,
+        steps-meta-b,
+        alts-b,
+        resolved-theme,
+        resolved-render-theme,
+      )
+      frames-a + frames-b
     },
-    delete-display: (self, v, search: false) => {
+    delete-display: (self, v, search: false, theme: auto, render-theme: auto) => {
       // Animates a deletion. Dispatches on the target's children:
       //   leaf       → highlight, dash edge, then settle (r2's after-tree)
-      //   one child  → highlight, dash both edges, hide, child reattaches green
+      //   one child  → highlight, dash both edges, hide, child reattaches success
       //   two child  → highlight target + descend to predecessor, annotate value
-      //                transfer, settle with green at target slot
+      //                transfer, settle with success at target slot
       //
       // With `search: true`, the deletion is preceded by a
       // search-display-style walk: one "compare" frame per node visited
@@ -551,19 +777,14 @@
       let target-path = (self.by-value)(v)
       let target = (self.resolve)(target-path)
       let after = (self.delete)(v)
-      let dashed-red = (paint: color.red, thickness: 2pt, dash: "dashed")
 
-      let r1 = tree-anim.make-renderer(self, sticky: true)
-      r1 = (r1.with-step)((kind: "init"))
-      r1 = (r1.with-alt)(
-        "Binary search tree: "
-          + (self.describe)()
-          + ". About to delete "
-          + str(v)
-          + ".",
-      )
+      let resolved-theme = _resolve-bst-theme-arg(theme)
+      let resolved-render-theme = _resolve-render-theme-arg(render-theme)
 
-      if search {
+      // Eager: precompute the search-prefix steps (if requested) and the
+      // branch-specific frame counts so the metadata arrays can be built
+      // without re-running per-theme work.
+      let search-steps = if search {
         // `by-value` has already confirmed v is in the tree, so this
         // walk always terminates at a match.
         let walk(node, path) = {
@@ -583,89 +804,76 @@
             (step,) + walk(node.right, path + "R")
           }
         }
-        let steps = walk(self, "")
-        for s in steps {
-          r1 = (r1.push-with-node)(s.path, stroke: color.blue + 2pt)
-          r1 = (r1.patch)(f => (f.note-node)(s.path, s.cmp))
-          r1 = (r1.with-caption)(s.cmp)
-          r1 = (r1.with-step)((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
-          let node-value = str((self.resolve)(s.path).value)
-          let alt = if s.found {
-            "Found target node " + node-value + "; ready to delete."
-          } else {
-            "Comparing " + s.cmp + " at node " + node-value + "; descending."
-          }
-          r1 = (r1.with-alt)(alt)
-        }
-      }
-
-      let r2 = tree-anim.make-renderer(after, sticky: true)
+        walk(self, "")
+      } else { () }
 
       let is-leaf = target.left == none and target.right == none
       let is-one-child = (
         (not is-leaf) and (target.left == none or target.right == none)
       )
 
+      // Phase A metadata + the per-branch eager fixtures used by phase B.
+      let captions-a = (none,)
+      let steps-meta-a = ((kind: "init"),)
+      let alts-a = (
+        "Binary search tree: "
+          + (self.describe)()
+          + ". About to delete "
+          + str(v)
+          + ".",
+      )
+      for s in search-steps {
+        captions-a.push(s.cmp)
+        steps-meta-a.push((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
+        let node-value = str((self.resolve)(s.path).value)
+        let alt = if s.found {
+          "Found target node " + node-value + "; ready to delete."
+        } else {
+          "Comparing " + s.cmp + " at node " + node-value + "; descending."
+        }
+        alts-a.push(alt)
+      }
+
+      let captions-b = ()
+      let steps-meta-b = ()
+      let alts-b = ()
+
       if is-leaf {
-        r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
-        if search { r1 = (r1.patch)(f => (f.clear-notes)()) }
-        r1 = (r1.with-caption)([Delete #v])
-        r1 = (r1.with-step)((kind: "highlight", path: target-path))
-        r1 = (r1.with-alt)("Marked leaf node " + str(v) + " for deletion.")
-
-        r1 = (r1.push-with-edge)(target-path, stroke: dashed-red)
-        r1 = (r1.with-caption)([Remove edge])
-        r1 = (r1.with-step)((kind: "break", path: target-path))
-        r1 = (r1.with-alt)("Removing the edge to node " + str(v) + ".")
-
-        r2 = (r2.with-caption)([Done])
-        r2 = (r2.with-step)((kind: "settle"))
-        r2 = (r2.with-alt)("Deletion of " + str(v) + " complete.")
+        captions-a += ([Delete #v], [Remove edge])
+        steps-meta-a += (
+          (kind: "highlight", path: target-path),
+          (kind: "break", path: target-path),
+        )
+        alts-a += (
+          "Marked leaf node " + str(v) + " for deletion.",
+          "Removing the edge to node " + str(v) + ".",
+        )
+        captions-b.push([Done])
+        steps-meta-b.push((kind: "settle"))
+        alts-b.push("Deletion of " + str(v) + " complete.")
       } else if is-one-child {
         let has-left = target.left != none
         let child-path = target-path + (if has-left { "L" } else { "R" })
         let child-value = str((self.resolve)(child-path).value)
 
-        r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
-        if search { r1 = (r1.patch)(f => (f.clear-notes)()) }
-        r1 = (r1.patch)(f => (f.style-node)(
-          child-path,
-          stroke: color.blue + 2pt,
-        ))
-        r1 = (r1.with-caption)([Delete #v])
-        r1 = (r1.with-step)((kind: "highlight", path: target-path, child: child-path))
-        r1 = (r1.with-alt)(
+        captions-a += ([Delete #v], [Mark edges to remove], [Remove])
+        steps-meta-a += (
+          (kind: "highlight", path: target-path, child: child-path),
+          (kind: "break", paths: (target-path, child-path)),
+          (kind: "break", paths: (target-path, child-path), hidden: true),
+        )
+        alts-a += (
           "Marked node "
             + str(v)
             + " for deletion; its single child "
             + child-value
             + " will be promoted.",
+          "Marking edges around node " + str(v) + " for removal.",
+          "Removed node " + str(v) + " and its edges.",
         )
-
-        r1 = (r1.push-with-edge)(target-path, stroke: dashed-red)
-        r1 = (r1.patch)(f => (f.style-edge)(child-path, stroke: dashed-red))
-        r1 = (r1.with-caption)([Mark edges to remove])
-        r1 = (r1.with-step)((kind: "break", paths: (target-path, child-path)))
-        r1 = (r1.with-alt)("Marking edges around node " + str(v) + " for removal.")
-
-        r1 = (r1.push-with-edge)(target-path, hide: true)
-        r1 = (r1.patch)(f => (f.style-edge)(child-path, hide: true))
-        r1 = (r1.patch)(f => (f.style-node)(target-path, hide: true))
-        r1 = (r1.with-caption)([Remove])
-        r1 = (r1.with-step)((kind: "break", paths: (target-path, child-path), hidden: true))
-        r1 = (r1.with-alt)("Removed node " + str(v) + " and its edges.")
-
-        r2 = (r2.patch)(f => (f.style-node)(
-          target-path,
-          stroke: color.blue + 2pt,
-        ))
-        r2 = (r2.patch)(f => (f.style-edge)(
-          target-path,
-          stroke: color.green + 2pt,
-        ))
-        r2 = (r2.with-caption)([Reattach])
-        r2 = (r2.with-step)((kind: "settle", path: target-path))
-        r2 = (r2.with-alt)(
+        captions-b.push([Reattach])
+        steps-meta-b.push((kind: "settle", path: target-path))
+        alts-b.push(
           "Child "
             + child-value
             + " reattached in place of "
@@ -682,52 +890,36 @@
         let predecessor-path = predecessor-paths.last()
         let predecessor-value = (self.resolve)(predecessor-path).value
 
-        r1 = (r1.push-with-node)(target-path, stroke: color.orange + 2pt)
-        if search { r1 = (r1.patch)(f => (f.clear-notes)()) }
-        r1 = (r1.with-caption)([Delete #v])
-        r1 = (r1.with-step)((kind: "highlight", path: target-path))
-        r1 = (r1.with-alt)(
+        captions-a.push([Delete #v])
+        steps-meta-a.push((kind: "highlight", path: target-path))
+        alts-a.push(
           "Marked node "
             + str(v)
             + " for deletion; it has two children, so an in-order predecessor will replace it.",
         )
-
         for p in predecessor-paths {
-          r1 = (r1.push-with-node)(p, stroke: color.blue + 2pt)
-          r1 = (r1.with-caption)([Find predecessor])
-          r1 = (r1.with-step)((kind: "descend", path: p))
+          captions-a.push([Find predecessor])
+          steps-meta-a.push((kind: "descend", path: p))
           let pv = str((self.resolve)(p).value)
-          r1 = (r1.with-alt)("Descending into the left subtree at node " + pv + ".")
+          alts-a.push("Descending into the left subtree at node " + pv + ".")
         }
-
-        r1 = (r1.push-frame)()
-        r1 = (r1.patch)(f => (f.note-node)(
-          target-path,
-          "← " + str(predecessor-value),
-        ))
-        r1 = (r1.with-caption)[Transfer #predecessor-value]
-        r1 = (r1.with-step)((
+        captions-a.push([Transfer #predecessor-value])
+        steps-meta-a.push((
           kind: "transfer",
           from: predecessor-path,
           to: target-path,
           value: predecessor-value,
         ))
-        r1 = (r1.with-alt)(
+        alts-a.push(
           "Replacing "
             + str(v)
             + " with predecessor value "
             + str(predecessor-value)
             + ".",
         )
-
-        r2 = (r2.patch)(f => (f.style-node)(
-          target-path,
-          stroke: color.green + 3pt,
-          fill: color.green.lighten(70%),
-        ))
-        r2 = (r2.with-caption)([Done])
-        r2 = (r2.with-step)((kind: "settle", path: target-path))
-        r2 = (r2.with-alt)(
+        captions-b.push([Done])
+        steps-meta-b.push((kind: "settle", path: target-path))
+        alts-b.push(
           "Deletion of "
             + str(v)
             + " complete; node now holds "
@@ -736,9 +928,90 @@
         )
       }
 
-      tree-anim.concat-frames(r1, r2)
+      // Theme-dependent snapshot construction. Mirrors the eager
+      // structure above, replacing literal colors/strokes with theme
+      // reads. Each closure is shared across all its phase's frames so
+      // Typst's call cache amortizes the snapshot build.
+      let build-snapshots-a = (bt, _rt) => {
+        let r = tree-anim.make-renderer(self, sticky: true)
+        for s in search-steps {
+          r = (r.push-with-node)(s.path, stroke: bt.search-stroke)
+          r = (r.patch)(f => (f.note-node)(s.path, s.cmp))
+        }
+        if is-leaf {
+          r = (r.push-with-node)(target-path, stroke: bt.pivot-stroke)
+          if search { r = (r.patch)(f => (f.clear-notes)()) }
+          r = (r.push-with-edge)(target-path, stroke: bt.danger-stroke)
+        } else if is-one-child {
+          let has-left = target.left != none
+          let child-path = target-path + (if has-left { "L" } else { "R" })
+          r = (r.push-with-node)(target-path, stroke: bt.pivot-stroke)
+          if search { r = (r.patch)(f => (f.clear-notes)()) }
+          r = (r.patch)(f => (f.style-node)(child-path, stroke: bt.search-stroke))
+          r = (r.push-with-edge)(target-path, stroke: bt.danger-stroke)
+          r = (r.patch)(f => (f.style-edge)(child-path, stroke: bt.danger-stroke))
+          r = (r.push-with-edge)(target-path, hide: true)
+          r = (r.patch)(f => (f.style-edge)(child-path, hide: true))
+          r = (r.patch)(f => (f.style-node)(target-path, hide: true))
+        } else {
+          let walk-max(p) = {
+            let n = (self.resolve)(p)
+            if n.right == none { (p,) } else { (p,) + walk-max(p + "R") }
+          }
+          let predecessor-paths = walk-max(target-path + "L")
+          let predecessor-value = (self.resolve)(predecessor-paths.last()).value
+          r = (r.push-with-node)(target-path, stroke: bt.pivot-stroke)
+          if search { r = (r.patch)(f => (f.clear-notes)()) }
+          for p in predecessor-paths {
+            r = (r.push-with-node)(p, stroke: bt.search-stroke)
+          }
+          r = (r.push-frame)()
+          r = (r.patch)(f => (f.note-node)(
+            target-path,
+            "← " + str(predecessor-value),
+          ))
+        }
+        r.snapshots
+      }
+
+      let build-snapshots-b = (bt, _rt) => {
+        let r = tree-anim.make-renderer(after, sticky: true)
+        if is-leaf {
+          // Single settle frame, no styling.
+        } else if is-one-child {
+          r = (r.patch)(f => (f.style-node)(target-path, stroke: bt.search-stroke))
+          r = (r.patch)(f => (f.style-edge)(target-path, stroke: bt.success-stroke))
+        } else {
+          r = (r.patch)(f => (f.style-node)(
+            target-path,
+            stroke: bt.settled-stroke,
+            fill: bt.success-fill,
+          ))
+        }
+        r.snapshots
+      }
+
+      let frames-a = _make-frames(
+        self,
+        build-snapshots-a,
+        captions-a,
+        steps-meta-a,
+        alts-a,
+        resolved-theme,
+        resolved-render-theme,
+      )
+      let frames-b = _make-frames(
+        after,
+        build-snapshots-b,
+        captions-b,
+        steps-meta-b,
+        alts-b,
+        resolved-theme,
+        resolved-render-theme,
+      )
+      frames-a + frames-b
     },
-    insert-display: (self, v) => {
+    insert-display: (self, v, theme: auto, render-theme: auto) => {
       // Walks the insertion search path, then transitions to the after-tree
       // to show the new node appearing.
       //
@@ -766,10 +1039,13 @@
       let after = (self.insert)(v)
       let new-path = (after.by-value)(v)
 
-      // Phase A: search on the before-tree, with running comparisons.
-      let r1 = tree-anim.make-renderer(self, sticky: true)
-      r1 = (r1.with-step)((kind: "init"))
-      r1 = (r1.with-alt)(
+      let resolved-theme = _resolve-bst-theme-arg(theme)
+      let resolved-render-theme = _resolve-render-theme-arg(render-theme)
+
+      // Phase A metadata.
+      let captions-a = (none,)
+      let steps-meta-a = ((kind: "init"),)
+      let alts-a = (
         "Binary search tree: "
           + (self.describe)()
           + ". About to insert "
@@ -777,10 +1053,8 @@
           + ".",
       )
       for (i, s) in steps.enumerate() {
-        r1 = (r1.push-with-node)(s.path, stroke: color.blue + 2pt)
-        r1 = (r1.patch)(f => (f.note-node)(s.path, s.cmp))
-        r1 = (r1.with-caption)(s.cmp)
-        r1 = (r1.with-step)((kind: "compare", path: s.path, cmp: s.cmp))
+        captions-a.push(s.cmp)
+        steps-meta-a.push((kind: "compare", path: s.path, cmp: s.cmp))
         let node-value = str((self.resolve)(s.path).value)
         let is-last = i == steps.len() - 1
         let alt = if is-last {
@@ -794,28 +1068,59 @@
         } else {
           "Comparing " + s.cmp + " at node " + node-value + "; descending."
         }
-        r1 = (r1.with-alt)(alt)
+        alts-a.push(alt)
       }
 
-      // Phase B: after-tree as a single frame — search-path highlights
-      // carry forward (without notes) and the new node appears in green
-      // at the same time. The extra "just-appeared but not yet green"
-      // intermediate frame added no information, so it's elided.
-      let r2 = tree-anim.make-renderer(after, sticky: true)
-      for p in search-paths {
-        r2 = (r2.patch)(f => (f.style-node)(p, stroke: color.blue + 2pt))
+      let build-snapshots-a = (bt, _rt) => {
+        let r = tree-anim.make-renderer(self, sticky: true)
+        for s in steps {
+          r = (r.push-with-node)(s.path, stroke: bt.search-stroke)
+          r = (r.patch)(f => (f.note-node)(s.path, s.cmp))
+        }
+        r.snapshots
       }
-      r2 = (r2.patch)(f => (f.style-node)(
-        new-path,
-        stroke: color.green + 3pt,
-        fill: color.green.lighten(70%),
-      ))
-      r2 = (r2.patch)(f => (f.style-edge)(new-path, stroke: color.green + 2pt))
-      r2 = (r2.with-caption)[Inserted #v]
-      r2 = (r2.with-step)((kind: "inserted", path: new-path))
-      r2 = (r2.with-alt)("Inserted " + str(v) + " as a new leaf.")
 
-      tree-anim.concat-frames(r1, r2)
+      // Phase B: single after-tree frame — search-path highlights carry
+      // forward (without notes) and the new node appears at the same
+      // time. The extra "just-appeared but not yet styled" intermediate
+      // frame added no information, so it's elided.
+      let captions-b = ([Inserted #v],)
+      let steps-meta-b = ((kind: "inserted", path: new-path),)
+      let alts-b = ("Inserted " + str(v) + " as a new leaf.",)
+
+      let build-snapshots-b = (bt, _rt) => {
+        let r = tree-anim.make-renderer(after, sticky: true)
+        for p in search-paths {
+          r = (r.patch)(f => (f.style-node)(p, stroke: bt.search-stroke))
+        }
+        r = (r.patch)(f => (f.style-node)(
+          new-path,
+          stroke: bt.settled-stroke,
+          fill: bt.success-fill,
+        ))
+        r = (r.patch)(f => (f.style-edge)(new-path, stroke: bt.success-stroke))
+        r.snapshots
+      }
+
+      let frames-a = _make-frames(
+        self,
+        build-snapshots-a,
+        captions-a,
+        steps-meta-a,
+        alts-a,
+        resolved-theme,
+        resolved-render-theme,
+      )
+      let frames-b = _make-frames(
+        after,
+        build-snapshots-b,
+        captions-b,
+        steps-meta-b,
+        alts-b,
+        resolved-theme,
+        resolved-render-theme,
+      )
+      frames-a + frames-b
     },
   ),
 )

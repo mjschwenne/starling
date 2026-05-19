@@ -14,7 +14,12 @@
 /// suppress numbering and supplements so they don't change the
 /// visible layout.
 
-#import "./bst.typ": make-bst
+#import "./bst.typ": (
+  BST,
+  default-bst-theme,
+  set-bst-theme,
+  BstTheme,
+)
 #import "./tree-anim.typ"
 #import "./tree-anim.typ": (
   PathId,
@@ -30,16 +35,10 @@
   apply-ops,
   draw-tree,
   path-anchor,
+  default-render-theme,
+  set-render-theme,
+  RenderTheme,
 )
-
-/// The default BST class. Build a tree via
-/// #raw("(BST.new)(value:, label:, left:, right:)") — set
-/// #raw("label: auto") to render the integer #raw("value") as the
-/// drawn label, or pass content (a string, image, or arbitrary content)
-/// for custom labels. Call its #raw("*-display") methods (see the BST
-/// API section of the manual) to get animation frames; pass those
-/// frames through one of the helpers below.
-#let BST = make-bst()
 
 // Private helpers — kept as regular comments so tidy ignores them.
 //
