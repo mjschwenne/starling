@@ -48,12 +48,34 @@
   p => p.codepoints().all(c => c == "L" or c == "R"),
 )
 
-#let _node-style-keys = ("fill", "stroke", "text-fill", "note", "note-fill", "hide")
-#let _edge-style-keys = ("stroke", "note", "note-fill", "mark", "hide")
+#let _node-style-keys = (
+  "fill",
+  "stroke",
+  "text-fill",
+  "note",
+  "note-fill",
+  "hide",
+  "shape",
+)
+#let _edge-style-keys = (
+  "stroke",
+  "note",
+  "note-fill",
+  "mark",
+  "hide",
+  "parent-anchor",
+  "child-anchor",
+)
 
 /// Typsy refinement: a dictionary of node-style overrides. Recognised
 /// keys are #raw("fill"), #raw("stroke"), #raw("text-fill"),
-/// #raw("note"), #raw("note-fill"), and #raw("hide").
+/// #raw("note"), #raw("note-fill"), #raw("hide"), and #raw("shape").
+/// #raw("shape") accepts the string #raw("\"circle\"") (default),
+/// #raw("\"triangle\"") (apex up; useful as a subtree-summary marker),
+/// or #raw("\"rectangle\""). The triangle and rectangle share a
+/// 1.4×1.2 bounding box; the circle keeps its 1.2×1.2 footprint.
+/// Named cetz anchors on the node's group (#raw("north"), #raw("south"),
+/// #raw("east"), #raw("west")) follow each shape's bounding box.
 #let NodeStyle = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _node-style-keys.contains(k)),
@@ -61,7 +83,12 @@
 
 /// Typsy refinement: a dictionary of edge-style overrides. Recognised
 /// keys are #raw("stroke"), #raw("note"), #raw("note-fill"),
-/// #raw("mark"), and #raw("hide").
+/// #raw("mark"), #raw("hide"), #raw("parent-anchor"), and
+/// #raw("child-anchor"). The two #raw("*-anchor") keys accept a cetz
+/// anchor name (e.g. #raw("\"north\"")) and override the default
+/// fractional-distance endpoint on the parent or child side
+/// respectively; useful for connecting edges to non-circular shapes
+/// (e.g. #raw("child-anchor: \"north\"") to land on a triangle's apex).
 #let EdgeStyle = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _edge-style-keys.contains(k)),
@@ -405,12 +432,38 @@
           snapshot.nodes.at(path, default: (:)),
         )
         if s.at("hide", default: false) { return }
-        draw.circle(
-          (),
-          radius: 0.6,
-          fill: s.at("fill", default: render-theme.node-fill),
-          stroke: s.at("stroke", default: render-theme.node-stroke),
-        )
+        // Shape dispatch. New shapes go here; keep bounding boxes
+        // sensible so the named cetz anchors (north/south/east/west on
+        // the node group) land where users expect, since the edge
+        // anchor overrides reference them.
+        let shape = s.at("shape", default: "circle")
+        let fill-c = s.at("fill", default: render-theme.node-fill)
+        let stroke-c = s.at("stroke", default: render-theme.node-stroke)
+        if shape == "circle" {
+          draw.circle((), radius: 0.6, fill: fill-c, stroke: stroke-c)
+        } else if shape == "triangle" {
+          draw.line(
+            (0, 0.6),
+            (-0.7, -0.6),
+            (0.7, -0.6),
+            close: true,
+            fill: fill-c,
+            stroke: stroke-c,
+          )
+        } else if shape == "rectangle" {
+          draw.rect(
+            (-0.7, -0.6),
+            (0.7, 0.6),
+            fill: fill-c,
+            stroke: stroke-c,
+          )
+        } else {
+          panic(
+            "draw-tree: unknown node shape "
+              + repr(shape)
+              + "; supported: \"circle\", \"triangle\", \"rectangle\".",
+          )
+        }
         let tf = s.at("text-fill", default: render-theme.node-text-fill)
         // Bold the label via `weight:` rather than `*..*` markup so a
         // user `show strong: set text(fill: ..)` rule in the document
@@ -418,7 +471,12 @@
         // in `_text-fill-for` exists precisely so labels stay readable
         // against gradient-filled traversal nodes, and we don't want it
         // silently undone by ambient styling.
-        draw.content((), text(weight: "bold", fill: tf, label))
+        // Anchor explicitly at the group origin rather than `()` (the
+        // previous cetz coordinate). After a `draw.line(..)` or
+        // `draw.rect(..)`, the previous coordinate is the last vertex
+        // or corner of the shape, not its center — so `()` here would
+        // place the label at the corner.
+        draw.content((0, 0), text(weight: "bold", fill: tf, label))
         let n = s.at("note", default: none)
         if n != none {
           let nf = s.at("note-fill", default: render-theme.note-fill)
@@ -439,9 +497,25 @@
         )
         if s.at("hide", default: false) { return }
         let mark = s.at("mark", default: none)
+        // Endpoint resolution. Default is the empirical 0.4-fractional
+        // trick (lands cleanly in the gap between two circle nodes); a
+        // `parent-anchor` / `child-anchor` override swaps that side
+        // for a named cetz anchor on the node group, which is how
+        // non-circular shapes (triangle apex, etc.) get clean
+        // connections.
+        let parent-coord = if "parent-anchor" in s {
+          from.group-name + "." + s.at("parent-anchor")
+        } else {
+          (from.group-name, 0.4, to.group-name)
+        }
+        let child-coord = if "child-anchor" in s {
+          to.group-name + "." + s.at("child-anchor")
+        } else {
+          (to.group-name, 0.4, from.group-name)
+        }
         draw.line(
-          (from.group-name, 0.4, to.group-name),
-          (to.group-name, 0.4, from.group-name),
+          parent-coord,
+          child-coord,
           stroke: s.at("stroke", default: render-theme.edge-stroke),
           ..if mark != none { (mark: mark) },
         )

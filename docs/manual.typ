@@ -771,6 +771,72 @@ directly between Op batches. The split keeps each Op's responsibility
 narrow (modifying the current snapshot) and matches how the
 `*-display` methods are written internally.
 
+== Custom shapes and edge anchors
+
+Two node-style and edge-style keys let you swap the default circular
+node for a triangle or rectangle and steer where the incoming or
+outgoing edge connects:
+
+- `shape` (node style) accepts `"circle"` (default), `"triangle"`
+  (apex up), or `"rectangle"`. The triangle and rectangle share a
+  1.4×1.2 bounding box; the circle keeps its 1.2×1.2 footprint.
+- `parent-anchor` / `child-anchor` (edge style) accept a cetz anchor
+  name like `"north"` or `"south"` and override the edge endpoint on
+  the parent or child side respectively. The default for both stays
+  the empirical fractional-distance trick that looks clean between
+  two circles.
+
+The canonical use case is using a triangle to stand in for an entire
+subtree — a common pattern when only the top-level shape matters and
+the details would clutter the slide. Because the triangle's apex sits
+at the `north` anchor of its bounding box, an incoming edge with
+`child-anchor: "north"` lands cleanly on the tip:
+
+```typ
+#let t = (starling.BST.new)(value: 5, label: auto, left: none, right: none)
+#let t = (t.insert-many)(2, 8, 1, 3)
+
+#let ops = (
+  (starling.Op.StyleNode.new)(path: "L", style: (shape: "triangle", fill: aqua.lighten(60%))),
+  (starling.Op.StyleEdge.new)(path: "L", style: (child-anchor: "north")),
+  (starling.Op.StyleNode.new)(path: "LL", style: (hide: true)),
+  (starling.Op.StyleNode.new)(path: "LR", style: (hide: true)),
+  (starling.Op.StyleEdge.new)(path: "LL", style: (hide: true)),
+  (starling.Op.StyleEdge.new)(path: "LR", style: (hide: true)),
+  (starling.Op.Alt.new)(text: "Left subtree summarised as a triangle."),
+)
+#let r = starling.apply-ops(starling.make-renderer(t, sticky: true), ops)
+#starling.last((r.render)())
+```
+
+#let subtree-tree = (starling.BST.new)(value: 5, label: auto, left: none, right: none)
+#let subtree-tree = (subtree-tree.insert-many)(2, 8, 1, 3)
+#let subtree-ops = (
+  (starling.Op.StyleNode.new)(
+    path: "L",
+    style: (shape: "triangle", fill: aqua.lighten(60%)),
+  ),
+  (starling.Op.StyleEdge.new)(path: "L", style: (child-anchor: "north")),
+  (starling.Op.StyleNode.new)(path: "LL", style: (hide: true)),
+  (starling.Op.StyleNode.new)(path: "LR", style: (hide: true)),
+  (starling.Op.StyleEdge.new)(path: "LL", style: (hide: true)),
+  (starling.Op.StyleEdge.new)(path: "LR", style: (hide: true)),
+  (starling.Op.Alt.new)(text: "Left subtree summarised as a triangle."),
+)
+#let subtree-r = (starling.apply-ops)(
+  starling.make-renderer(subtree-tree, sticky: true),
+  subtree-ops,
+)
+
+#align(center, starling.last((subtree-r.render)()))
+
+Shape and anchor are deliberately independent — the library doesn't
+auto-set `child-anchor: "north"` when you switch a node to a triangle,
+because there are legitimate uses for the default endpoint behavior
+even on non-circular shapes (e.g. a labelled rectangle whose edges you
+want pulled toward its center rather than flush against its top).
+When you want flush meeting points, set the anchors yourself.
+
 = API reference
 
 The remainder of this manual is an auto-generated reference, produced
