@@ -391,36 +391,63 @@
       }
     },
     rotate: (self, child) => {
+      // Rotate around `child` — anywhere in the tree, not just at
+      // the root. `child` is located via BST search on `child.value`;
+      // its parent and the direction (left/right) are inferred.
       let cls = self.meta.cls
-      if self.left != none and self.left.value == child.value {
-        // child is left child of self -> right rotation
+      let child-path = (self.by-value)(child.value)
+      if child-path == "" {
+        panic("rotate: cannot rotate the root with itself")
+      }
+      let parent-path = child-path.slice(0, child-path.len() - 1)
+      let parent = (self.resolve)(parent-path)
+      let is-right = child-path.last() == "L"
+      let rotated = if is-right {
+        // child is left child of parent -> right rotation
         (cls.new)(
           value: child.value,
           label: child.label,
           left: child.left,
           right: (cls.new)(
-            value: self.value,
-            label: self.label,
+            value: parent.value,
+            label: parent.label,
             left: child.right,
-            right: self.right,
+            right: parent.right,
           ),
         )
-      } else if self.right != none and self.right.value == child.value {
-        // child is right child of self -> left rotation
+      } else {
+        // child is right child of parent -> left rotation
         (cls.new)(
           value: child.value,
           label: child.label,
           left: (cls.new)(
-            value: self.value,
-            label: self.label,
-            left: self.left,
+            value: parent.value,
+            label: parent.label,
+            left: parent.left,
             right: child.left,
           ),
           right: child.right,
         )
-      } else {
-        panic("child must be a direct child of parent")
       }
+      // Splice the rotated subtree back into the full tree.
+      let replace-at(tree, path, new-subtree) = if path == "" {
+        new-subtree
+      } else if path.first() == "L" {
+        (cls.new)(
+          value: tree.value,
+          label: tree.label,
+          left: replace-at(tree.left, path.slice(1), new-subtree),
+          right: tree.right,
+        )
+      } else {
+        (cls.new)(
+          value: tree.value,
+          label: tree.label,
+          left: tree.left,
+          right: replace-at(tree.right, path.slice(1), new-subtree),
+        )
+      }
+      replace-at(self, parent-path, rotated)
     },
     describe: self => {
       if self.left == none and self.right == none {
@@ -608,7 +635,6 @@
       //   4. "restructure" — switch to after-tree, new edges still hidden
       //   5. "connect"     — new edges appear in success-stroke
       //   6. "settle"      — highlights cleared, final settled tree
-      let cls = self.meta.cls
       let child-value = child.value
       let child-path = (self.by-value)(child-value)
       if child-path == "" {
@@ -621,26 +647,7 @@
       let parent-path = child-path.slice(0, child-path.len() - 1)
       let parent-subtree = (self.resolve)(parent-path)
       let is-right = child-path.last() == "L"
-
-      // Splice the rotated parent-subtree back into the full tree.
-      let replace-at(tree, path, new-subtree) = if path == "" {
-        new-subtree
-      } else if path.first() == "L" {
-        (cls.new)(
-          value: tree.value,
-          label: tree.label,
-          left: replace-at(tree.left, path.slice(1), new-subtree),
-          right: tree.right,
-        )
-      } else {
-        (cls.new)(
-          value: tree.value,
-          label: tree.label,
-          left: tree.left,
-          right: replace-at(tree.right, path.slice(1), new-subtree),
-        )
-      }
-      let after = replace-at(self, parent-path, (parent-subtree.rotate)(child))
+      let after = (self.rotate)(child)
 
       // For non-root rotations the grandparent-to-subtree edge
       // (whose path-id is `parent-path` itself) must also break and

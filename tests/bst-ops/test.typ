@@ -158,3 +158,12 @@
 #assert.eq(tr2r.label, "one")
 #assert.eq(tr2r.right.value, 2)
 #assert.eq(tr2r.right.label, "two")
+
+// rotate accepts any node in the tree, not just a direct child of
+// the root. Rotating around `t.left.right` (= node 3 at path "LR")
+// should pivot 3 above 1 within the left subtree, leaving 4 as root.
+#let trd = (t.rotate)(t.left.right)
+#assert.eq(
+  (trd.describe)(),
+  "4 (left: 3 (left: 1 (left: 0, right: 2), right: empty), right: 7 (left: empty, right: 8))",
+)
