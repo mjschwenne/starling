@@ -642,21 +642,31 @@
       }
       let after = replace-at(self, parent-path, (parent-subtree.rotate)(child))
 
+      // For non-root rotations the grandparent-to-subtree edge
+      // (whose path-id is `parent-path` itself) must also break and
+      // reconnect — otherwise the new subtree root visibly "snaps"
+      // onto the grandparent without animation.
+      let has-grandparent = parent-path != ""
+
       // BEFORE path-ids (absolute, relative to the full tree).
       // Middle child of `child` that moves to the parent after rotation.
       let middle-path = parent-path + (if is-right { "LR" } else { "RL" })
       let has-middle = (self.resolve)(middle-path) != none
-      let broken-paths = if has-middle {
-        (child-path, middle-path)
-      } else { (child-path,) }
+      let broken-paths = (
+        (if has-grandparent { (parent-path,) } else { () })
+          + (child-path,)
+          + (if has-middle { (middle-path,) } else { () })
+      )
 
       // AFTER path-ids
       let new-parent-path = parent-path + (if is-right { "R" } else { "L" })
       let new-middle-path = parent-path + (if is-right { "RL" } else { "LR" })
       let has-new-middle = (after.resolve)(new-middle-path) != none
-      let new-edge-paths = if has-new-middle {
-        (new-parent-path, new-middle-path)
-      } else { (new-parent-path,) }
+      let new-edge-paths = (
+        (if has-grandparent { (parent-path,) } else { () })
+          + (new-parent-path,)
+          + (if has-new-middle { (new-middle-path,) } else { () })
+      )
 
       let direction = if is-right { "right" } else { "left" }
       let parent-value = str(parent-subtree.value)
@@ -702,6 +712,9 @@
         if has-middle {
           r = (r.patch)(f => (f.style-edge)(middle-path, hide: true))
         }
+        if has-grandparent {
+          r = (r.patch)(f => (f.style-edge)(parent-path, hide: true))
+        }
         r.snapshots
       }
 
@@ -739,6 +752,9 @@
         if has-new-middle {
           r = (r.patch)(f => (f.style-edge)(new-middle-path, hide: true))
         }
+        if has-grandparent {
+          r = (r.patch)(f => (f.style-edge)(parent-path, hide: true))
+        }
         // Frame 5: connect — new edges appear in success-stroke.
         r = (r.push-with-edge)(
           new-parent-path,
@@ -752,6 +768,13 @@
             hide: false,
           ))
         }
+        if has-grandparent {
+          r = (r.patch)(f => (f.style-edge)(
+            parent-path,
+            stroke: bt.success-stroke,
+            hide: false,
+          ))
+        }
         // Frame 6: settle — reset highlights to the theme's reset
         // stroke (which should look like an unstyled stroke).
         r = (r.push-with-node)(parent-path, stroke: bt.reset-stroke)
@@ -759,6 +782,9 @@
         r = (r.patch)(f => (f.style-edge)(new-parent-path, stroke: bt.reset-stroke))
         if has-new-middle {
           r = (r.patch)(f => (f.style-edge)(new-middle-path, stroke: bt.reset-stroke))
+        }
+        if has-grandparent {
+          r = (r.patch)(f => (f.style-edge)(parent-path, stroke: bt.reset-stroke))
         }
         r.snapshots
       }
