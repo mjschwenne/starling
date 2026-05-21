@@ -34,7 +34,7 @@
 #starling.stacked((t.delete-display)(1))
 
 == Rotate (state-driven theme)
-#starling.stacked((t.rotate-display)(1))
+#starling.stacked((t.rotate-display)((t.resolve)("L")))
 
 == In-order traversal (state-driven theme)
 #starling.stacked((t.in-order-display)())

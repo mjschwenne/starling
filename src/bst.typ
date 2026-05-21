@@ -595,10 +595,11 @@
         _resolve-render-theme-arg(render-theme),
       )
     },
-    rotate-display: (self, child-value, theme: auto, render-theme: auto) => {
-      // Animates a rotation at the root of `self`. `child-value` must
-      // match a direct child of self; the direction (left/right) is
-      // inferred.
+    rotate-display: (self, child, theme: auto, render-theme: auto) => {
+      // Animates a rotation around `child` — anywhere in the tree,
+      // not just at the root. `child` is the BST node that should
+      // become the new subtree root; its BST parent and the rotation
+      // direction (left/right) are inferred from the search path.
       //
       // Six-frame sequence (step.kind):
       //   1. "init"        — before-tree, no styling
@@ -607,39 +608,58 @@
       //   4. "restructure" — switch to after-tree, new edges still hidden
       //   5. "connect"     — new edges appear in success-stroke
       //   6. "settle"      — highlights cleared, final settled tree
-      let is-right = self.left != none and self.left.value == child-value
-      let is-left = self.right != none and self.right.value == child-value
-      if not (is-right or is-left) {
+      let cls = self.meta.cls
+      let child-value = child.value
+      let child-path = (self.by-value)(child-value)
+      if child-path == "" {
         panic(
-          "rotate-display: "
+          "rotate-display: cannot rotate around root node "
             + str(child-value)
-            + " is not a direct child of "
-            + str(self.value),
+            + "; child must have a parent.",
         )
       }
-      let child = if is-right { self.left } else { self.right }
-      let after = (self.rotate)(child)
+      let parent-path = child-path.slice(0, child-path.len() - 1)
+      let parent-subtree = (self.resolve)(parent-path)
+      let is-right = child-path.last() == "L"
 
-      // BEFORE path-ids
-      let parent-path = ""
-      let child-path = if is-right { "L" } else { "R" }
+      // Splice the rotated parent-subtree back into the full tree.
+      let replace-at(tree, path, new-subtree) = if path == "" {
+        new-subtree
+      } else if path.first() == "L" {
+        (cls.new)(
+          value: tree.value,
+          label: tree.label,
+          left: replace-at(tree.left, path.slice(1), new-subtree),
+          right: tree.right,
+        )
+      } else {
+        (cls.new)(
+          value: tree.value,
+          label: tree.label,
+          left: tree.left,
+          right: replace-at(tree.right, path.slice(1), new-subtree),
+        )
+      }
+      let after = replace-at(self, parent-path, (parent-subtree.rotate)(child))
+
+      // BEFORE path-ids (absolute, relative to the full tree).
       // Middle child of `child` that moves to the parent after rotation.
-      let middle-path = if is-right { "LR" } else { "RL" }
+      let middle-path = parent-path + (if is-right { "LR" } else { "RL" })
       let has-middle = (self.resolve)(middle-path) != none
       let broken-paths = if has-middle {
         (child-path, middle-path)
       } else { (child-path,) }
 
       // AFTER path-ids
-      let new-parent-path = if is-right { "R" } else { "L" }
-      let new-middle-path = if is-right { "RL" } else { "LR" }
+      let new-parent-path = parent-path + (if is-right { "R" } else { "L" })
+      let new-middle-path = parent-path + (if is-right { "RL" } else { "LR" })
       let has-new-middle = (after.resolve)(new-middle-path) != none
       let new-edge-paths = if has-new-middle {
         (new-parent-path, new-middle-path)
       } else { (new-parent-path,) }
 
       let direction = if is-right { "right" } else { "left" }
-      let parent-value = str(self.value)
+      let parent-value = str(parent-subtree.value)
       let child-value-str = str(child-value)
 
       let resolved-theme = _resolve-bst-theme-arg(theme)

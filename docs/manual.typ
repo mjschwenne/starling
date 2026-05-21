@@ -473,11 +473,12 @@ with the new root of the affected subtree highlighted green.
 
 == Rotate
 
-`(t.rotate-display)(c)` rotates around the direct child whose value
-is `c`. The six-frame sequence is described in
-@the-six-frame-rotation.
+`(t.rotate-display)(c)` rotates around node `c` — any node in the
+tree with a parent, not just a direct child of the root. The
+direction (left/right) is inferred from `c`'s position in the BST.
+The six-frame sequence is described in @the-six-frame-rotation.
 
-#align(center, starling.stacked((tour.rotate-display)(1)))
+#align(center, starling.stacked((tour.rotate-display)((tour.resolve)("L"))))
 
 == Traversals
 

@@ -9,4 +9,9 @@
 #let t = (t.insert)(6)
 #let t = (t.insert)(8)
 
-#starling.stacked((t.rotate-display)(1))
+#starling.stacked((t.rotate-display)((t.resolve)("L")))
+
+// Rotation around a non-root parent — verifies `rotate-display`
+// can rotate any parent/child pair, not just direct children of
+// the root.
+#starling.stacked((t.rotate-display)((t.resolve)("RL")))

@@ -435,10 +435,16 @@
         // Shape dispatch. New shapes go here; keep bounding boxes
         // sensible so the named cetz anchors (north/south/east/west on
         // the node group) land where users expect, since the edge
-        // anchor overrides reference them.
+        // anchor overrides reference them. `label-pos` shifts the
+        // label off the geometric origin for shapes that taper — a
+        // triangle's apex narrows to nothing at the top, so its
+        // label sits at the centroid (y = -0.2) where the shape is
+        // wide enough to host larger fonts without clipping the
+        // sloped sides.
         let shape = s.at("shape", default: "circle")
         let fill-c = s.at("fill", default: render-theme.node-fill)
         let stroke-c = s.at("stroke", default: render-theme.node-stroke)
+        let label-pos = (0, 0)
         if shape == "circle" {
           draw.circle((), radius: 0.6, fill: fill-c, stroke: stroke-c)
         } else if shape == "triangle" {
@@ -450,6 +456,7 @@
             fill: fill-c,
             stroke: stroke-c,
           )
+          label-pos = (0, -0.2)
         } else if shape == "rectangle" {
           draw.rect(
             (-0.7, -0.6),
@@ -471,12 +478,11 @@
         // in `_text-fill-for` exists precisely so labels stay readable
         // against gradient-filled traversal nodes, and we don't want it
         // silently undone by ambient styling.
-        // Anchor explicitly at the group origin rather than `()` (the
-        // previous cetz coordinate). After a `draw.line(..)` or
-        // `draw.rect(..)`, the previous coordinate is the last vertex
-        // or corner of the shape, not its center — so `()` here would
-        // place the label at the corner.
-        draw.content((0, 0), text(weight: "bold", fill: tf, label))
+        // Anchor explicitly at `label-pos` (set by the shape branch
+        // above) rather than `()` (the previous cetz coordinate).
+        // After `draw.line(..)` or `draw.rect(..)`, the previous
+        // coordinate is the last vertex/corner, not the centre.
+        draw.content(label-pos, text(weight: "bold", fill: tf, label))
         let n = s.at("note", default: none)
         if n != none {
           let nf = s.at("note-fill", default: render-theme.note-fill)
