@@ -1,7 +1,17 @@
-#import "@preview/typsy:0.2.2": Any, Int, Bool, None, Union, class
+#import "@preview/typsy:0.2.2": (
+  Any,
+  Int,
+  Bool,
+  None,
+  Refine,
+  Dictionary,
+  Union,
+  class,
+)
+#import "./tree-anim.typ" as tree-anim
 
 // ===================================================================
-// Red-black tree — core data structure (no animations yet)
+// Red-black tree — core data structure + display
 // ===================================================================
 //
 // A BST variant with an extra `red: Bool` field per node, plus
@@ -253,6 +263,135 @@
   }
 } else {
   _app(cls, node.left, node.right)
+}
+
+// ===================================================================
+// RBT theme — the red/black color palette
+// ===================================================================
+//
+// A small semantic layer above `default-render-theme` that supplies
+// the per-node colors for red and black nodes. Operation-specific
+// highlights (search/insert/delete/pivot strokes) will live elsewhere
+// when the `*-display` methods land — this dict is just the palette.
+//
+// Each role is a plain color (or a stroke value cetz accepts). Defaults
+// are the obvious choice: a red fill for red nodes, a black fill for
+// black nodes, white text on both. Strokes match the fill so the node
+// reads as a solid disc; override `red-stroke` / `black-stroke` if you
+// want a contrasting border.
+
+/// Default semantic theme for the RB tree palette. Pass a partial dict
+/// to #raw("set-rbt-theme(..)") to override individual roles.
+#let default-rbt-theme = (
+  red-fill: red,
+  red-stroke: red,
+  red-text-fill: white,
+  black-fill: black,
+  black-stroke: black,
+  black-text-fill: white,
+)
+
+#let _rbt-theme-keys = (
+  "red-fill",
+  "red-stroke",
+  "red-text-fill",
+  "black-fill",
+  "black-stroke",
+  "black-text-fill",
+)
+
+/// Typsy refinement: a dictionary whose keys are a subset of the
+/// RBT-theme keys. Used by #raw("set-rbt-theme") and the per-call
+/// #raw("theme:") arguments to give early errors on typos.
+#let RbtTheme = Refine(
+  Dictionary(..Any),
+  d => d.keys().all(k => _rbt-theme-keys.contains(k)),
+)
+
+#let _rbt-theme-state = state("starling:rbt-theme", default-rbt-theme)
+
+/// Override one or more RBT-theme keys for the rest of the document
+/// (state-based, scoped by Typst's normal layout flow). Pass a partial
+/// dictionary — only the keys you list are changed; the rest stay at
+/// their current values. Unknown keys panic.
+#let set-rbt-theme(theme) = {
+  for k in theme.keys() {
+    if not _rbt-theme-keys.contains(k) {
+      panic(
+        "set-rbt-theme: unknown key '"
+          + k
+          + "'. Valid keys: "
+          + _rbt-theme-keys.join(", ")
+          + ".",
+      )
+    }
+  }
+  _rbt-theme-state.update(prev => {
+    let next = prev
+    for (k, v) in theme.pairs() { next.insert(k, v) }
+    next
+  })
+}
+
+// Merge a partial rbt-theme override into `default-rbt-theme`,
+// panicking on unknown keys. Used by per-call `theme:` arguments
+// (the non-state path).
+#let _merge-rbt-theme(override) = {
+  for k in override.keys() {
+    if not _rbt-theme-keys.contains(k) {
+      panic(
+        "rbt-theme: unknown key '"
+          + k
+          + "'. Valid keys: "
+          + _rbt-theme-keys.join(", ")
+          + ".",
+      )
+    }
+  }
+  let next = default-rbt-theme
+  for (k, v) in override.pairs() { next.insert(k, v) }
+  next
+}
+
+#let _resolve-rbt-theme-arg(theme) = if theme == auto {
+  auto
+} else { _merge-rbt-theme(theme) }
+#let _resolve-render-theme-arg(theme) = if theme == auto {
+  auto
+} else { tree-anim._merge-render-theme(theme) }
+
+// ===================================================================
+// Frame construction for RBT displays
+// ===================================================================
+//
+// Parallel to bst.typ's `_make-frames`, but reads `_rbt-theme-state`
+// instead of `_bst-theme-state`. The BST theme arg supplied by the
+// lib.typ render helpers is ignored — RBT frames have no use for it
+// yet (operation-specific stroke colors come later, when the
+// `*-display` methods land). Each lib.typ helper wraps itself in one
+// `context { }` block, so the inline `_rbt-theme-state.get()` inside
+// the builder runs in a context as required.
+#let _make-frames-rbt(
+  tree,
+  build-snapshots,
+  captions,
+  steps-meta,
+  alts,
+  theme,
+  render-theme,
+) = {
+  let n = captions.len()
+  range(n).map(i => (tree-anim.Frame.new)(
+    _builder: (fn: (_bt-arg, rt-arg) => {
+      let rbt = if theme == auto { _rbt-theme-state.get() } else { theme }
+      let rt = if render-theme == auto { rt-arg } else { render-theme }
+      let snaps = build-snapshots(rbt, rt)
+      tree-anim._render-canvas(tree, snaps.at(i), (:), (:), rt)
+    }),
+    caption: captions.at(i),
+    step: steps-meta.at(i),
+    alt: alts.at(i),
+  ))
 }
 
 // ===================================================================
@@ -516,6 +655,42 @@
       }
       let _ = bh(self)
       true
+    },
+    display: (self, theme: auto, render-theme: auto) => {
+      // Returns a one-element Frame array — the static tree, with each
+      // node colored from the active RBT palette by its `red` field.
+      // `step` is none.
+      let captions = (none,)
+      let steps-meta = (none,)
+      let alts = ("Red-black tree: " + (self.describe)() + ".",)
+      let paths = (self.pre-order)()
+      let build-snapshots = (rbt, _rt) => {
+        let r = tree-anim.make-renderer(self)
+        for p in paths {
+          let n = (self.resolve)(p)
+          let fill = if n.red { rbt.red-fill } else { rbt.black-fill }
+          let stroke = if n.red { rbt.red-stroke } else { rbt.black-stroke }
+          let text-fill = if n.red {
+            rbt.red-text-fill
+          } else { rbt.black-text-fill }
+          r = (r.patch)(f => (f.style-node)(
+            p,
+            fill: fill,
+            stroke: stroke,
+            text-fill: text-fill,
+          ))
+        }
+        r.snapshots
+      }
+      _make-frames-rbt(
+        self,
+        build-snapshots,
+        captions,
+        steps-meta,
+        alts,
+        _resolve-rbt-theme-arg(theme),
+        _resolve-render-theme-arg(render-theme),
+      )
     },
   ),
 )

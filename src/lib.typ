@@ -21,7 +21,13 @@
   BstTheme,
   _bst-theme-state,
 )
-#import "./rbt.typ": RBT
+#import "./rbt.typ": (
+  RBT,
+  default-rbt-theme,
+  set-rbt-theme,
+  RbtTheme,
+  _rbt-theme-state,
+)
 #import "./tree-anim.typ"
 #import "./tree-anim.typ": (
   PathId,
