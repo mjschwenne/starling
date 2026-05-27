@@ -21,6 +21,7 @@
   BstTheme,
   _bst-theme-state,
 )
+#import "./rbt.typ": RBT
 #import "./tree-anim.typ"
 #import "./tree-anim.typ": (
   PathId,
