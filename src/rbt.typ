@@ -93,55 +93,21 @@
   )
 }
 
-// Okasaki's balance — under a black parent, fix one of the four
-// red-red violations by promoting the middle key to a red parent
-// whose two children are recolored black. Any other shape is returned
-// unchanged.
-#let _balance(cls, red, l, v, lab, r) = if not red and _is-red(l) and _is-red(l.left) {
-  _node(
-    cls,
-    true,
-    _node(cls, false, l.left.left, l.left.value, l.left.label, l.left.right),
-    l.value,
-    l.label,
-    _node(cls, false, l.right, v, lab, r),
-  )
-} else if not red and _is-red(l) and _is-red(l.right) {
-  _node(
-    cls,
-    true,
-    _node(cls, false, l.left, l.value, l.label, l.right.left),
-    l.right.value,
-    l.right.label,
-    _node(cls, false, l.right.right, v, lab, r),
-  )
-} else if not red and _is-red(r) and _is-red(r.left) {
-  _node(
-    cls,
-    true,
-    _node(cls, false, l, v, lab, r.left.left),
-    r.left.value,
-    r.left.label,
-    _node(cls, false, r.left.right, r.value, r.label, r.right),
-  )
-} else if not red and _is-red(r) and _is-red(r.right) {
-  _node(
-    cls,
-    true,
-    _node(cls, false, l, v, lab, r.left),
-    r.value,
-    r.label,
-    _node(
-      cls,
-      false,
-      r.right.left,
-      r.right.value,
-      r.right.label,
-      r.right.right,
-    ),
-  )
-} else {
-  _node(cls, red, l, v, lab, r)
+// Change the color of the node at `path`. Used by delete fix-up to
+// paint nodes red/black without restructuring.
+#let _paint-color-at(cls, tree, path, red) = {
+  let n = _resolve-at(tree, path)
+  let new = _node(cls, red, n.left, n.value, n.label, n.right)
+  _replace-at(cls, tree, path, new)
+}
+
+// Copy `value` and `label` into the node at `path`, preserving the
+// node's color and children. Used by delete to splice a successor's
+// value into the target's position.
+#let _set-value-at(cls, tree, path, value, label) = {
+  let n = _resolve-at(tree, path)
+  let new = _node(cls, n.red, n.left, value, label, n.right)
+  _replace-at(cls, tree, path, new)
 }
 
 // CLRS-style insertion trace. Returns `(events, tree)` — `tree` is the
@@ -409,135 +375,420 @@
   (events: events, tree: cur-tree)
 }
 
-// balleft — fix-up after the left subtree's black-height was shortened
-// by one. Three cases:
-//   l red                — recolor l black, wrap with a red root
-//   l black, r black     — redden r and balance
-//   l black, r red       — r.left is black by RB invariants; restructure
-#let _balleft(cls, l, v, lab, r) = if _is-red(l) {
-  _node(
-    cls,
-    true,
-    _node(cls, false, l.left, l.value, l.label, l.right),
-    v,
-    lab,
-    r,
-  )
-} else if _is-black(r) {
-  _balance(cls, false, l, v, lab, _redden(cls, r))
-} else if _is-red(r) {
-  _node(
-    cls,
-    true,
-    _node(cls, false, l, v, lab, r.left.left),
-    r.left.value,
-    r.left.label,
-    _balance(cls, false, r.left.right, r.value, r.label, _redden(cls, r.right)),
-  )
-} else {
-  panic("balleft: unexpected case (r is none)")
-}
+// CLRS-style deletion trace. Returns `(events, tree)`. The
+// algorithm mirrors what the textbook reference image illustrates:
+//
+//   1. BST descent to find the target. If absent, return unchanged.
+//   2. If the target has two children, walk to its in-order successor
+//      (leftmost of the right subtree), transfer the successor's
+//      value+label into the target slot, and switch the deletion
+//      position to the successor (which has ≤ 1 child).
+//   3. Excise the deletion-position node, splicing in its child (or
+//      `none`) in its place.
+//   4. Determine the fix-up branch from the excised node's color:
+//      — excised was red:               nothing to do (black-height
+//                                       unchanged).
+//      — excised was black, promoted
+//        child is red:                  paint the promoted child
+//                                       black (absorbs the missing
+//                                       black).
+//      — excised was black, promoted
+//        child is nil/black:            "double-black" at the
+//                                       deletion path; run the four-
+//                                       case fix-up loop.
+//
+// Fix-up loop (db-path is the path with one missing black; descends
+// the four-case decision tree, mirrored for the symmetric
+// "db is right child" branch):
+//   — db-path == "":                    extra black is absorbed by
+//                                       the root; done.
+//   — node at db-path is red:           paint it black; done.
+//   — sibling is red:                   Case 1. Rotate around parent,
+//                                       swap parent/sibling colors.
+//                                       The new sibling (sibling's
+//                                       former near child) is black,
+//                                       so the next iteration falls
+//                                       into Case 2/3/4.
+//   — sibling black, both nephews
+//     black (or nil):                   Case 2. Paint sibling red and
+//                                       push the double-black up to
+//                                       parent.
+//   — sibling black, near nephew red,
+//     far nephew black:                 Case 3. Rotate around sibling,
+//                                       swap sibling/near-nephew
+//                                       colors. Falls through into
+//                                       Case 4.
+//   — sibling black, far nephew red:    Case 4. Rotate around parent,
+//                                       swap parent/sibling colors,
+//                                       paint far nephew black. Done.
+//
+// Event kinds:
+//   (kind: "init",     tree)
+//   (kind: "compare",  path, cmp, found, tree)
+//                      — emitted only when with-search=true; one per
+//                        BST comparison along the search path
+//   (kind: "descend",  visited, tree)
+//                      — emitted only when with-search=false; a single
+//                        frame listing every L/R path inspected
+//   (kind: "not-found", tree)
+//                      — search ended without finding v; trace ends
+//   (kind: "mark-target", target-path, tree)
+//   (kind: "find-successor", walk, successor-path, target-path, tree)
+//                      — `walk` is the list of paths visited in the
+//                        right subtree down to the successor
+//   (kind: "transfer", target-path, successor-path, new-value, tree)
+//                      — successor's value+label copied into target's
+//                        slot
+//   (kind: "excise",   path, was-red, tree)
+//                      — node physically removed; tree at `path` now
+//                        holds the excised node's child (or none)
+//   (kind: "paint-black-promoted", path, tree)
+//                      — promoted child painted black to absorb the
+//                        missing black
+//   (kind: "paint-black-db", path, tree)
+//                      — double-black hit a red node during loop;
+//                        paint black to absorb
+//   (kind: "check",    db-path, parent-path, sibling-path, tree)
+//                      — about to apply one of Cases 1-4
+//   (kind: "case-1",   parent-path, new-sibling-path, tree)
+//   (kind: "case-2",   sibling-path, new-db-path, tree)
+//   (kind: "case-3",   sibling-path, near-nephew-path, tree)
+//   (kind: "case-4",   parent-path, tree)
+#let _clrs-delete-trace(cls, tree, v, with-search) = {
+  let events = ()
 
-// Symmetric: right subtree shortened.
-#let _balright(cls, l, v, lab, r) = if _is-red(r) {
-  _node(
-    cls,
-    true,
-    l,
-    v,
-    lab,
-    _node(cls, false, r.left, r.value, r.label, r.right),
-  )
-} else if _is-black(l) {
-  _balance(cls, false, _redden(cls, l), v, lab, r)
-} else if _is-red(l) {
-  _node(
-    cls,
-    true,
-    _balance(cls, false, _redden(cls, l.left), l.value, l.label, l.right.left),
-    l.right.value,
-    l.right.label,
-    _node(cls, false, l.right.right, v, lab, r),
-  )
-} else {
-  panic("balright: unexpected case (l is none)")
-}
+  // BST search: walk down recording each comparison, return the
+  // target's path (or none if absent).
+  let walk(node, p) = if node == none {
+    (steps: (), found: none)
+  } else if v == node.value {
+    (steps: ((path: p, cmp: "=", found: true),), found: p)
+  } else if v < node.value {
+    let rest = walk(node.left, p + "L")
+    (
+      steps: ((path: p, cmp: "<", found: false),) + rest.steps,
+      found: rest.found,
+    )
+  } else {
+    let rest = walk(node.right, p + "R")
+    (
+      steps: ((path: p, cmp: ">", found: false),) + rest.steps,
+      found: rest.found,
+    )
+  }
+  let search = walk(tree, "")
+  let target-path = search.found
+  let search-steps = search.steps
 
-// "Glue" the left and right subtrees of a deleted internal node into
-// a single subtree with the same black height as the original pair.
-#let _app(cls, a, b) = if a == none {
-  b
-} else if b == none {
-  a
-} else if a.red and b.red {
-  let bc = _app(cls, a.right, b.left)
-  if _is-red(bc) {
-    _node(
-      cls,
-      true,
-      _node(cls, true, a.left, a.value, a.label, bc.left),
-      bc.value,
-      bc.label,
-      _node(cls, true, bc.right, b.value, b.label, b.right),
-    )
+  events.push((kind: "init", tree: tree))
+  if with-search {
+    for s in search-steps {
+      events.push((
+        kind: "compare",
+        path: s.path,
+        cmp: s.cmp,
+        found: s.found,
+        tree: tree,
+      ))
+    }
   } else {
-    _node(
-      cls,
-      true,
-      a.left,
-      a.value,
-      a.label,
-      _node(cls, true, bc, b.value, b.label, b.right),
-    )
+    events.push((
+      kind: "descend",
+      visited: search-steps.map(s => s.path),
+      tree: tree,
+    ))
   }
-} else if not a.red and not b.red {
-  let bc = _app(cls, a.right, b.left)
-  if _is-red(bc) {
-    _node(
-      cls,
-      true,
-      _node(cls, false, a.left, a.value, a.label, bc.left),
-      bc.value,
-      bc.label,
-      _node(cls, false, bc.right, b.value, b.label, b.right),
-    )
-  } else {
-    _balleft(
-      cls,
-      a.left,
-      a.value,
-      a.label,
-      _node(cls, false, bc, b.value, b.label, b.right),
-    )
-  }
-} else if not a.red and b.red {
-  // a black, b red — descend into b's left.
-  _node(cls, true, _app(cls, a, b.left), b.value, b.label, b.right)
-} else {
-  // a red, b black — descend into a's right.
-  _node(cls, true, a.left, a.value, a.label, _app(cls, a.right, b))
-}
 
-// Recursive delete. Caller must guarantee v lives in node's subtree;
-// the public `delete` method enforces this with a `contains` precheck.
-#let _del(cls, node, v) = if node == none {
-  none
-} else if v < node.value {
-  let new-l = _del(cls, node.left, v)
-  if _is-black(node.left) {
-    _balleft(cls, new-l, node.value, node.label, node.right)
-  } else {
-    _node(cls, true, new-l, node.value, node.label, node.right)
+  if target-path == none {
+    events.push((
+      kind: "not-found",
+      visited: search-steps.map(s => s.path),
+      tree: tree,
+    ))
+    return (events: events, tree: tree)
   }
-} else if v > node.value {
-  let new-r = _del(cls, node.right, v)
-  if _is-black(node.right) {
-    _balright(cls, node.left, node.value, node.label, new-r)
-  } else {
-    _node(cls, true, node.left, node.value, node.label, new-r)
+
+  let cur-tree = tree
+  let target = _resolve-at(cur-tree, target-path)
+  let two-children = target.left != none and target.right != none
+
+  events.push((kind: "mark-target", target-path: target-path, tree: cur-tree))
+
+  let excise-path = target-path
+  if two-children {
+    let succ-walk(p) = {
+      let n = _resolve-at(cur-tree, p)
+      if n.left == none { (p,) } else { (p,) + succ-walk(p + "L") }
+    }
+    let walk-paths = succ-walk(target-path + "R")
+    let succ-path = walk-paths.last()
+    let succ-node = _resolve-at(cur-tree, succ-path)
+
+    events.push((
+      kind: "find-successor",
+      walk: walk-paths,
+      successor-path: succ-path,
+      target-path: target-path,
+      tree: cur-tree,
+    ))
+
+    cur-tree = _set-value-at(
+      cls,
+      cur-tree,
+      target-path,
+      succ-node.value,
+      succ-node.label,
+    )
+    events.push((
+      kind: "transfer",
+      target-path: target-path,
+      successor-path: succ-path,
+      new-value: succ-node.value,
+      tree: cur-tree,
+    ))
+    excise-path = succ-path
   }
-} else {
-  _app(cls, node.left, node.right)
+
+  let excise-node = _resolve-at(cur-tree, excise-path)
+  let excise-was-red = excise-node.red
+  let replacement = if excise-node.left != none {
+    excise-node.left
+  } else { excise-node.right }
+
+  // Edge case: excising the root of a single-node tree leaves the
+  // tree empty.
+  if excise-path == "" and replacement == none {
+    events.push((
+      kind: "excise",
+      path: excise-path,
+      was-red: excise-was-red,
+      tree: none,
+    ))
+    return (events: events, tree: none)
+  }
+
+  cur-tree = _replace-at(cls, cur-tree, excise-path, replacement)
+  events.push((
+    kind: "excise",
+    path: excise-path,
+    was-red: excise-was-red,
+    tree: cur-tree,
+  ))
+
+  // Red excised: black-height unaffected; done.
+  if excise-was-red {
+    return (events: events, tree: cur-tree)
+  }
+
+  // Promoted child is red: paint it black to absorb the missing black.
+  if replacement != none and replacement.red {
+    cur-tree = _paint-color-at(cls, cur-tree, excise-path, false)
+    events.push((
+      kind: "paint-black-promoted",
+      path: excise-path,
+      tree: cur-tree,
+    ))
+    return (events: events, tree: cur-tree)
+  }
+
+  // Double-black at excise-path; run the four-case fix-up loop.
+  let db-path = excise-path
+  let done = false
+  while not done {
+    if db-path == "" {
+      done = true
+    } else {
+      let db-node = _resolve-at(cur-tree, db-path)
+      if _is-red(db-node) {
+        cur-tree = _paint-color-at(cls, cur-tree, db-path, false)
+        events.push((kind: "paint-black-db", path: db-path, tree: cur-tree))
+        done = true
+      } else {
+        let parent-path = db-path.slice(0, db-path.len() - 1)
+        let parent = _resolve-at(cur-tree, parent-path)
+        let is-left = db-path.last() == "L"
+        let sibling-path = parent-path + (if is-left { "R" } else { "L" })
+        let sibling = _resolve-at(cur-tree, sibling-path)
+
+        events.push((
+          kind: "check",
+          db-path: db-path,
+          parent-path: parent-path,
+          sibling-path: sibling-path,
+          tree: cur-tree,
+        ))
+
+        if _is-red(sibling) {
+          // Case 1: rotate parent, swap parent/sibling colors.
+          let new-subtree = if is-left {
+            _node(
+              cls,
+              false,
+              _node(
+                cls,
+                true,
+                parent.left,
+                parent.value,
+                parent.label,
+                sibling.left,
+              ),
+              sibling.value,
+              sibling.label,
+              sibling.right,
+            )
+          } else {
+            _node(
+              cls,
+              false,
+              sibling.left,
+              sibling.value,
+              sibling.label,
+              _node(
+                cls,
+                true,
+                sibling.right,
+                parent.value,
+                parent.label,
+                parent.right,
+              ),
+            )
+          }
+          cur-tree = _replace-at(cls, cur-tree, parent-path, new-subtree)
+          // db's new path: deeper by one (parent moved under former sibling).
+          db-path = parent-path + (if is-left { "LL" } else { "RR" })
+          events.push((
+            kind: "case-1",
+            parent-path: parent-path,
+            new-sibling-path: parent-path + (if is-left { "LR" } else { "RL" }),
+            tree: cur-tree,
+          ))
+        } else {
+          let far-nephew-path = sibling-path + (if is-left { "R" } else { "L" })
+          let near-nephew-path = sibling-path + (if is-left { "L" } else { "R" })
+          let far-nephew = _resolve-at(cur-tree, far-nephew-path)
+          let near-nephew = _resolve-at(cur-tree, near-nephew-path)
+
+          if not _is-red(far-nephew) and not _is-red(near-nephew) {
+            // Case 2: paint sibling red, push db up to parent.
+            cur-tree = _paint-color-at(cls, cur-tree, sibling-path, true)
+            db-path = parent-path
+            events.push((
+              kind: "case-2",
+              sibling-path: sibling-path,
+              new-db-path: parent-path,
+              tree: cur-tree,
+            ))
+          } else {
+            if not _is-red(far-nephew) {
+              // Case 3: rotate sibling, swap sibling/near-nephew colors.
+              let new-sibling-sub = if is-left {
+                _node(
+                  cls,
+                  false,
+                  near-nephew.left,
+                  near-nephew.value,
+                  near-nephew.label,
+                  _node(
+                    cls,
+                    true,
+                    near-nephew.right,
+                    sibling.value,
+                    sibling.label,
+                    sibling.right,
+                  ),
+                )
+              } else {
+                _node(
+                  cls,
+                  false,
+                  _node(
+                    cls,
+                    true,
+                    sibling.left,
+                    sibling.value,
+                    sibling.label,
+                    near-nephew.left,
+                  ),
+                  near-nephew.value,
+                  near-nephew.label,
+                  near-nephew.right,
+                )
+              }
+              cur-tree = _replace-at(cls, cur-tree, sibling-path, new-sibling-sub)
+              events.push((
+                kind: "case-3",
+                sibling-path: sibling-path,
+                near-nephew-path: near-nephew-path,
+                tree: cur-tree,
+              ))
+              // Re-fetch sibling and far-nephew for Case 4.
+              sibling = _resolve-at(cur-tree, sibling-path)
+              far-nephew = _resolve-at(cur-tree, far-nephew-path)
+            }
+
+            // Case 4: rotate parent, swap parent/sibling colors, paint
+            // far nephew black.
+            let new-subtree = if is-left {
+              _node(
+                cls,
+                parent.red,
+                _node(
+                  cls,
+                  false,
+                  parent.left,
+                  parent.value,
+                  parent.label,
+                  sibling.left,
+                ),
+                sibling.value,
+                sibling.label,
+                _node(
+                  cls,
+                  false,
+                  far-nephew.left,
+                  far-nephew.value,
+                  far-nephew.label,
+                  far-nephew.right,
+                ),
+              )
+            } else {
+              _node(
+                cls,
+                parent.red,
+                _node(
+                  cls,
+                  false,
+                  far-nephew.left,
+                  far-nephew.value,
+                  far-nephew.label,
+                  far-nephew.right,
+                ),
+                sibling.value,
+                sibling.label,
+                _node(
+                  cls,
+                  false,
+                  sibling.right,
+                  parent.value,
+                  parent.label,
+                  parent.right,
+                ),
+              )
+            }
+            cur-tree = _replace-at(cls, cur-tree, parent-path, new-subtree)
+            events.push((
+              kind: "case-4",
+              parent-path: parent-path,
+              tree: cur-tree,
+            ))
+            done = true
+          }
+        }
+      }
+    }
+  }
+
+  (events: events, tree: cur-tree)
 }
 
 // ===================================================================
@@ -842,11 +1093,14 @@
       }
       tree
     },
-    delete: (self, v) => if not (self.contains)(v) {
-      self
-    } else {
+    delete: (self, v) => {
       let cls = self.meta.cls
-      _blacken(cls, _del(cls, self, v))
+      let result = _clrs-delete-trace(cls, self, v, false).tree
+      // CLRS's fix-up can leave a red root (e.g. after Case 2 propagates
+      // a missing black to the root, or after Case 1 swaps the root's
+      // color). Blacken unconditionally to restore the root-is-black
+      // invariant.
+      if result == none { none } else { _blacken(cls, result) }
     },
     rotate: (self, child) => {
       // Structural rotation — preserves each rotated node's color.
@@ -1137,6 +1391,275 @@
             r = (r.patch)(f => (f.style-edge)(event.gp-path, stroke: op.success-stroke))
           } else if event.kind == "blacken-root" {
             r = (r.patch)(f => (f.style-node)("", stroke: op.settled-stroke))
+          }
+          r.snapshots.first()
+        }
+
+        specs.push((
+          tree: event.tree,
+          build: build,
+          caption: caption,
+          step: step,
+          alt: alt,
+        ))
+      }
+
+      _make-frames-rbt-multi(specs, resolved-rbt, resolved-render)
+    },
+    delete-display: (
+      self,
+      v,
+      search: false,
+      theme: auto,
+      render-theme: auto,
+    ) => {
+      // CLRS-style deletion animation. Frame sequence (step.kind):
+      //   1. "init"
+      //   2. If `search: true`: one "compare" frame per BST comparison
+      //      (mirrors BST `delete-display`). Otherwise: a single
+      //      "descend" frame highlighting the full search path.
+      //   3. If `v` is not in the tree: "not-found"; animation ends.
+      //   4. "mark-target" — target node highlighted with attention-stroke.
+      //   5. If target has two children: "find-successor" walks the
+      //      right subtree to the in-order successor; "transfer" copies
+      //      the successor's value+label into the target slot.
+      //   6. "excise" — deletion-position node removed (its child, if
+      //      any, takes its place).
+      //   7. Branch on the excised node's color:
+      //      — red: nothing more (black-height unaffected).
+      //      — black, promoted child red: "paint-black-promoted".
+      //      — black, no red promotion: enter the fix-up loop.
+      //   8. Fix-up iterations (each is "check" + one case):
+      //      "case-1" (sibling red, rotate parent),
+      //      "case-2" (recolor sibling, propagate db up),
+      //      "case-3" (rotate sibling),
+      //      "case-4" (rotate parent, resolved).
+      //      The loop may also terminate via "paint-black-db" if the
+      //      missing black walks up to a red node.
+      let cls = self.meta.cls
+      let trace = _clrs-delete-trace(cls, self, v, search)
+      let events = trace.events
+
+      let resolved-rbt = _resolve-rbt-theme-arg(theme)
+      let resolved-render = _resolve-render-theme-arg(render-theme)
+
+      let init-alt = (
+        "Red-black tree: "
+          + (self.describe)()
+          + ". About to delete "
+          + str(v)
+          + "."
+      )
+
+      // For compare frames (with search prefix), accumulate descended
+      // paths so each frame shows the full search trail.
+      let visited-by-event = ()
+      let visited-acc = ()
+      for e in events {
+        if e.kind == "compare" {
+          visited-acc = visited-acc + (e.path,)
+        }
+        visited-by-event.push(visited-acc)
+      }
+
+      let specs = ()
+      for (i, e) in events.enumerate() {
+        // The empty-tree excise of a single-node delete: skip the frame
+        // (no tree to render). The previous "mark-target" frame already
+        // conveys the imminent deletion via its caption.
+        if e.tree == none { continue }
+        let event = e
+        let visited-snapshot = visited-by-event.at(i)
+        let caption = none
+        let step = (kind: event.kind)
+        let alt = ""
+
+        if event.kind == "init" {
+          step = (kind: "init")
+          alt = init-alt
+        } else if event.kind == "compare" {
+          let nv = _resolve-at(event.tree, event.path).value
+          let cmp-text = str(v) + " " + event.cmp + " " + str(nv)
+          caption = cmp-text
+          step = (
+            kind: "compare",
+            path: event.path,
+            cmp: event.cmp,
+            found: event.found,
+          )
+          alt = if event.found {
+            "Match found at node " + str(nv) + "; ready to delete."
+          } else {
+            "Comparing " + cmp-text + " at node " + str(nv) + "; descending."
+          }
+        } else if event.kind == "descend" {
+          caption = [Search for #v]
+          step = (kind: "descend", visited: event.visited)
+          alt = (
+            "Walked the BST search path for "
+              + str(v)
+              + "; ready to delete."
+          )
+        } else if event.kind == "not-found" {
+          caption = [#v not in tree]
+          step = (kind: "not-found")
+          alt = str(v) + " is not in the tree; nothing to delete."
+        } else if event.kind == "mark-target" {
+          caption = [Delete #v]
+          step = (kind: "mark-target", path: event.target-path)
+          alt = "Marked node " + str(v) + " for deletion."
+        } else if event.kind == "find-successor" {
+          let sv = _resolve-at(event.tree, event.successor-path).value
+          caption = [Find successor]
+          step = (
+            kind: "find-successor",
+            walk: event.walk,
+            successor-path: event.successor-path,
+            target-path: event.target-path,
+          )
+          alt = (
+            "Node "
+              + str(v)
+              + " has two children; walking the right subtree to find the in-order successor: "
+              + str(sv)
+              + "."
+          )
+        } else if event.kind == "transfer" {
+          caption = [Transfer #(event.new-value)]
+          step = (
+            kind: "transfer",
+            target-path: event.target-path,
+            successor-path: event.successor-path,
+          )
+          alt = (
+            "Copied successor's value "
+              + str(event.new-value)
+              + " into the target slot; about to remove the successor node."
+          )
+        } else if event.kind == "excise" {
+          caption = [Remove node]
+          step = (kind: "excise", path: event.path)
+          alt = "Removed the deletion-position node from the tree."
+        } else if event.kind == "paint-black-promoted" {
+          caption = [Paint child black]
+          step = (kind: "paint-black-promoted", path: event.path)
+          alt = (
+            "Excised a black node; painted the promoted red child black to restore black-height balance."
+          )
+        } else if event.kind == "paint-black-db" {
+          caption = [Paint red node black]
+          step = (kind: "paint-black-db", path: event.path)
+          alt = (
+            "Extra black met a red node; painting it black absorbs the extra black and resolves the fix-up."
+          )
+        } else if event.kind == "check" {
+          caption = [Double-black]
+          step = (
+            kind: "check",
+            db-path: event.db-path,
+            parent-path: event.parent-path,
+            sibling-path: event.sibling-path,
+          )
+          alt = (
+            "Black-height short by one in this subtree; investigating the parent / sibling configuration."
+          )
+        } else if event.kind == "case-1" {
+          caption = [Case 1: sibling red]
+          step = (
+            kind: "case-1",
+            parent-path: event.parent-path,
+            new-sibling-path: event.new-sibling-path,
+          )
+          alt = (
+            "Case 1: sibling was red. Rotated around parent and swapped parent/sibling colors. The new sibling is black; continuing with Cases 2–4."
+          )
+        } else if event.kind == "case-2" {
+          caption = [Case 2: recolor sibling]
+          step = (
+            kind: "case-2",
+            sibling-path: event.sibling-path,
+            new-db-path: event.new-db-path,
+          )
+          alt = (
+            "Case 2: sibling and both nephews were black. Painted sibling red and propagated the missing black up to parent."
+          )
+        } else if event.kind == "case-3" {
+          caption = [Case 3: rotate sibling]
+          step = (
+            kind: "case-3",
+            sibling-path: event.sibling-path,
+            near-nephew-path: event.near-nephew-path,
+          )
+          alt = (
+            "Case 3: near nephew was red, far nephew was black. Rotated around sibling and swapped colors; Case 4 now applies."
+          )
+        } else if event.kind == "case-4" {
+          caption = [Case 4: rotate parent]
+          step = (kind: "case-4", parent-path: event.parent-path)
+          alt = (
+            "Case 4: far nephew is red. Rotated around parent, swapped colors, and painted the far nephew black. Fix-up complete."
+          )
+        }
+
+        let build = (rbt, op, _rt) => {
+          let r = tree-anim.make-renderer(event.tree)
+          r = _paint-palette(r, event.tree, rbt)
+          if event.kind == "compare" {
+            for p in visited-snapshot {
+              r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
+            }
+            let nv = _resolve-at(event.tree, event.path).value
+            r = (r.patch)(f => (f.note-node)(
+              event.path,
+              str(v) + " " + event.cmp + " " + str(nv),
+            ))
+          } else if event.kind == "descend" {
+            for p in event.visited {
+              r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
+            }
+          } else if event.kind == "not-found" {
+            for p in event.visited {
+              r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
+            }
+          } else if event.kind == "mark-target" {
+            r = (r.patch)(f => (f.style-node)(event.target-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.note-node)(event.target-path, [delete]))
+          } else if event.kind == "find-successor" {
+            r = (r.patch)(f => (f.style-node)(event.target-path, stroke: op.attention-stroke))
+            for p in event.walk {
+              r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
+            }
+            r = (r.patch)(f => (f.note-node)(event.successor-path, [successor]))
+          } else if event.kind == "transfer" {
+            r = (r.patch)(f => (f.style-node)(event.target-path, stroke: op.settled-stroke))
+            r = (r.patch)(f => (f.note-node)(
+              event.target-path,
+              [← #(event.new-value)],
+            ))
+            r = (r.patch)(f => (f.style-node)(event.successor-path, stroke: op.attention-stroke))
+          } else if event.kind == "excise" {
+            // No special highlight — the structural change speaks for itself.
+          } else if event.kind == "paint-black-promoted" {
+            r = (r.patch)(f => (f.style-node)(event.path, stroke: op.settled-stroke))
+          } else if event.kind == "paint-black-db" {
+            r = (r.patch)(f => (f.style-node)(event.path, stroke: op.settled-stroke))
+          } else if event.kind == "check" {
+            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(event.sibling-path, stroke: op.attention-stroke))
+            let db-node = _resolve-at(event.tree, event.db-path)
+            if db-node != none {
+              r = (r.patch)(f => (f.style-node)(event.db-path, stroke: op.attention-stroke))
+              r = (r.patch)(f => (f.note-node)(event.db-path, [+B]))
+            }
+          } else if event.kind == "case-1" {
+            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.success-stroke))
+            r = (r.patch)(f => (f.style-node)(event.new-sibling-path, stroke: op.attention-stroke))
+          } else if event.kind == "case-2" {
+            r = (r.patch)(f => (f.style-node)(event.sibling-path, stroke: op.settled-stroke))
+          } else if event.kind == "case-3" {
+            r = (r.patch)(f => (f.style-node)(event.sibling-path, stroke: op.success-stroke))
+          } else if event.kind == "case-4" {
+            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.settled-stroke))
           }
           r.snapshots.first()
         }
