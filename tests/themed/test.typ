@@ -1,9 +1,9 @@
-// Verify theming: a state-set BST and render theme should produce
+// Verify theming: a state-set op-theme and render-theme should produce
 // recolored output for every `*-display` method, and a per-call
 // `theme:` override should win over state for that one call.
 
 #import "/src/lib.typ" as starling
-#import starling: BST, set-bst-theme, set-render-theme
+#import starling: BST, set-op-theme, set-render-theme
 
 #let t = (BST.new)(value: 4, label: auto, left: none, right: none)
 #let t = (t.insert-many)(1, 0, 7, 3, 6, 8)
@@ -14,9 +14,9 @@
   note-fill: rgb("#9e2a5e"),
 ))
 
-#set-bst-theme((
+#set-op-theme((
   search-stroke: (paint: teal, thickness: 2.5pt),
-  pivot-stroke: (paint: purple, thickness: 2.5pt),
+  attention-stroke: (paint: purple, thickness: 2.5pt),
   success-stroke: (paint: olive, thickness: 2.5pt),
   settled-stroke: (paint: olive, thickness: 3.5pt),
   success-fill: olive.lighten(70%),

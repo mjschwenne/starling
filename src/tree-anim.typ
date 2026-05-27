@@ -110,8 +110,9 @@
 //   4. per-snapshot per-path overrides
 //
 // Users who want operation-specific colors (search/insert/delete
-// highlights, rotation pivots, etc.) should look at `default-bst-theme`
-// in `bst.typ` instead — that's the semantic layer.
+// highlights, rotation pivots, etc.) should look at `default-op-theme`
+// in `op-theme.typ` instead — that's the semantic layer shared across
+// data structures.
 
 /// Default render theme. The structural defaults the renderer falls
 /// back on when neither a snapshot nor `default-node-style`/
@@ -276,13 +277,15 @@
 /// Typsy class representing one frame in an animation. Fields and
 /// methods:
 ///
-/// - #raw("render(bst-theme, render-theme)") — method that, given
+/// - #raw("render(op-theme, render-theme)") — method that, given
 ///   resolved theme dicts, produces the cetz canvas for this frame.
 ///   Theming-aware deferral lives here: by carrying a builder rather
 ///   than pre-baked content, the lib.typ helpers (#raw("last"),
 ///   #raw("stacked"), #raw("figures")) can resolve theme state once
 ///   per call instead of once per frame, which is meaningfully faster
-///   in many-tree documents.
+///   in many-tree documents. Per-data-structure themes (e.g. the RBT
+///   palette) are read inside each frame's builder rather than passed
+///   in — the helpers only carry the two universal layers.
 /// - #raw("caption") — optional textual track for the step (possibly
 ///   #raw("none")).
 /// - #raw("step") — optional free-form per-method metadata (possibly
@@ -297,9 +300,9 @@
 /// Direct rendering pattern for custom layouts:
 /// ```typc
 /// context {
-///   let bt = _bst-theme-state.get()
+///   let op = _op-theme-state.get()
 ///   let rt = _render-theme-state.get()
-///   ... (frame.render)(bt, rt) ...
+///   ... (frame.render)(op, rt) ...
 /// }
 /// ```
 /// Or simply pass the frame array to one of the lib.typ helpers, which
@@ -737,7 +740,7 @@
       // `frame.step` / `frame.alt`.
       //
       // Each frame's `render` field is a function
-      // `(bst-theme, render-theme) => content`. The lib.typ helpers
+      // `(op-theme, render-theme) => content`. The lib.typ helpers
       // resolve theme state once per call and feed the result to every
       // frame's builder; for direct use, see the `Frame` docstring.
       //

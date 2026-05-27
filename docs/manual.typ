@@ -116,17 +116,19 @@ distinct:
    describing an animation.],
   [`Frame`],
   [The _output_ record: `(render, caption, step, alt)`. `render` is a
-   builder function `(bst-theme, render-theme) -> content` — not
+   builder function `(op-theme, render-theme) -> content` — not
    pre-baked content — so callers can resolve theme state at layout
    time and reuse the same animation across documents with different
    themes. `TreeRenderer.render` produces an array of these, one per
    snapshot. This is what `*-display` methods return.],
   [Theme dict],
-  [Either a `render-theme` (structural defaults like node fill, edge
-   stroke, note colour) or a `bst-theme` (semantic strokes/fills like
-   `search-stroke`, `success-fill`). Frames are theme-agnostic until
-   a render helper feeds resolved themes into each frame's `render`
-   builder.],
+  [One of three layers, in merge order: `render-theme` (structural
+   defaults like node fill, edge stroke, note colour), `op-theme`
+   (operation strokes/fills shared across data structures, like
+   `search-stroke`, `success-fill`, `traversal-palette`), and an
+   optional per-DS theme (e.g. `rbt-theme`'s red/black palette).
+   Frames are theme-agnostic until a render helper feeds resolved
+   themes into each frame's `render` builder.],
 )
 
 The data flow, end to end:
@@ -135,7 +137,7 @@ The data flow, end to end:
   `Snapshot` array #h(0.5em) → #h(0.5em) `TreeRenderer.render`\
   #h(0.5em) → #h(0.5em) `Array(Frame)` _(builders, theme-agnostic)_\
   #h(0.5em) → #h(0.5em) helper resolves theme state once\
-  #h(0.5em) → #h(0.5em) helper calls each `(f.render)(bt, rt)`\
+  #h(0.5em) → #h(0.5em) helper calls each `(f.render)(op, rt)`\
   #h(0.5em) → #h(0.5em) document content
 ]
 
@@ -248,41 +250,47 @@ frames as plain data, that constraint no longer applies to the
 animation API — and state did become viable later for the theming
 layer (see _State for ergonomics, per-call for perf_ below).
 
-== Two theme layers, one per concern
+== Three theme layers, one per concern
 
-Theming is split into two dicts that live in different files:
+Theming is split into three dicts that each own a different concern:
 
 - *Render theme* (`default-render-theme`, in `tree-anim.typ`) holds
   structural defaults — node fill, node stroke, node text fill, edge
-  stroke, note fill. Anything that a future data structure (heap,
-  trie, B-tree) would also need.
-- *BST theme* (`default-bst-theme`, in `bst.typ`) holds semantic
-  strokes and fills tied to BST operations — `search-stroke`,
-  `pivot-stroke`, `success-stroke`, `settled-stroke`, `success-fill`,
-  `danger-stroke`, `reset-stroke`, `traversal-palette`.
+  stroke, note fill. Anything any data structure would need to render
+  a tree at all.
+- *Op theme* (`default-op-theme`, in `op-theme.typ`) holds operation-
+  semantic strokes/fills/palettes that apply to _any_ data structure
+  with those operations — `search-stroke`, `attention-stroke`,
+  `success-stroke`, `settled-stroke`, `success-fill`, `danger-stroke`,
+  `reset-stroke`, `traversal-palette`. BST search and a hypothetical
+  hash-table search share the same `search-stroke` from this layer.
+- *Per-DS theme* (e.g. `default-rbt-theme`, in `rbt.typ`) holds
+  styling intrinsic to one data structure — the red/black palette for
+  RBTs is the canonical example. BST itself has no per-DS theme,
+  because BST nodes have no intrinsic differentiation.
 
-The split lets each layer own its own concerns. When a new data
-structure lands, it brings its own semantic theme dict
-(`default-heap-theme`, say) and reuses the render-theme as-is. If
-the structural defaults were tangled into the BST theme, every new
-data structure would either duplicate them or grow a coupling to BST.
+The split lets each layer own its own concerns. A new data
+structure (heap, trie, B-tree) brings its own per-DS theme dict if
+needed and reuses the render theme and op theme as-is. If operation
+strokes lived in a BST theme, every new data structure would either
+duplicate them or grow a coupling to BST.
 
 The render theme also has a clear "lowest in the chain" role:
 `draw-tree` falls back to it when neither a snapshot override nor a
 `make-renderer(default-node-style:, default-edge-style:)` argument
 specifies a property. So the merge order, lowest precedence first, is:
-`default-render-theme` → user render-theme override → renderer
-defaults → per-snapshot per-path overrides. Each layer adds more
-specificity.
+`default-render-theme` → user render-theme override → op-theme /
+per-DS-theme overlays applied per snapshot → renderer defaults →
+per-snapshot per-path overrides. Each layer adds more specificity.
 
-Strokes throughout the BST theme are full stroke dictionaries
+Strokes throughout the op theme are full stroke dictionaries
 (`(paint:, thickness:, dash:)`), not bare colours. That lets users
 change any aspect of a stroke (dash pattern, cap, width) without us
 adding more theme keys for each possibility.
 
 == Frames carry builders, not pre-rendered content
 
-`Frame.render` is a function `(bst-theme, render-theme) -> content`,
+`Frame.render` is a function `(op-theme, render-theme) -> content`,
 not a piece of pre-baked content. This is so render helpers (`last`,
 `stacked`, `figures`) can resolve theme state _once per call_ and
 feed those resolved themes into every frame's builder, rather than
@@ -298,11 +306,17 @@ where `canvas` baked in whatever theme was active at construction
 time.
 
 A typsy quirk worth noting: typsy auto-injects `self` into any
-function-typed field on a class. To keep `(frame.render)(bt, rt)`
+function-typed field on a class. To keep `(frame.render)(op, rt)`
 from getting a spurious third argument, the actual closure is stored
 as `_builder: (fn: ...)` — a singleton dict around the function — and
 exposed through a `render` method that dereferences it. Users only
-see `(frame.render)(bt, rt)`; the dict wrap is private.
+see `(frame.render)(op, rt)`; the dict wrap is private.
+
+RBT and any future per-DS theme are read inside the frame's builder
+itself, not by the lib.typ helpers. The helpers only resolve the two
+universal layers — op-theme and render-theme — and pass them in;
+per-DS themes are state-read on demand. That keeps the helper
+signature stable as more data structures land.
 
 == State for ergonomics, per-call for perf
 
@@ -313,7 +327,7 @@ Theme overrides come in two flavours:
   inset: 6pt,
   align: (left, left),
   table.header[*Form*][*Behaviour*],
-  [`set-bst-theme((..))` / `set-render-theme((..))`],
+  [`set-op-theme((..))` / `set-render-theme((..))` / `set-rbt-theme((..))`],
   [State-based. One declaration at the top of the document propagates
    through every subsequent `*-display` call. Ergonomic and intent-
    matching, but participates in Typst's state-convergence machinery
@@ -326,7 +340,7 @@ Theme overrides come in two flavours:
 
 Both paths exist because there's no single answer. State is right
 for a document that uses one theme throughout — write
-`set-bst-theme(my-palette)` once, forget about it. Per-call is right
+`set-op-theme(my-palette)` once, forget about it. Per-call is right
 when compile speed dominates and the user is happy threading a `let
 palette = (..)` value through their calls. The library does not pick
 a winner.
@@ -492,7 +506,7 @@ the running output sequence. `step.kind` is `"init"` for the initial
 frame and `"visit"` thereafter, with `step.value` and `step.index`
 (1-indexed) recording each visit. Switch palettes via the theme
 system (see #link(label("theming"))[Theming]) — either doc-wide with
-`set-bst-theme((traversal-palette: color.map.viridis))` or per-call
+`set-op-theme((traversal-palette: color.map.viridis))` or per-call
 with `(t.in-order-display)(theme: (traversal-palette: ...))`.
 
 Pure-data variants `(t.in-order)()`, `(t.pre-order)()`,
@@ -527,32 +541,39 @@ root-warm":
 
 = Theming <theming>
 
-Starling exposes two theme layers so document authors can match
+Starling exposes three theme layers so document authors can match
 starling's palette to their own document style:
 
 - *Render theme* (#raw("default-render-theme")) — the structural
   defaults the renderer falls back on for the unstyled tree:
   `node-fill`, `node-stroke`, `node-text-fill`, `edge-stroke`,
   `note-fill`.
-- *BST theme* (#raw("default-bst-theme")) — the semantic colors and
-  strokes the BST `*-display` methods use to communicate operation
-  state: `search-stroke`, `pivot-stroke`, `success-stroke`,
-  `settled-stroke`, `success-fill`, `danger-stroke`, `reset-stroke`,
-  `traversal-palette`. Strokes are full stroke dicts
+- *Op theme* (#raw("default-op-theme")) — the operation-semantic
+  colors and strokes that any data structure's `*-display` methods use
+  to communicate operation state: `search-stroke`, `attention-stroke`,
+  `success-stroke`, `settled-stroke`, `success-fill`, `danger-stroke`,
+  `reset-stroke`, `traversal-palette`. Shared across data structures —
+  BST search, RBT search, and a future heap delete all read the same
+  `search-stroke`. Strokes are full stroke dicts
   (`(paint:, thickness:, dash:)`) so any aspect — color, width, dash —
   is overridable without adding more keys.
+- *Per-DS theme* — styling intrinsic to one data structure. RBT has
+  #raw("default-rbt-theme") with `red-fill`, `red-stroke`,
+  `red-text-fill`, `black-fill`, `black-stroke`, `black-text-fill` for
+  the red/black palette. BST has no per-DS theme of its own because
+  BST nodes carry no intrinsic styling.
 
 == Setting a theme for the whole document
 
-Call `set-bst-theme` and/or `set-render-theme` once near the top of
-your document. The override is state-based and scoped by Typst's
-normal layout flow, so it propagates to every subsequent
-`*-display` call.
+Call any combination of `set-render-theme`, `set-op-theme`, and the
+per-DS setters (e.g. `set-rbt-theme`) once near the top of your
+document. Each override is state-based and scoped by Typst's normal
+layout flow, so it propagates to every subsequent `*-display` call.
 
 ```typ
-#import "@preview/starling:0.1.0": BST, set-bst-theme, set-render-theme
+#import "@preview/starling:0.1.0": BST, set-op-theme, set-render-theme
 
-#set-bst-theme((
+#set-op-theme((
   search-stroke: (paint: teal, thickness: 2.5pt),
   success-stroke: (paint: olive, thickness: 2.5pt),
   settled-stroke: (paint: olive, thickness: 3.5pt),
@@ -577,7 +598,7 @@ defaults and used in place of the state value for that call only.
 
 == Performance: state-based theming costs a layout pass <theming-perf>
 
-Typst's state machinery is what makes `set-bst-theme` / `set-render-theme`
+Typst's state machinery is what makes `set-op-theme` / `set-render-theme`
 work: a `state.update` later in the document can affect renders earlier
 in document order, so Typst evaluates the document, propagates state,
 and re-evaluates anything that observed it. In practice that means
@@ -588,7 +609,7 @@ a starling render helper or rendered a frame's `render` builder against
 that state.
 
 Concretely, a 50-tree synthetic benchmark goes from ~1.85s to ~3.1s
-when `set-bst-theme` is added. The cost scales with document size, not
+when `set-op-theme` is added. The cost scales with document size, not
 with the number of state reads (one read or a thousand is the same),
 because the price is "Typst does a second layout pass", not "the read
 is slow".
@@ -612,7 +633,7 @@ no-state baseline:
 // ...
 ```
 
-This is the usual perf/ergonomics tradeoff: `set-bst-theme` is one
+This is the usual perf/ergonomics tradeoff: `set-op-theme` is one
 declaration at the top of the document and "just works"; per-call
 `theme:` is more typing but avoids the extra pass.
 
@@ -658,21 +679,21 @@ that wants to colour-code its narration by step kind:
 #let kind-colors = (compare: blue, inserted: green)
 
 #let captioned-frames = frames.map(f => figure(context {
-  let bt = starling._bst-theme-state.get()
+  let op = starling._op-theme-state.get()
   let rt = starling._render-theme-state.get()
   let color = kind-colors.at(f.step.kind, default: black)
   stack(dir: ttb, spacing: 0.5em,
-    (f.render)(bt, rt), text(fill: color, f.caption))
+    (f.render)(op, rt), text(fill: color, f.caption))
 }))
 
 #alternatives(..captioned-frames)
 ```
 
-#raw("frame.render") is a builder #raw("(bt, rt) => content") rather
+#raw("frame.render") is a builder #raw("(op, rt) => content") rather
 than pre-baked content, so themes resolve at layout time. The
 #raw("context") block above reads the active themes and feeds them
 in; if you don't need state-driven theming, you can call
-#raw("(f.render)(starling.default-bst-theme, starling.default-render-theme)")
+#raw("(f.render)(starling.default-op-theme, starling.default-render-theme)")
 without the wrapper.
 
 = Composing with cetz annotations <composing-with-cetz-annotations>

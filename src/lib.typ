@@ -14,19 +14,19 @@
 /// suppress numbering and supplements so they don't change the
 /// visible layout.
 
-#import "./bst.typ": (
-  BST,
-  default-bst-theme,
-  set-bst-theme,
-  BstTheme,
-  _bst-theme-state,
-)
+#import "./bst.typ": BST
 #import "./rbt.typ": (
   RBT,
   default-rbt-theme,
   set-rbt-theme,
   RbtTheme,
   _rbt-theme-state,
+)
+#import "./op-theme.typ": (
+  default-op-theme,
+  set-op-theme,
+  OpTheme,
+  _op-theme-state,
 )
 #import "./tree-anim.typ"
 #import "./tree-anim.typ": (
@@ -51,16 +51,16 @@
 
 // Private helpers — kept as regular comments so tidy ignores them.
 //
-// Each #raw("frame.render") is a builder #raw("(bt, rt) => content")
+// Each #raw("frame.render") is a builder #raw("(op, rt) => content")
 // rather than pre-baked content; the helpers below resolve the active
 // theme state *once* per call and feed those resolved themes into every
 // frame's builder. That collapses N per-frame `state.get()` calls down
 // to two per helper invocation — a meaningful perf win in many-tree
-// documents (`set-bst-theme` / `set-render-theme` participate in
+// documents (`set-op-theme` / `set-render-theme` participate in
 // Typst's state-convergence machinery, so each per-frame state read
 // costs a few ms in extra layout work).
 //
-// `_with-caption(frame, spacing, bt, rt)` stacks the caption below the
+// `_with-caption(frame, spacing, op, rt)` stacks the caption below the
 // rendered canvas when present, otherwise returns the bare canvas.
 //
 // `_resolve-alt(frame, override, index)` picks the alt-text string for
@@ -72,8 +72,8 @@
 // `_alt-figure(body, alt)` wraps content in a `figure` carrying the
 // alt text without any visible numbering or supplement, so the helpers
 // can attach alt to a canvas without changing the visible layout.
-#let _with-caption(frame, spacing, bt, rt) = {
-  let canvas = (frame.render)(bt, rt)
+#let _with-caption(frame, spacing, op, rt) = {
+  let canvas = (frame.render)(op, rt)
   if frame.caption == none {
     canvas
   } else {
@@ -120,12 +120,12 @@
   /// -> auto | str
   alt: auto,
 ) = context {
-  let bt = _bst-theme-state.get()
+  let op = _op-theme-state.get()
   let rt = _render-theme-state.get()
   let f = frames.last()
   let body = if caption {
-    _with-caption(f, spacing, bt, rt)
-  } else { (f.render)(bt, rt) }
+    _with-caption(f, spacing, op, rt)
+  } else { (f.render)(op, rt) }
   _alt-figure(body, _resolve-alt(f, alt, frames.len() - 1))
 }
 
@@ -157,7 +157,7 @@
   /// -> auto | str
   alt: auto,
 ) = context {
-  let bt = _bst-theme-state.get()
+  let op = _op-theme-state.get()
   let rt = _render-theme-state.get()
   stack(
     dir: ttb,
@@ -166,8 +166,8 @@
       .enumerate()
       .map(((i, f)) => {
         let body = if caption {
-          _with-caption(f, caption-spacing, bt, rt)
-        } else { (f.render)(bt, rt) }
+          _with-caption(f, caption-spacing, op, rt)
+        } else { (f.render)(op, rt) }
         _alt-figure(body, _resolve-alt(f, alt, i))
       }),
   )
@@ -183,7 +183,7 @@
 /// content laid out separately (touying splits them into subslides),
 /// so each figure's body resolves theme state in its own
 /// #raw("context") block. In many-tree documents that rely on
-/// #raw("set-bst-theme") / #raw("set-render-theme"), prefer per-call
+/// #raw("set-op-theme") / #raw("set-render-theme"), prefer per-call
 /// #raw("theme:") arguments on the #raw("*-display") method to skip
 /// state altogether when you're using #raw("figures").
 ///
@@ -210,11 +210,11 @@
     .enumerate()
     .map(((i, f)) => figure(
       context {
-        let bt = _bst-theme-state.get()
+        let op = _op-theme-state.get()
         let rt = _render-theme-state.get()
         if caption {
-          _with-caption(f, caption-spacing, bt, rt)
-        } else { (f.render)(bt, rt) }
+          _with-caption(f, caption-spacing, op, rt)
+        } else { (f.render)(op, rt) }
       },
       alt: _resolve-alt(f, alt, i),
     ))
@@ -236,7 +236,7 @@
   /// -> array
   frames,
 ) = frames.map(f => context {
-  let bt = _bst-theme-state.get()
+  let op = _op-theme-state.get()
   let rt = _render-theme-state.get()
-  (f.render)(bt, rt)
+  (f.render)(op, rt)
 })
