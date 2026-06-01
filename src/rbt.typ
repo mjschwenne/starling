@@ -110,6 +110,29 @@
   _replace-at(cls, tree, path, new)
 }
 
+// Build an intermediate tree with `post`'s structure but `pre`'s
+// per-value colors. Used by `delete-display` to insert a rotation-only
+// frame before each rotate+recolor case (Case 1, 3, 4), so the
+// structural change is visible before the color swap. Relies on BST
+// ordering of `pre` to look up each node's pre-rotation color by value.
+#let _color-preserve(cls, pre, post) = {
+  let find-color(val, n) = if n == none {
+    none
+  } else if n.value == val {
+    n.red
+  } else if val < n.value {
+    find-color(val, n.left)
+  } else {
+    find-color(val, n.right)
+  }
+  let rebuild(n) = if n == none { none } else {
+    let pre-red = find-color(n.value, pre)
+    let red = if pre-red == none { n.red } else { pre-red }
+    _node(cls, red, rebuild(n.left), n.value, n.label, rebuild(n.right))
+  }
+  rebuild(post)
+}
+
 // CLRS-style insertion trace. Returns `(events, tree)` — `tree` is the
 // fully-balanced post-insert tree; `events` is an ordered list of the
 // steps an animation should show.
@@ -889,8 +912,11 @@
 // Apply the rbt-theme palette (red-fill / red-stroke / red-text-fill or
 // the black equivalents) to every node in `tree`, returning the updated
 // renderer. Used by `display` and `insert-display` to colorize a
-// snapshot before layering operation-specific highlights on top.
-#let _paint-palette(r, tree, rbt) = {
+// snapshot before layering operation-specific highlights on top. When
+// `bits: true`, each node also gets a tag style carrying its
+// black-height bit ("0" for red, "1" for black), drawn just outside
+// the node's NE corner by `draw-tree`.
+#let _paint-palette(r, tree, rbt, bits: false) = {
   let walk(node, path) = if node == none { () } else {
     (path,) + walk(node.left, path + "L") + walk(node.right, path + "R")
   }
@@ -903,12 +929,9 @@
     let text-fill = if n.red {
       rbt.red-text-fill
     } else { rbt.black-text-fill }
-    result = (result.patch)(f => (f.style-node)(
-      p,
-      fill: fill,
-      stroke: stroke,
-      text-fill: text-fill,
-    ))
+    let style = (fill: fill, stroke: stroke, text-fill: text-fill)
+    if bits { style.insert("tag", if n.red { "0" } else { "1" }) }
+    result = (result.patch)(f => (f.style-node)(p, ..style))
   }
   result
 }
@@ -1237,16 +1260,18 @@
       let _ = bh(self)
       true
     },
-    display: (self, theme: auto, render-theme: auto) => {
+    display: (self, bits: false, theme: auto, render-theme: auto) => {
       // Returns a one-element Frame array — the static tree, with each
       // node colored from the active RBT palette by its `red` field.
-      // `step` is none.
+      // `step` is none. With `bits: true`, each node gets a small
+      // tag pinned outside its NE corner — "0" for red, "1" for
+      // black — so users can count black-height down any path.
       let captions = (none,)
       let steps-meta = (none,)
       let alts = ("Red-black tree: " + (self.describe)() + ".",)
       let build-snapshots = (rbt, _op, _rt) => {
         let r = tree-anim.make-renderer(self)
-        r = _paint-palette(r, self, rbt)
+        r = _paint-palette(r, self, rbt, bits: bits)
         r.snapshots
       }
       _make-frames-rbt(
@@ -1259,7 +1284,7 @@
         _resolve-render-theme-arg(render-theme),
       )
     },
-    insert-display: (self, v, theme: auto, render-theme: auto) => {
+    insert-display: (self, v, bits: false, theme: auto, render-theme: auto) => {
       // CLRS-style insertion animation. Frame sequence (step.kind):
       //   1. "init"                   — pre-insertion tree
       //   2. "descend"                — search path highlighted at once
@@ -1366,7 +1391,7 @@
 
         let build = (rbt, op, _rt) => {
           let r = tree-anim.make-renderer(event.tree)
-          r = _paint-palette(r, event.tree, rbt)
+          r = _paint-palette(r, event.tree, rbt, bits: bits)
           if event.kind == "descend" {
             for p in event.visited {
               r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
@@ -1410,6 +1435,7 @@
       self,
       v,
       search: false,
+      bits: false,
       theme: auto,
       render-theme: auto,
     ) => {
@@ -1462,13 +1488,140 @@
         visited-by-event.push(visited-acc)
       }
 
+      // Per-event double-black path (or `none`). The trace doesn't carry
+      // this directly, so we walk events once to compute it: db appears
+      // after a black "excise" when the loop will run, persists across
+      // "check", moves with cases 1 / 2, is unchanged by case 3, and is
+      // resolved by case 4 / paint-black-db / paint-black-promoted.
+      // The marker is drawn as an "o" mark at the child end of the edge
+      // into the db node, matching the textbook convention. Root db
+      // ("" path) has no parent edge — it propagates into root absorption
+      // implicitly, so we just skip the marker rather than synthesising
+      // a floating dot.
+      let db-by-event = ()
+      let cur-db = none
+      for (idx, e) in events.enumerate() {
+        if e.kind == "excise" and not e.was-red {
+          let next-kind = if idx + 1 < events.len() {
+            events.at(idx + 1).kind
+          } else { none }
+          if next-kind != "paint-black-promoted" {
+            cur-db = e.path
+          }
+        } else if e.kind == "paint-black-promoted" {
+          cur-db = none
+        } else if e.kind == "case-1" {
+          // After case 1 the db is the parent's new near grandchild:
+          // parent moved under the former sibling, so db sits at
+          // parent-path + "LL" (db was the left child) or "RR".
+          let suffix = e.new-sibling-path.slice(e.parent-path.len())
+          cur-db = if suffix == "LR" {
+            e.parent-path + "LL"
+          } else {
+            e.parent-path + "RR"
+          }
+        } else if e.kind == "case-2" {
+          // If db propagated up to a red node, the very next loop step
+          // is paint-black-db (the red node absorbs the extra black).
+          // Suppress the marker — "red + double-black" isn't a stable
+          // node state and painting a red node as double-black reads
+          // wrong.
+          let new-db = e.new-db-path
+          let new-db-node = if new-db == "" {
+            none
+          } else { _resolve-at(e.tree, new-db) }
+          cur-db = if _is-red(new-db-node) { none } else { new-db }
+        } else if e.kind == "case-3" {
+          // db is unchanged by case 3; case 4 follows in the next event.
+        } else if e.kind == "case-4" {
+          cur-db = none
+        } else if e.kind == "paint-black-db" {
+          cur-db = none
+        } else if e.kind == "check" {
+          cur-db = e.db-path
+        }
+        db-by-event.push(cur-db)
+      }
+
       let specs = ()
       for (i, e) in events.enumerate() {
         // The empty-tree excise of a single-node delete: skip the frame
         // (no tree to render). The previous "mark-target" frame already
         // conveys the imminent deletion via its caption.
         if e.tree == none { continue }
+        // The "check" event marks each fix-up iteration's entry point;
+        // its tree is identical to the previous frame's, and the
+        // double-black dot already drawn on that frame conveys the same
+        // information. Skip to avoid a redundant "Double-black" frame.
+        if e.kind == "check" { continue }
         let event = e
+
+        // Each rotate+recolor case (1 / 3 / 4) gets a rotation-only
+        // intermediate frame inserted first: the post-rotation
+        // structure repainted with the pre-rotation per-node colors,
+        // so the structural pivot lands before the color swap. The
+        // existing case-N spec then follows, captioned as the recolor.
+        if event.kind == "case-1" or event.kind == "case-3" or event.kind == "case-4" {
+          let pre-tree = events.at(i - 1).tree
+          let intermediate-tree = _color-preserve(cls, pre-tree, event.tree)
+          let prev-db = db-by-event.at(i - 1)
+          // Rotation pushes db one level deeper for case-1 and case-4
+          // (parent demoted under former sibling); case-3 only rearranges
+          // the sibling's subtree, so db stays put.
+          let int-db = if event.kind == "case-3" {
+            prev-db
+          } else {
+            let is-left = prev-db.last() == "L"
+            event.parent-path + (if is-left { "LL" } else { "RR" })
+          }
+          // The pivot lands at parent-path (case-1 / case-4: sibling
+          // moves up) or sibling-path (case-3: near nephew moves up).
+          let int-pivot = if event.kind == "case-3" {
+            event.sibling-path
+          } else {
+            event.parent-path
+          }
+          let (int-caption, int-step, int-alt) = if event.kind == "case-1" {
+            (
+              [Case 1: rotate parent],
+              (kind: "case-1-rotate", parent-path: event.parent-path),
+              "Case 1: rotated around the parent — sibling moves up, parent demoted. Colors swap next.",
+            )
+          } else if event.kind == "case-3" {
+            (
+              [Case 3: rotate sibling],
+              (kind: "case-3-rotate", sibling-path: event.sibling-path),
+              "Case 3: rotated around the sibling — near nephew moves up, sibling demoted. Colors swap next.",
+            )
+          } else {
+            (
+              [Case 4: rotate parent],
+              (kind: "case-4-rotate", parent-path: event.parent-path),
+              "Case 4: rotated around the parent — sibling moves up, parent demoted. Colors swap and far nephew is painted black next.",
+            )
+          }
+          let int-build = (rbt, op, rt) => {
+            let r = tree-anim.make-renderer(intermediate-tree)
+            r = _paint-palette(r, intermediate-tree, rbt, bits: bits)
+            r = (r.patch)(f => (f.style-node)(int-pivot, stroke: op.success-stroke))
+            if int-db != none and int-db != "" {
+              r = (r.patch)(f => (f.style-edge)(
+                int-db,
+                mark: (end: "o", fill: rt.edge-stroke, scale: 2, offset: 0.2),
+                force-show: true,
+              ))
+            }
+            r.snapshots.first()
+          }
+          specs.push((
+            tree: intermediate-tree,
+            build: int-build,
+            caption: int-caption,
+            step: int-step,
+            alt: int-alt,
+          ))
+        }
+
         let visited-snapshot = visited-by-event.at(i)
         let caption = none
         let step = (kind: event.kind)
@@ -1564,14 +1717,14 @@
             "Black-height short by one in this subtree; investigating the parent / sibling configuration."
           )
         } else if event.kind == "case-1" {
-          caption = [Case 1: sibling red]
+          caption = [Case 1: recolor]
           step = (
             kind: "case-1",
             parent-path: event.parent-path,
             new-sibling-path: event.new-sibling-path,
           )
           alt = (
-            "Case 1: sibling was red. Rotated around parent and swapped parent/sibling colors. The new sibling is black; continuing with Cases 2–4."
+            "Case 1: swapped parent/sibling colors after the rotation. The new sibling is black; continuing with Cases 2–4."
           )
         } else if event.kind == "case-2" {
           caption = [Case 2: recolor sibling]
@@ -1584,26 +1737,28 @@
             "Case 2: sibling and both nephews were black. Painted sibling red and propagated the missing black up to parent."
           )
         } else if event.kind == "case-3" {
-          caption = [Case 3: rotate sibling]
+          caption = [Case 3: recolor]
           step = (
             kind: "case-3",
             sibling-path: event.sibling-path,
             near-nephew-path: event.near-nephew-path,
           )
           alt = (
-            "Case 3: near nephew was red, far nephew was black. Rotated around sibling and swapped colors; Case 4 now applies."
+            "Case 3: swapped sibling/near-nephew colors after the rotation; Case 4 now applies."
           )
         } else if event.kind == "case-4" {
-          caption = [Case 4: rotate parent]
+          caption = [Case 4: recolor]
           step = (kind: "case-4", parent-path: event.parent-path)
           alt = (
-            "Case 4: far nephew is red. Rotated around parent, swapped colors, and painted the far nephew black. Fix-up complete."
+            "Case 4: swapped parent/sibling colors and painted the far nephew black after the rotation. Fix-up complete."
           )
         }
 
-        let build = (rbt, op, _rt) => {
+        let db-cur = db-by-event.at(i)
+
+        let build = (rbt, op, rt) => {
           let r = tree-anim.make-renderer(event.tree)
-          r = _paint-palette(r, event.tree, rbt)
+          r = _paint-palette(r, event.tree, rbt, bits: bits)
           if event.kind == "compare" {
             for p in visited-snapshot {
               r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
@@ -1649,7 +1804,6 @@
             let db-node = _resolve-at(event.tree, event.db-path)
             if db-node != none {
               r = (r.patch)(f => (f.style-node)(event.db-path, stroke: op.attention-stroke))
-              r = (r.patch)(f => (f.note-node)(event.db-path, [+B]))
             }
           } else if event.kind == "case-1" {
             r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.success-stroke))
@@ -1660,6 +1814,21 @@
             r = (r.patch)(f => (f.style-node)(event.sibling-path, stroke: op.success-stroke))
           } else if event.kind == "case-4" {
             r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.settled-stroke))
+          }
+          // Mark the edge into the double-black node with a filled
+          // circular end-cap (textbook convention — see the reference
+          // image in repo root). Skip root db (no parent edge).
+          // `force-show` makes the stub edge render even when the db
+          // position is now nil (immediately after an excise or a
+          // case-1 deepen), so the dot still lands where the missing
+          // black logically lives. The dot's fill mirrors the edge
+          // stroke so a render-theme override carries through.
+          if db-cur != none and db-cur != "" {
+            r = (r.patch)(f => (f.style-edge)(
+              db-cur,
+              mark: (end: "o", fill: rt.edge-stroke, scale: 2, offset: 0.2),
+              force-show: true,
+            ))
           }
           r.snapshots.first()
         }
@@ -1677,3 +1846,57 @@
     },
   ),
 )
+
+/// Factory: build an #raw("RBT") from a positional list of values. The
+/// first argument becomes the (black) root; the rest are
+/// #raw("insert")-ed in order, so the CLRS fix-ups produce the final
+/// shape. Each argument is either a bare value (label defaults to
+/// #raw("auto") ⇒ #raw("str(value)")) or a #raw("(value, label)")
+/// 2-tuple. Equivalent to constructing the root with
+/// #raw("(RBT.new)(value: v0, label: l0, red: false, left: none,
+/// right: none)") and then chaining #raw(".insert(v, label: l)")
+/// calls, but tighter to seed sample trees:
+///
+/// ```typc
+/// // root 8, then insert 4, 12, 2, 6, 10, 14, 1
+/// let t = rbt(8, 4, 12, 2, 6, 10, 14, 1)
+///
+/// // mixed labels
+/// let t = rbt((8, [eight]), 4, (12, [XII]), 2)
+/// ```
+///
+/// -> dictionary
+#let rbt(
+  /// Positional values. Each is either a bare value or a
+  /// #raw("(value, label)") 2-tuple. At least one is required (the
+  /// root).
+  ..vals,
+) = {
+  let xs = vals.pos()
+  assert(
+    xs.len() > 0,
+    message: "rbt: at least one value required (the root)",
+  )
+  let parse(x) = if type(x) == array {
+    assert(
+      x.len() == 2,
+      message: "rbt: expected (value, label) 2-tuple, got " + repr(x),
+    )
+    (value: x.at(0), label: x.at(1))
+  } else {
+    (value: x, label: auto)
+  }
+  let head = parse(xs.first())
+  let tree = (RBT.new)(
+    value: head.value,
+    label: head.label,
+    red: false,
+    left: none,
+    right: none,
+  )
+  for x in xs.slice(1) {
+    let p = parse(x)
+    tree = (tree.insert)(p.value, label: p.label)
+  }
+  tree
+}

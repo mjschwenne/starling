@@ -1086,3 +1086,55 @@
     },
   ),
 )
+
+/// Factory: build a #raw("BST") from a positional list of values. The
+/// first argument becomes the root; the rest are #raw("insert")-ed in
+/// order. Each argument is either a bare value (label defaults to
+/// #raw("auto") ⇒ #raw("str(value)")) or a #raw("(value, label)")
+/// 2-tuple. Equivalent to #raw("(BST.new)(value: v0, label: l0, left:
+/// none, right: none)") followed by a chain of
+/// #raw(".insert(v, label: l)") calls, but reads tightly when seeding
+/// a sample tree:
+///
+/// ```typc
+/// // root 4, then insert 1, 7, 3, 6, 8
+/// let t = bst(4, 1, 7, 3, 6, 8)
+///
+/// // mixed labels
+/// let t = bst((4, [FOUR]), 1, 7, (6, [SIX]))
+/// ```
+///
+/// -> dictionary
+#let bst(
+  /// Positional values. Each is either a bare value or a
+  /// #raw("(value, label)") 2-tuple. At least one is required (the
+  /// root).
+  ..vals,
+) = {
+  let xs = vals.pos()
+  assert(
+    xs.len() > 0,
+    message: "bst: at least one value required (the root)",
+  )
+  let parse(x) = if type(x) == array {
+    assert(
+      x.len() == 2,
+      message: "bst: expected (value, label) 2-tuple, got " + repr(x),
+    )
+    (value: x.at(0), label: x.at(1))
+  } else {
+    (value: x, label: auto)
+  }
+  let head = parse(xs.first())
+  let tree = (BST.new)(
+    value: head.value,
+    label: head.label,
+    left: none,
+    right: none,
+  )
+  for x in xs.slice(1) {
+    let p = parse(x)
+    tree = (tree.insert)(p.value, label: p.label)
+  }
+  tree
+}

@@ -42,20 +42,19 @@ free to ignore them and lay frames out however your document needs.
 
 ```typ
 #import "@preview/starling:0.2.0" as starling
-#import starling: BST
+#import starling: bst
 
-#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
-#let t = (t.insert)(1)
-#let t = (t.insert)(7)
-#let t = (t.insert)(3)
-#let t = (t.insert)(6)
+#let t = bst(4, 1, 7, 3, 6)
 ```
 
-#let t = (starling.BST.new)(value: 4, label: auto, left: none, right: none)
-#let t = (t.insert)(1)
-#let t = (t.insert)(7)
-#let t = (t.insert)(3)
-#let t = (t.insert)(6)
+#let t = starling.bst(4, 1, 7, 3, 6)
+
+The first argument becomes the root; the rest are inserted in order.
+For custom node labels, pass a #raw("(value, label)") 2-tuple in place
+of a bare value — e.g. #raw("bst((4, [FOUR]), 1, (7, [SEVEN]))").
+The lower-level constructor #raw("(BST.new)(value:, label:, left:,
+right:)") and the #raw("(t.insert-many)(..vals)") method are still
+available for finer control.
 
 A static render of the tree, taking the final frame from `(t.display)()`:
 
@@ -436,15 +435,15 @@ The BST class provides five `*-display` methods. Each returns
 `Array(Frame)`; the examples below pass the result to `starling.stacked`
 to render every frame vertically with its caption.
 
-We'll use the same sample tree throughout this section:
+We'll use the same sample tree throughout this section, seeded via
+the #raw("bst(..vals)") factory (first arg = root, rest are
+inserted):
 
 ```typ
-#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
-#let t = (t.insert-many)(1, 7, 3, 6, 8)
+#let t = bst(4, 1, 7, 3, 6, 8)
 ```
 
-#let tour = (starling.BST.new)(value: 4, label: auto, left: none, right: none)
-#let tour = (tour.insert-many)(1, 7, 3, 6, 8)
+#let tour = starling.bst(4, 1, 7, 3, 6, 8)
 
 == Static display
 
@@ -538,6 +537,123 @@ root-warm":
   traversal-panel([Post-order], (tour.post-order-display)()),
   traversal-panel([Level-order], (tour.level-order-display)()),
 ))
+
+= RBT animations tour
+
+The `RBT` class ships three `*-display` methods today: `display`,
+`insert-display`, and `delete-display`. Each returns `Array(Frame)`
+in the same shape as the BST methods, so the render helpers
+(`last`, `stacked`, `figures`) and the caption / `step` /
+`alt` conventions carry over unchanged. The rbt-theme palette (red
+and black fill, stroke, and text-fill) is layered on top of the
+render theme so every frame's nodes wear their semantic colors
+automatically; operation-specific highlights from the op-theme
+(search-stroke on descent, attention-stroke on fix-up pivots,
+settled / success strokes on resolution) compose on top.
+
+The sample tree throughout this section is seeded via the
+#raw("rbt(..vals)") factory — first arg becomes the (black) root,
+the rest are inserted in order so the CLRS fix-ups produce a clean
+balanced shape with a mix of red and black nodes:
+
+```typ
+#let t = rbt(8, 4, 12, 2, 6, 10, 14, 1)
+```
+
+#let rbt-tour = starling.rbt(8, 4, 12, 2, 6, 10, 14, 1)
+
+For finer control, the lower-level
+#raw("(RBT.new)(value:, label:, red:, left:, right:)") constructor
+plus #raw("(t.insert-many)(..vals)") method are still available —
+the root takes a #raw("red:") argument because a single-node tree
+also carries a colour (it must be black after every public
+operation).
+
+== Static display
+
+`(t.display)()` returns a one-element frame array — the unmodified
+tree, with every node coloured by its `red` field from the active
+rbt-theme palette.
+
+#align(center, starling.last((rbt-tour.display)()))
+
+== Insert
+
+`(t.insert-display)(v)` traces the CLRS insertion algorithm: a BST
+descent records each visited node, the new value splices in as a
+red leaf, then a fix-up loop walks back up the tree applying Case 1
+(uncle red — recolour parent and uncle black, grandparent red,
+continue at the grandparent), Case 2 (zigzag — rotate around the
+parent to straighten the red-red pair), and Case 3 (straight line
+— rotate around the grandparent and swap its colour with the new
+subtree root). The root is blackened at the end if it ended up
+red. `step.kind` ranges over `"init"`, `"descend"`, `"insert"`,
+`"check"`, `"recolor"`, `"rotate-zigzag"`, `"rotate-recolor"`, and
+`"blacken-root"`.
+
+Inserting 0 walks down to the red leaf 1, splices a red 0 beneath
+it, then resolves the red-red pair via a straight-line Case 3
+(rotate around the grandparent 2, swap its colour with the new
+subtree root 1):
+
+#align(center, starling.stacked((rbt-tour.insert-display)(0)))
+
+== Delete
+
+`(t.delete-display)(v)` traces a BST search for the target, the
+in-order successor walk if the target has two children, the
+value transfer, the structural excise, and the four-case
+rebalancing loop. `step.kind` covers `"init"`, `"descend"` (a
+single frame highlighting the full search path; pass
+`search: true` for one `"compare"` frame per step instead),
+`"not-found"`, `"mark-target"`, `"find-successor"`, `"transfer"`,
+`"excise"`, `"paint-black-promoted"`, `"paint-black-db"`, and the
+fix-up cases. Cases 1, 3, and 4 each emit two frames — a
+rotation-only intermediate (`"case-1-rotate"`, `"case-3-rotate"`,
+`"case-4-rotate"`) followed by the recolor (`"case-1"`, `"case-3"`,
+`"case-4"`) — so the structural pivot lands separately from the
+color swap. Case 2 is a pure recolor and emits a single `"case-2"`
+frame.
+
+Excising a black node leaves the subtree one black short of the
+rest of the tree. The animation marks that imbalance with a small
+filled circle at the child end of the affected edge — the textbook
+convention. The circle stays in place across each fix-up step that
+doesn't resolve the missing black; it disappears once a Case 4
+rotation drains it or a red ancestor absorbs it. Deleting the black
+leaf 6 takes the Case 4 branch directly (sibling 2 is black, far
+nephew 1 is red):
+
+#align(center, starling.stacked((rbt-tour.delete-display)(6)))
+
+== Theming the red/black palette
+
+The rbt-theme palette lives in its own state, separate from the
+render theme and op theme, with `default-rbt-theme` as the seed and
+`set-rbt-theme` / a per-call `theme:` argument as the two override
+paths. Recognised keys are `red-fill`, `red-stroke`,
+`red-text-fill`, `black-fill`, `black-stroke`, and
+`black-text-fill`; unknown keys panic so typos surface immediately.
+
+Set the palette document-wide via `set-rbt-theme` (state-based,
+participates in the layout-pass cost — see @theming-perf):
+
+```typ
+#import "@preview/starling:0.2.0": RBT, set-rbt-theme
+
+#set-rbt-theme((
+  red-fill: orange,
+  red-stroke: orange.darken(20%),
+  black-fill: navy,
+  black-stroke: navy,
+))
+```
+
+Or per-call to skip state and run at the no-state baseline:
+
+```typ
+(t.display)(theme: (red-fill: red.darken(20%)))
+```
 
 = Theming <theming>
 

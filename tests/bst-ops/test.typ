@@ -1,4 +1,4 @@
-#import "/src/lib.typ": BST
+#import "/src/lib.typ": BST, bst
 
 // Hand-built tree:
 //         4
@@ -167,3 +167,18 @@
   (trd.describe)(),
   "4 (left: 3 (left: 1 (left: 0, right: 2), right: empty), right: 7 (left: empty, right: 8))",
 )
+
+// `bst(..vals)` factory: root from first arg, rest inserted in order.
+// Should match a long-form construction node-for-node.
+#let tf = bst(4, 1, 7, 0, 3, 8, 2)
+#assert.eq((tf.describe)(), (t.describe)())
+
+// Single-arg = root only.
+#let tf1 = bst(4)
+#assert.eq((tf1.describe)(), "4")
+
+// Tuple form: (value, label). Labels propagate.
+#let tfl = bst((4, "four"), 1, (7, "seven"))
+#assert.eq(tfl.label, "four")
+#assert.eq(((tfl.resolve)((tfl.by-value)(7))).label, "seven")
+#assert.eq(((tfl.resolve)((tfl.by-value)(1))).label, auto)

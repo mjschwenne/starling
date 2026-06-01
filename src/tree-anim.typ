@@ -56,6 +56,7 @@
   "note-fill",
   "hide",
   "shape",
+  "tag",
 )
 #let _edge-style-keys = (
   "stroke",
@@ -65,17 +66,23 @@
   "hide",
   "parent-anchor",
   "child-anchor",
+  "force-show",
 )
 
 /// Typsy refinement: a dictionary of node-style overrides. Recognised
 /// keys are #raw("fill"), #raw("stroke"), #raw("text-fill"),
-/// #raw("note"), #raw("note-fill"), #raw("hide"), and #raw("shape").
-/// #raw("shape") accepts the string #raw("\"circle\"") (default),
-/// #raw("\"triangle\"") (apex up; useful as a subtree-summary marker),
-/// or #raw("\"rectangle\""). The triangle and rectangle share a
-/// 1.4×1.2 bounding box; the circle keeps its 1.2×1.2 footprint.
-/// Named cetz anchors on the node's group (#raw("north"), #raw("south"),
-/// #raw("east"), #raw("west")) follow each shape's bounding box.
+/// #raw("note"), #raw("note-fill"), #raw("hide"), #raw("shape"), and
+/// #raw("tag"). #raw("shape") accepts the string #raw("\"circle\"")
+/// (default), #raw("\"triangle\"") (apex up; useful as a
+/// subtree-summary marker), or #raw("\"rectangle\""). The triangle and
+/// rectangle share a 1.4×1.2 bounding box; the circle keeps its 1.2×1.2
+/// footprint. Named cetz anchors on the node's group (#raw("north"),
+/// #raw("south"), #raw("east"), #raw("west")) follow each shape's
+/// bounding box. #raw("tag") is a small piece of content drawn just
+/// outside the north-east of the node — useful for compact per-node
+/// annotations that don't compete with the label or the operation
+/// #raw("note") slot (e.g. the RBT black-height bits enabled by
+/// #raw("display(bits: true)")).
 #let NodeStyle = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _node-style-keys.contains(k)),
@@ -83,12 +90,16 @@
 
 /// Typsy refinement: a dictionary of edge-style overrides. Recognised
 /// keys are #raw("stroke"), #raw("note"), #raw("note-fill"),
-/// #raw("mark"), #raw("hide"), #raw("parent-anchor"), and
-/// #raw("child-anchor"). The two #raw("*-anchor") keys accept a cetz
-/// anchor name (e.g. #raw("\"north\"")) and override the default
-/// fractional-distance endpoint on the parent or child side
-/// respectively; useful for connecting edges to non-circular shapes
-/// (e.g. #raw("child-anchor: \"north\"") to land on a triangle's apex).
+/// #raw("mark"), #raw("hide"), #raw("parent-anchor"),
+/// #raw("child-anchor"), and #raw("force-show"). The two
+/// #raw("*-anchor") keys accept a cetz anchor name (e.g.
+/// #raw("\"north\"")) and override the default fractional-distance
+/// endpoint on the parent or child side respectively; useful for
+/// connecting edges to non-circular shapes (e.g. #raw("child-anchor:
+/// \"north\"") to land on a triangle's apex). #raw("force-show: true")
+/// renders an edge even when one endpoint is a phantom — used by the
+/// RBT delete animation to draw a stub edge into a now-nil position
+/// when marking double-black.
 #let EdgeStyle = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _edge-style-keys.contains(k)),
@@ -338,7 +349,7 @@
 
 #let _phantom(path) = (((value: none, label: auto, path: path, phantom: true),),)
 
-#let _build-cetz-tree(node, path) = {
+#let _build-cetz-tree(node, path, forced-phantoms: ()) = {
   // BST-shaped accessor. Generalize here for n-ary trees.
   //
   // When a node has exactly one child, we inject a phantom sibling on the
@@ -346,17 +357,39 @@
   // under its parent — single children should visibly hang off to one side.
   // Phantoms are detected in draw-{node,edge} via `content.phantom` and
   // skipped at draw time, but they still occupy layout space.
+  //
+  // `forced-phantoms` lists paths that must materialize as phantoms even
+  // when the natural single-child rule wouldn't add them — used by the
+  // double-black dot rendering, so the stub edge has a node to anchor to
+  // when both children are nil.
   let has-left = node.left != none
   let has-right = node.right != none
+  let force-left = forced-phantoms.contains(path + "L")
+  let force-right = forced-phantoms.contains(path + "R")
+  // Pair-up rule: at a leaf, a single forced phantom would be laid out
+  // directly below the parent. Inject the opposite-side phantom too so
+  // the forced one hangs off to its side, matching how a single real
+  // child gets a phantom sibling.
+  let leaf-force = (
+    not has-left and not has-right and (force-left or force-right)
+  )
   let children = ()
   if has-left {
-    children.push(_build-cetz-tree(node.left, path + "L"))
-  } else if has-right {
+    children.push(_build-cetz-tree(
+      node.left,
+      path + "L",
+      forced-phantoms: forced-phantoms,
+    ))
+  } else if has-right or force-left or leaf-force {
     children.push(.._phantom(path + "L"))
   }
   if has-right {
-    children.push(_build-cetz-tree(node.right, path + "R"))
-  } else if has-left {
+    children.push(_build-cetz-tree(
+      node.right,
+      path + "R",
+      forced-phantoms: forced-phantoms,
+    ))
+  } else if has-left or force-right or leaf-force {
     children.push(.._phantom(path + "R"))
   }
   ((value: node.value, label: node.label, path: path), ..children)
@@ -412,8 +445,14 @@
 ) = {
   import cetz.draw
   import cetz.tree as cetz-tree
+  // Any edge styled with `force-show: true` for a path that wouldn't
+  // naturally exist (both children nil) needs a phantom anchor so the
+  // stub edge has somewhere to land — used by the double-black dot.
+  let forced-phantoms = snapshot.edges.pairs()
+    .filter(p => p.at(1).at("force-show", default: false))
+    .map(p => p.at(0))
   cetz-tree.tree(
-    _build-cetz-tree(tree, ""),
+    _build-cetz-tree(tree, "", forced-phantoms: forced-phantoms),
     name: name,
     group-name-prefix: node-prefix,
     draw-node: (node, ..) => {
@@ -495,15 +534,33 @@
             text(fill: nf, size: 0.8em, n),
           )
         }
+        // Tag — small annotation pinned just outside the NE of the
+        // node. Used by RBT `display(bits: true)` to show per-node
+        // black-height bits. Drawn in the render theme's edge-stroke
+        // color so it reads as a marginal annotation rather than node
+        // content. Position is shape-independent: the bounding-box
+        // corner sits just past the perimeter for all three shapes.
+        let tag = s.at("tag", default: none)
+        if tag != none {
+          draw.content(
+            (0.55, 0.55),
+            anchor: "south-west",
+            text(fill: render-theme.edge-stroke, size: 0.7em, tag),
+          )
+        }
       },
       draw-edge: (from, to, ..) => {
-        if to.content.at("phantom", default: false) { return }
-        if from.content.at("phantom", default: false) { return }
         let child-path = to.content.path
         let s = _merge-into(
           default-edge-style,
           snapshot.edges.at(child-path, default: (:)),
         )
+        // Phantom edges are skipped by default. `force-show: true` lets
+        // a stub edge render to (or from) a phantom — used to visualise
+        // double-black on a now-nil tree slot.
+        let force = s.at("force-show", default: false)
+        if not force and to.content.at("phantom", default: false) { return }
+        if not force and from.content.at("phantom", default: false) { return }
         if s.at("hide", default: false) { return }
         let mark = s.at("mark", default: none)
         // Endpoint resolution. Default is the empirical 0.4-fractional

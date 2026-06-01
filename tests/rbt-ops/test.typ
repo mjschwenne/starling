@@ -1,4 +1,4 @@
-#import "/src/lib.typ": RBT
+#import "/src/lib.typ": RBT, rbt
 
 // --- helpers --------------------------------------------------------
 #let bleaf(v, label: auto) = (RBT.new)(
@@ -174,3 +174,24 @@
 #assert((lbl-del.check-invariants)())
 #assert.eq(lbl-del.value, 8)
 #assert.eq(lbl-del.label, "eight")
+
+// --- rbt(..vals) factory --------------------------------------------
+// First arg = black root; rest are insert()-ed in order (so the CLRS
+// fix-ups run and the result is a valid RBT).
+#let rf = rbt(8, 4, 12, 2, 6, 10, 14, 1)
+#assert((rf.check-invariants)())
+#assert.eq(
+  (rf.describe)(),
+  ((bleaf(8).insert-many)(4, 12, 2, 6, 10, 14, 1).describe)(),
+)
+#assert.eq(rf.red, false)
+
+// Single-arg = root only.
+#let rf1 = rbt(8)
+#assert.eq((rf1.describe)(), "8B")
+
+// Tuple form for labels.
+#let rfl = rbt((8, "eight"), 4, (12, "twelve"))
+#assert.eq(rfl.label, "eight")
+#assert.eq(((rfl.resolve)((rfl.by-value)(12))).label, "twelve")
+#assert.eq(((rfl.resolve)((rfl.by-value)(4))).label, auto)

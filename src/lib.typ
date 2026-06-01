@@ -14,9 +14,10 @@
 /// suppress numbering and supplements so they don't change the
 /// visible layout.
 
-#import "./bst.typ": BST
+#import "./bst.typ": BST, bst
 #import "./rbt.typ": (
   RBT,
+  rbt,
   default-rbt-theme,
   set-rbt-theme,
   RbtTheme,
