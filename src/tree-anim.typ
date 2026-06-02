@@ -79,7 +79,7 @@
 /// footprint. Named cetz anchors on the node's group (#raw("north"),
 /// #raw("south"), #raw("east"), #raw("west")) follow each shape's
 /// bounding box. #raw("tag") is a small piece of content drawn just
-/// outside the north-east of the node — useful for compact per-node
+/// outside the west of the node — useful for compact per-node
 /// annotations that don't compete with the label or the operation
 /// #raw("note") slot (e.g. the RBT black-height bits enabled by
 /// #raw("display(bits: true)")).
@@ -534,17 +534,17 @@
             text(fill: nf, size: 0.8em, n),
           )
         }
-        // Tag — small annotation pinned just outside the NE of the
+        // Tag — small annotation pinned just outside the west of the
         // node. Used by RBT `display(bits: true)` to show per-node
         // black-height bits. Drawn in the render theme's edge-stroke
         // color so it reads as a marginal annotation rather than node
-        // content. Position is shape-independent: the bounding-box
-        // corner sits just past the perimeter for all three shapes.
+        // content. West of equator avoids overlap with the incoming
+        // parent edge (NE / NW) and outgoing child edges (SW / SE).
         let tag = s.at("tag", default: none)
         if tag != none {
           draw.content(
-            (0.55, 0.55),
-            anchor: "south-west",
+            (-0.65, 0),
+            anchor: "east",
             text(fill: render-theme.edge-stroke, size: 0.7em, tag),
           )
         }

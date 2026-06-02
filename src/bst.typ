@@ -47,12 +47,14 @@
 ) = {
   let n = captions.len()
   range(n).map(i => (tree-anim.Frame.new)(
-    _builder: (fn: (op-arg, rt-arg) => {
-      let op = if theme == auto { op-arg } else { theme }
-      let rt = if render-theme == auto { rt-arg } else { render-theme }
-      let snaps = build-snapshots(op, rt)
-      tree-anim._render-canvas(tree, snaps.at(i), (:), (:), rt)
-    }),
+    _builder: (
+      fn: (op-arg, rt-arg) => {
+        let op = if theme == auto { op-arg } else { theme }
+        let rt = if render-theme == auto { rt-arg } else { render-theme }
+        let snaps = build-snapshots(op, rt)
+        tree-anim._render-canvas(tree, snaps.at(i), (:), (:), rt)
+      },
+    ),
     caption: captions.at(i),
     step: steps-meta.at(i),
     alt: alts.at(i),
@@ -367,25 +369,25 @@
     },
     // Traversal-order helpers. Each returns an array of L/R path strings
     // in the order the corresponding traversal would visit them.
-    in-order: (self) => {
+    in-order: self => {
       let walk(node, path) = if node == none { () } else {
         walk(node.left, path + "L") + (path,) + walk(node.right, path + "R")
       }
       walk(self, "")
     },
-    pre-order: (self) => {
+    pre-order: self => {
       let walk(node, path) = if node == none { () } else {
         (path,) + walk(node.left, path + "L") + walk(node.right, path + "R")
       }
       walk(self, "")
     },
-    post-order: (self) => {
+    post-order: self => {
       let walk(node, path) = if node == none { () } else {
         walk(node.left, path + "L") + walk(node.right, path + "R") + (path,)
       }
       walk(self, "")
     },
-    level-order: (self) => {
+    level-order: self => {
       let result = ()
       let queue = ("",)
       while queue.len() > 0 {
@@ -405,28 +407,44 @@
     // the running output sequence accumulates in the caption. The final
     // frame wears the traversal's full color signature — stacking four
     // `last`-rendered displays gives the "compare four traversals" view.
-    in-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
+    in-order-display: (
+      self,
+      theme: auto,
+      render-theme: auto,
+    ) => _render-traversal(
       self,
       (self.in-order)(),
       "in-order",
       _resolve-op-theme-arg(theme),
       _resolve-render-theme-arg(render-theme),
     ),
-    pre-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
+    pre-order-display: (
+      self,
+      theme: auto,
+      render-theme: auto,
+    ) => _render-traversal(
       self,
       (self.pre-order)(),
       "pre-order",
       _resolve-op-theme-arg(theme),
       _resolve-render-theme-arg(render-theme),
     ),
-    post-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
+    post-order-display: (
+      self,
+      theme: auto,
+      render-theme: auto,
+    ) => _render-traversal(
       self,
       (self.post-order)(),
       "post-order",
       _resolve-op-theme-arg(theme),
       _resolve-render-theme-arg(render-theme),
     ),
-    level-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
+    level-order-display: (
+      self,
+      theme: auto,
+      render-theme: auto,
+    ) => _render-traversal(
       self,
       (self.level-order)(),
       "level-order",
@@ -487,7 +505,12 @@
       )
       for (i, s) in steps.enumerate() {
         captions.push(s.cmp)
-        steps-meta.push((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
+        steps-meta.push((
+          kind: "compare",
+          path: s.path,
+          cmp: s.cmp,
+          found: s.found,
+        ))
         let node-value = str((self.resolve)(s.path).value)
         let is-last = i == steps.len() - 1
         let alt = if s.found {
@@ -503,7 +526,13 @@
               + " is not in the tree."
           )
         } else {
-          "Comparing " + s.cmp + " at node " + node-value + "; continuing search."
+          (
+            "Comparing "
+              + s.cmp
+              + " at node "
+              + node-value
+              + "; continuing search."
+          )
         }
         alts.push(alt)
       }
@@ -618,7 +647,10 @@
         let r = tree-anim.make-renderer(self, sticky: true)
         // Frame 2: pivots
         r = (r.push-with-node)(parent-path, stroke: op.attention-stroke)
-        r = (r.patch)(f => (f.style-node)(child-path, stroke: op.attention-stroke))
+        r = (r.patch)(f => (f.style-node)(
+          child-path,
+          stroke: op.attention-stroke,
+        ))
         // Frame 3: break
         r = (r.push-with-edge)(child-path, hide: true)
         if has-middle {
@@ -655,7 +687,10 @@
         let r = tree-anim.make-renderer(after, sticky: true)
         // Frame 4 (initial): "restructure" — new shape, pivots still
         // highlighted, rotated edges hidden.
-        r = (r.patch)(f => (f.style-node)(parent-path, stroke: op.attention-stroke))
+        r = (r.patch)(f => (f.style-node)(
+          parent-path,
+          stroke: op.attention-stroke,
+        ))
         r = (r.patch)(f => (f.style-node)(
           new-parent-path,
           stroke: op.attention-stroke,
@@ -690,13 +725,25 @@
         // Frame 6: settle — reset highlights to the theme's reset
         // stroke (which should look like an unstyled stroke).
         r = (r.push-with-node)(parent-path, stroke: op.reset-stroke)
-        r = (r.patch)(f => (f.style-node)(new-parent-path, stroke: op.reset-stroke))
-        r = (r.patch)(f => (f.style-edge)(new-parent-path, stroke: op.reset-stroke))
+        r = (r.patch)(f => (f.style-node)(
+          new-parent-path,
+          stroke: op.reset-stroke,
+        ))
+        r = (r.patch)(f => (f.style-edge)(
+          new-parent-path,
+          stroke: op.reset-stroke,
+        ))
         if has-new-middle {
-          r = (r.patch)(f => (f.style-edge)(new-middle-path, stroke: op.reset-stroke))
+          r = (r.patch)(f => (f.style-edge)(
+            new-middle-path,
+            stroke: op.reset-stroke,
+          ))
         }
         if has-grandparent {
-          r = (r.patch)(f => (f.style-edge)(parent-path, stroke: op.reset-stroke))
+          r = (r.patch)(f => (f.style-edge)(
+            parent-path,
+            stroke: op.reset-stroke,
+          ))
         }
         r.snapshots
       }
@@ -721,7 +768,13 @@
       )
       frames-a + frames-b
     },
-    delete-display: (self, v, search: false, theme: auto, render-theme: auto) => {
+    delete-display: (
+      self,
+      v,
+      search: false,
+      theme: auto,
+      render-theme: auto,
+    ) => {
       // Animates a deletion. Dispatches on the target's children:
       //   leaf       → highlight, dash edge, then settle (r2's after-tree)
       //   one child  → highlight, dash both edges, hide, child reattaches success
@@ -786,7 +839,12 @@
       )
       for s in search-steps {
         captions-a.push(s.cmp)
-        steps-meta-a.push((kind: "compare", path: s.path, cmp: s.cmp, found: s.found))
+        steps-meta-a.push((
+          kind: "compare",
+          path: s.path,
+          cmp: s.cmp,
+          found: s.found,
+        ))
         let node-value = str((self.resolve)(s.path).value)
         let alt = if s.found {
           "Found target node " + node-value + "; ready to delete."
@@ -909,9 +967,15 @@
           let child-path = target-path + (if has-left { "L" } else { "R" })
           r = (r.push-with-node)(target-path, stroke: op.attention-stroke)
           if search { r = (r.patch)(f => (f.clear-notes)()) }
-          r = (r.patch)(f => (f.style-node)(child-path, stroke: op.search-stroke))
+          r = (r.patch)(f => (f.style-node)(
+            child-path,
+            stroke: op.search-stroke,
+          ))
           r = (r.push-with-edge)(target-path, stroke: op.danger-stroke)
-          r = (r.patch)(f => (f.style-edge)(child-path, stroke: op.danger-stroke))
+          r = (r.patch)(f => (f.style-edge)(
+            child-path,
+            stroke: op.danger-stroke,
+          ))
           r = (r.push-with-edge)(target-path, hide: true)
           r = (r.patch)(f => (f.style-edge)(child-path, hide: true))
           r = (r.patch)(f => (f.style-node)(target-path, hide: true))
@@ -941,8 +1005,14 @@
         if is-leaf {
           // Single settle frame, no styling.
         } else if is-one-child {
-          r = (r.patch)(f => (f.style-node)(target-path, stroke: op.search-stroke))
-          r = (r.patch)(f => (f.style-edge)(target-path, stroke: op.success-stroke))
+          r = (r.patch)(f => (f.style-node)(
+            target-path,
+            stroke: op.search-stroke,
+          ))
+          r = (r.patch)(f => (f.style-edge)(
+            target-path,
+            stroke: op.success-stroke,
+          ))
         } else {
           r = (r.patch)(f => (f.style-node)(
             target-path,

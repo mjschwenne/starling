@@ -1,12 +1,5 @@
 #import "@preview/typsy:0.2.2": (
-  Any,
-  Int,
-  Bool,
-  None,
-  Refine,
-  Dictionary,
-  Union,
-  class,
+  Any, Bool, Dictionary, Int, None, Refine, Union, class,
 )
 #import "./tree-anim.typ" as tree-anim
 
@@ -687,7 +680,9 @@
           ))
         } else {
           let far-nephew-path = sibling-path + (if is-left { "R" } else { "L" })
-          let near-nephew-path = sibling-path + (if is-left { "L" } else { "R" })
+          let near-nephew-path = (
+            sibling-path + (if is-left { "L" } else { "R" })
+          )
           let far-nephew = _resolve-at(cur-tree, far-nephew-path)
           let near-nephew = _resolve-at(cur-tree, near-nephew-path)
 
@@ -737,7 +732,12 @@
                   near-nephew.right,
                 )
               }
-              cur-tree = _replace-at(cls, cur-tree, sibling-path, new-sibling-sub)
+              cur-tree = _replace-at(
+                cls,
+                cur-tree,
+                sibling-path,
+                new-sibling-sub,
+              )
               events.push((
                 kind: "case-3",
                 sibling-path: sibling-path,
@@ -832,8 +832,8 @@
 /// Default semantic theme for the RB tree palette. Pass a partial dict
 /// to #raw("set-rbt-theme(..)") to override individual roles.
 #let default-rbt-theme = (
-  red-fill: red,
-  red-stroke: red,
+  red-fill: rgb("#E42313"),
+  red-stroke: rgb("#E42313"),
   red-text-fill: white,
   black-fill: black,
   black-stroke: black,
@@ -915,7 +915,7 @@
 // snapshot before layering operation-specific highlights on top. When
 // `bits: true`, each node also gets a tag style carrying its
 // black-height bit ("0" for red, "1" for black), drawn just outside
-// the node's NE corner by `draw-tree`.
+// the node's west by `draw-tree`.
 #let _paint-palette(r, tree, rbt, bits: false) = {
   let walk(node, path) = if node == none { () } else {
     (path,) + walk(node.left, path + "L") + walk(node.right, path + "R")
@@ -962,12 +962,14 @@
 ) = {
   let n = captions.len()
   range(n).map(i => (tree-anim.Frame.new)(
-    _builder: (fn: (op-arg, rt-arg) => {
-      let rbt = if theme == auto { _rbt-theme-state.get() } else { theme }
-      let rt = if render-theme == auto { rt-arg } else { render-theme }
-      let snaps = build-snapshots(rbt, op-arg, rt)
-      tree-anim._render-canvas(tree, snaps.at(i), (:), (:), rt)
-    }),
+    _builder: (
+      fn: (op-arg, rt-arg) => {
+        let rbt = if theme == auto { _rbt-theme-state.get() } else { theme }
+        let rt = if render-theme == auto { rt-arg } else { render-theme }
+        let snaps = build-snapshots(rbt, op-arg, rt)
+        tree-anim._render-canvas(tree, snaps.at(i), (:), (:), rt)
+      },
+    ),
     caption: captions.at(i),
     step: steps-meta.at(i),
     alt: alts.at(i),
@@ -983,12 +985,14 @@
 // returning `r.snapshots.first()`.
 #let _make-frames-rbt-multi(specs, theme, render-theme) = {
   specs.map(s => (tree-anim.Frame.new)(
-    _builder: (fn: (op-arg, rt-arg) => {
-      let rbt = if theme == auto { _rbt-theme-state.get() } else { theme }
-      let rt = if render-theme == auto { rt-arg } else { render-theme }
-      let snap = (s.build)(rbt, op-arg, rt)
-      tree-anim._render-canvas(s.tree, snap, (:), (:), rt)
-    }),
+    _builder: (
+      fn: (op-arg, rt-arg) => {
+        let rbt = if theme == auto { _rbt-theme-state.get() } else { theme }
+        let rt = if render-theme == auto { rt-arg } else { render-theme }
+        let snap = (s.build)(rbt, op-arg, rt)
+        tree-anim._render-canvas(s.tree, snap, (:), (:), rt)
+      },
+    ),
     caption: s.caption,
     step: s.step,
     alt: s.alt,
@@ -1070,25 +1074,25 @@
         head + " (left: " + l + ", right: " + r + ")"
       }
     },
-    in-order: (self) => {
+    in-order: self => {
       let walk(node, path) = if node == none { () } else {
         walk(node.left, path + "L") + (path,) + walk(node.right, path + "R")
       }
       walk(self, "")
     },
-    pre-order: (self) => {
+    pre-order: self => {
       let walk(node, path) = if node == none { () } else {
         (path,) + walk(node.left, path + "L") + walk(node.right, path + "R")
       }
       walk(self, "")
     },
-    post-order: (self) => {
+    post-order: self => {
       let walk(node, path) = if node == none { () } else {
         walk(node.left, path + "L") + walk(node.right, path + "R") + (path,)
       }
       walk(self, "")
     },
-    level-order: (self) => {
+    level-order: self => {
       let result = ()
       let queue = ("",)
       while queue.len() > 0 {
@@ -1195,7 +1199,7 @@
     // Test helper. Verifies BST order plus the four RB invariants and
     // panics on the first violation. Returns true if everything checks
     // out, so callers can write `#assert((t.check-invariants)())`.
-    check-invariants: (self) => {
+    check-invariants: self => {
       if self.red {
         panic(
           "RB invariant: root must be black, but value "
@@ -1361,7 +1365,7 @@
               + "."
           )
         } else if event.kind == "recolor" {
-          caption = [Case 1: recolor]
+          caption = [Recolor]
           step = (
             kind: "recolor",
             gp-path: event.gp-path,
@@ -1372,13 +1376,13 @@
             "Case 1: parent and uncle recolored black, grandparent recolored red. Continuing the check at the grandparent."
           )
         } else if event.kind == "rotate-zigzag" {
-          caption = [Case 2: rotate to straighten]
+          caption = [Rotate to straighten]
           step = (kind: "rotate-zigzag", parent-path: event.parent-path)
           alt = (
             "Case 2: rotated around the parent to align the red-red pair into a straight line."
           )
         } else if event.kind == "rotate-recolor" {
-          caption = [Case 3: rotate and color swap]
+          caption = [Rotate and color swap]
           step = (kind: "rotate-recolor", gp-path: event.gp-path)
           alt = (
             "Case 3: rotated around the grandparent and swapped its color with the new subtree root."
@@ -1397,23 +1401,53 @@
               r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
             }
           } else if event.kind == "insert" {
-            r = (r.patch)(f => (f.style-node)(event.path, stroke: op.settled-stroke))
-            r = (r.patch)(f => (f.style-edge)(event.path, stroke: op.success-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.path,
+              stroke: op.settled-stroke,
+            ))
+            r = (r.patch)(f => (f.style-edge)(
+              event.path,
+              stroke: op.success-stroke,
+            ))
           } else if event.kind == "check" {
-            r = (r.patch)(f => (f.style-node)(event.path, stroke: op.attention-stroke))
-            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.path,
+              stroke: op.attention-stroke,
+            ))
+            r = (r.patch)(f => (f.style-node)(
+              event.parent-path,
+              stroke: op.attention-stroke,
+            ))
             r = (r.patch)(f => (f.note-node)(event.path, [↑ check]))
           } else if event.kind == "recolor" {
-            r = (r.patch)(f => (f.style-node)(event.gp-path, stroke: op.settled-stroke))
-            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.settled-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.gp-path,
+              stroke: op.settled-stroke,
+            ))
+            r = (r.patch)(f => (f.style-node)(
+              event.parent-path,
+              stroke: op.settled-stroke,
+            ))
             if _resolve-at(event.tree, event.uncle-path) != none {
-              r = (r.patch)(f => (f.style-node)(event.uncle-path, stroke: op.settled-stroke))
+              r = (r.patch)(f => (f.style-node)(
+                event.uncle-path,
+                stroke: op.settled-stroke,
+              ))
             }
           } else if event.kind == "rotate-zigzag" {
-            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.parent-path,
+              stroke: op.attention-stroke,
+            ))
           } else if event.kind == "rotate-recolor" {
-            r = (r.patch)(f => (f.style-node)(event.gp-path, stroke: op.settled-stroke))
-            r = (r.patch)(f => (f.style-edge)(event.gp-path, stroke: op.success-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.gp-path,
+              stroke: op.settled-stroke,
+            ))
+            r = (r.patch)(f => (f.style-edge)(
+              event.gp-path,
+              stroke: op.success-stroke,
+            ))
           } else if event.kind == "blacken-root" {
             r = (r.patch)(f => (f.style-node)("", stroke: op.settled-stroke))
           }
@@ -1561,7 +1595,11 @@
         // structure repainted with the pre-rotation per-node colors,
         // so the structural pivot lands before the color swap. The
         // existing case-N spec then follows, captioned as the recolor.
-        if event.kind == "case-1" or event.kind == "case-3" or event.kind == "case-4" {
+        if (
+          event.kind == "case-1"
+            or event.kind == "case-3"
+            or event.kind == "case-4"
+        ) {
           let pre-tree = events.at(i - 1).tree
           let intermediate-tree = _color-preserve(cls, pre-tree, event.tree)
           let prev-db = db-by-event.at(i - 1)
@@ -1603,7 +1641,10 @@
           let int-build = (rbt, op, rt) => {
             let r = tree-anim.make-renderer(intermediate-tree)
             r = _paint-palette(r, intermediate-tree, rbt, bits: bits)
-            r = (r.patch)(f => (f.style-node)(int-pivot, stroke: op.success-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              int-pivot,
+              stroke: op.success-stroke,
+            ))
             if int-db != none and int-db != "" {
               r = (r.patch)(f => (f.style-edge)(
                 int-db,
@@ -1649,9 +1690,7 @@
           caption = [Search for #v]
           step = (kind: "descend", visited: event.visited)
           alt = (
-            "Walked the BST search path for "
-              + str(v)
-              + "; ready to delete."
+            "Walked the BST search path for " + str(v) + "; ready to delete."
           )
         } else if event.kind == "not-found" {
           caption = [#v not in tree]
@@ -1717,7 +1756,7 @@
             "Black-height short by one in this subtree; investigating the parent / sibling configuration."
           )
         } else if event.kind == "case-1" {
-          caption = [Case 1: recolor]
+          caption = [Recolor]
           step = (
             kind: "case-1",
             parent-path: event.parent-path,
@@ -1727,7 +1766,7 @@
             "Case 1: swapped parent/sibling colors after the rotation. The new sibling is black; continuing with Cases 2–4."
           )
         } else if event.kind == "case-2" {
-          caption = [Case 2: recolor sibling]
+          caption = [Recolor sibling]
           step = (
             kind: "case-2",
             sibling-path: event.sibling-path,
@@ -1737,7 +1776,7 @@
             "Case 2: sibling and both nephews were black. Painted sibling red and propagated the missing black up to parent."
           )
         } else if event.kind == "case-3" {
-          caption = [Case 3: recolor]
+          caption = [Recolor]
           step = (
             kind: "case-3",
             sibling-path: event.sibling-path,
@@ -1747,7 +1786,7 @@
             "Case 3: swapped sibling/near-nephew colors after the rotation; Case 4 now applies."
           )
         } else if event.kind == "case-4" {
-          caption = [Case 4: recolor]
+          caption = [Recolor]
           step = (kind: "case-4", parent-path: event.parent-path)
           alt = (
             "Case 4: swapped parent/sibling colors and painted the far nephew black after the rotation. Fix-up complete."
@@ -1777,43 +1816,85 @@
               r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
             }
           } else if event.kind == "mark-target" {
-            r = (r.patch)(f => (f.style-node)(event.target-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.target-path,
+              stroke: op.attention-stroke,
+            ))
             r = (r.patch)(f => (f.note-node)(event.target-path, [delete]))
           } else if event.kind == "find-successor" {
-            r = (r.patch)(f => (f.style-node)(event.target-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.target-path,
+              stroke: op.attention-stroke,
+            ))
             for p in event.walk {
               r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
             }
             r = (r.patch)(f => (f.note-node)(event.successor-path, [successor]))
           } else if event.kind == "transfer" {
-            r = (r.patch)(f => (f.style-node)(event.target-path, stroke: op.settled-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.target-path,
+              stroke: op.settled-stroke,
+            ))
             r = (r.patch)(f => (f.note-node)(
               event.target-path,
               [← #(event.new-value)],
             ))
-            r = (r.patch)(f => (f.style-node)(event.successor-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.successor-path,
+              stroke: op.attention-stroke,
+            ))
           } else if event.kind == "excise" {
             // No special highlight — the structural change speaks for itself.
           } else if event.kind == "paint-black-promoted" {
-            r = (r.patch)(f => (f.style-node)(event.path, stroke: op.settled-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.path,
+              stroke: op.settled-stroke,
+            ))
           } else if event.kind == "paint-black-db" {
-            r = (r.patch)(f => (f.style-node)(event.path, stroke: op.settled-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.path,
+              stroke: op.settled-stroke,
+            ))
           } else if event.kind == "check" {
-            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.attention-stroke))
-            r = (r.patch)(f => (f.style-node)(event.sibling-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.parent-path,
+              stroke: op.attention-stroke,
+            ))
+            r = (r.patch)(f => (f.style-node)(
+              event.sibling-path,
+              stroke: op.attention-stroke,
+            ))
             let db-node = _resolve-at(event.tree, event.db-path)
             if db-node != none {
-              r = (r.patch)(f => (f.style-node)(event.db-path, stroke: op.attention-stroke))
+              r = (r.patch)(f => (f.style-node)(
+                event.db-path,
+                stroke: op.attention-stroke,
+              ))
             }
           } else if event.kind == "case-1" {
-            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.success-stroke))
-            r = (r.patch)(f => (f.style-node)(event.new-sibling-path, stroke: op.attention-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.parent-path,
+              stroke: op.success-stroke,
+            ))
+            r = (r.patch)(f => (f.style-node)(
+              event.new-sibling-path,
+              stroke: op.attention-stroke,
+            ))
           } else if event.kind == "case-2" {
-            r = (r.patch)(f => (f.style-node)(event.sibling-path, stroke: op.settled-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.sibling-path,
+              stroke: op.settled-stroke,
+            ))
           } else if event.kind == "case-3" {
-            r = (r.patch)(f => (f.style-node)(event.sibling-path, stroke: op.success-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.sibling-path,
+              stroke: op.success-stroke,
+            ))
           } else if event.kind == "case-4" {
-            r = (r.patch)(f => (f.style-node)(event.parent-path, stroke: op.settled-stroke))
+            r = (r.patch)(f => (f.style-node)(
+              event.parent-path,
+              stroke: op.settled-stroke,
+            ))
           }
           // Mark the edge into the double-black node with a filled
           // circular end-cap (textbook convention — see the reference
