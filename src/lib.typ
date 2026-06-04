@@ -21,6 +21,7 @@
   default-rbt-theme,
   set-rbt-theme,
   RbtTheme,
+  paint-rbt,
   _rbt-theme-state,
 )
 #import "./op-theme.typ": (

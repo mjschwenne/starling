@@ -126,97 +126,19 @@
   rebuild(post)
 }
 
-// CLRS-style insertion trace. Returns `(events, tree)` — `tree` is the
-// fully-balanced post-insert tree; `events` is an ordered list of the
-// steps an animation should show.
+// Run the CLRS red-red fix-up loop starting from `start-path` (a node
+// whose parent — if any — is checked for a red-red violation). Returns
+// `(events, tree)`. Does NOT validate the input; callers may pass a
+// tree with a hand-constructed red-red configuration that couldn't
+// arise from a real insertion (this is what `fixup-display` uses).
+// `_clrs-insert-trace` calls into here after splicing the new red leaf.
 //
-// We *don't* use Okasaki's balance for insertion: Okasaki collapses
-// CLRS Case 2 + Case 3 into one atomic restructuring and has no
-// explicit Case 1 (uncle red, recolor), so the operational shape it
-// produces can't be narrated as the textbook three-case fix-up shown
-// in the standard reference image. By tracing the CLRS algorithm
-// directly, both `insert` and `insert-display` produce identical
-// trees and the animation matches what `insert` actually does.
-//
-// Event kinds:
-//   (kind: "init",          tree)
-//   (kind: "descend",       visited, insert-path, tree)
-//                          — single frame; `visited` lists every L/R
-//                            path inspected on the way down (root
-//                            first), `insert-path` is where the new
-//                            leaf will be placed (one past the last
-//                            visited node)
-//   (kind: "insert",        path, tree)
-//   (kind: "check",         path, parent-path, gp-path, uncle-path, tree)
-//                          — red-red violation about to be fixed
-//   (kind: "recolor",       gp-path, parent-path, uncle-path, tree)
-//                          — Case 1 applied (parent + uncle → black,
-//                            grandparent → red)
-//   (kind: "rotate-zigzag", parent-path, tree)
-//                          — Case 2 applied (rotate around parent to
-//                            straighten the red-red pair)
-//   (kind: "rotate-recolor", gp-path, tree)
-//                          — Case 3 applied (rotate around grandparent
-//                            + swap grandparent/parent colors)
-//   (kind: "blacken-root",  tree)
-#let _clrs-insert-trace(cls, tree, v, label) = {
+// Emits a subset of the event kinds documented on `_clrs-insert-trace`:
+//   "check", "recolor", "rotate-zigzag", "rotate-recolor", "blacken-root"
+#let _clrs-insert-fixup(cls, tree, start-path) = {
   let events = ()
-
-  // BST descent — record each visited path and the final insertion path
-  // (one past the last visited node).
-  let visited = ()
-  let p = ""
-  let n = tree
-  while n != none {
-    visited.push(p)
-    if v <= n.value {
-      p = p + "L"
-      n = n.left
-    } else {
-      p = p + "R"
-      n = n.right
-    }
-  }
-  let insert-path = p
-
-  events.push((kind: "init", tree: tree))
-  events.push((
-    kind: "descend",
-    visited: visited,
-    insert-path: insert-path,
-    tree: tree,
-  ))
-
-  // Splice a new red leaf at insert-path, rebuilding the spine above
-  // it. We can't reuse `_replace-at` because the parent's child pointer
-  // is `none` here, so we walk the path directly.
-  let insert-at(node, path) = if path == "" {
-    _node(cls, true, none, v, label, none)
-  } else if path.first() == "L" {
-    _node(
-      cls,
-      node.red,
-      insert-at(node.left, path.slice(1)),
-      node.value,
-      node.label,
-      node.right,
-    )
-  } else {
-    _node(
-      cls,
-      node.red,
-      node.left,
-      node.value,
-      node.label,
-      insert-at(node.right, path.slice(1)),
-    )
-  }
-  let cur-tree = insert-at(tree, insert-path)
-  let cur-path = insert-path
-  events.push((kind: "insert", path: cur-path, tree: cur-tree))
-
-  // Fix-up loop. Invariant: `cur-path` is a (possibly) red node whose
-  // parent (if any) must be checked for a red-red violation.
+  let cur-tree = tree
+  let cur-path = start-path
   let done = false
   while not done {
     if cur-path == "" {
@@ -387,8 +309,99 @@
       }
     }
   }
-
   (events: events, tree: cur-tree)
+}
+
+// CLRS-style insertion trace. Returns `(events, tree)` — `tree` is the
+// fully-balanced post-insert tree; `events` is an ordered list of the
+// steps an animation should show.
+//
+// We *don't* use Okasaki's balance for insertion: Okasaki collapses
+// CLRS Case 2 + Case 3 into one atomic restructuring and has no
+// explicit Case 1 (uncle red, recolor), so the operational shape it
+// produces can't be narrated as the textbook three-case fix-up shown
+// in the standard reference image. By tracing the CLRS algorithm
+// directly, both `insert` and `insert-display` produce identical
+// trees and the animation matches what `insert` actually does.
+//
+// Event kinds:
+//   (kind: "init",          tree)
+//   (kind: "descend",       visited, insert-path, tree)
+//                          — single frame; `visited` lists every L/R
+//                            path inspected on the way down (root
+//                            first), `insert-path` is where the new
+//                            leaf will be placed (one past the last
+//                            visited node)
+//   (kind: "insert",        path, tree)
+//   (kind: "check",         path, parent-path, gp-path, uncle-path, tree)
+//                          — red-red violation about to be fixed
+//   (kind: "recolor",       gp-path, parent-path, uncle-path, tree)
+//                          — Case 1 applied (parent + uncle → black,
+//                            grandparent → red)
+//   (kind: "rotate-zigzag", parent-path, tree)
+//                          — Case 2 applied (rotate around parent to
+//                            straighten the red-red pair)
+//   (kind: "rotate-recolor", gp-path, tree)
+//                          — Case 3 applied (rotate around grandparent
+//                            + swap grandparent/parent colors)
+//   (kind: "blacken-root",  tree)
+#let _clrs-insert-trace(cls, tree, v, label) = {
+  let events = ()
+
+  // BST descent — record each visited path and the final insertion path
+  // (one past the last visited node).
+  let visited = ()
+  let p = ""
+  let n = tree
+  while n != none {
+    visited.push(p)
+    if v <= n.value {
+      p = p + "L"
+      n = n.left
+    } else {
+      p = p + "R"
+      n = n.right
+    }
+  }
+  let insert-path = p
+
+  events.push((kind: "init", tree: tree))
+  events.push((
+    kind: "descend",
+    visited: visited,
+    insert-path: insert-path,
+    tree: tree,
+  ))
+
+  // Splice a new red leaf at insert-path, rebuilding the spine above
+  // it. We can't reuse `_replace-at` because the parent's child pointer
+  // is `none` here, so we walk the path directly.
+  let insert-at(node, path) = if path == "" {
+    _node(cls, true, none, v, label, none)
+  } else if path.first() == "L" {
+    _node(
+      cls,
+      node.red,
+      insert-at(node.left, path.slice(1)),
+      node.value,
+      node.label,
+      node.right,
+    )
+  } else {
+    _node(
+      cls,
+      node.red,
+      node.left,
+      node.value,
+      node.label,
+      insert-at(node.right, path.slice(1)),
+    )
+  }
+  let cur-tree = insert-at(tree, insert-path)
+  events.push((kind: "insert", path: insert-path, tree: cur-tree))
+
+  let fix = _clrs-insert-fixup(cls, cur-tree, insert-path)
+  (events: events + fix.events, tree: fix.tree)
 }
 
 // CLRS-style deletion trace. Returns `(events, tree)`. The
@@ -936,6 +949,60 @@
   result
 }
 
+/// Apply the RBT palette (red-fill / red-stroke / red-text-fill or the
+/// black equivalents) to every node in #raw("tree"), returning the
+/// updated #raw("TreeRenderer"). Use this when you're calling
+/// #raw("draw-tree") yourself inside a custom #raw("cetz.canvas") —
+/// the #raw("*-display") methods do this for you automatically.
+///
+/// When #raw("theme: auto"), the active #raw("set-rbt-theme") state is
+/// read, so the call must run inside a #raw("context { .. }") block.
+/// Pass an explicit partial dict to skip the state lookup (and the
+/// context requirement) — it's merged on top of
+/// #raw("default-rbt-theme").
+///
+/// With #raw("bits: true"), each node also gets a small tag carrying
+/// its black-height bit (#raw("\"0\"") for red, #raw("\"1\"") for
+/// black), drawn just outside the node's west by #raw("draw-tree").
+///
+/// ```typc
+/// #let t = rbt(8, 4, 12, 2, 6)
+/// #context {
+///   let snap = (paint-rbt(make-renderer(t), t)).snapshots.first()
+///   cetz.canvas({
+///     draw-tree(t, snap)
+///     // your own draws, anchored via `path-anchor(..)`
+///   })
+/// }
+/// ```
+///
+/// -> TreeRenderer
+#let paint-rbt(
+  /// The renderer to patch. Get one via #raw("make-renderer(tree)").
+  /// -> TreeRenderer
+  r,
+  /// The RBT whose per-node colors drive the painting. Must match the
+  /// tree passed to #raw("make-renderer").
+  /// -> RBT
+  tree,
+  /// Per-call RBT palette override. #raw("auto") reads the active
+  /// #raw("set-rbt-theme") state (requires #raw("context")); a partial
+  /// dict overrides individual roles on top of
+  /// #raw("default-rbt-theme").
+  /// -> auto | dictionary
+  theme: auto,
+  /// Whether to attach a black-height bit tag to each node
+  /// (#raw("\"0\"") for red, #raw("\"1\"") for black). Drawn west of
+  /// the node by #raw("draw-tree").
+  /// -> bool
+  bits: false,
+) = {
+  let rbt = if theme == auto {
+    _rbt-theme-state.get()
+  } else { _merge-rbt-theme(theme) }
+  _paint-palette(r, tree, rbt, bits: bits)
+}
+
 // ===================================================================
 // Frame construction for RBT displays
 // ===================================================================
@@ -974,6 +1041,144 @@
     step: steps-meta.at(i),
     alt: alts.at(i),
   ))
+}
+
+// Build a single spec dict from a `_clrs-insert-trace` event (or a
+// `_clrs-insert-fixup` event — same kinds, subset). Shared between
+// `insert-display` (full trace) and `fixup-display` (fix-up only).
+// `init-alt` is the alt text for the "init" frame, since it differs
+// per call site. `v` is the inserted value — only read by the
+// "descend" and "insert" branches, which `_clrs-insert-fixup` never
+// emits, so `fixup-display` may pass `none`.
+#let _insert-event-to-spec(event, v, bits, init-alt) = {
+  let caption = none
+  let step = (kind: event.kind)
+  let alt = ""
+
+  if event.kind == "init" {
+    step = (kind: "init")
+    alt = init-alt
+  } else if event.kind == "descend" {
+    caption = [Search for #v]
+    step = (
+      kind: "descend",
+      visited: event.visited,
+      insert-path: event.insert-path,
+    )
+    alt = (
+      "Walked the BST search path for "
+        + str(v)
+        + "; insertion point is one step beyond the last visited node."
+    )
+  } else if event.kind == "insert" {
+    caption = [Insert #v as red leaf]
+    step = (kind: "insert", path: event.path)
+    alt = "Inserted " + str(v) + " as a new red leaf."
+  } else if event.kind == "check" {
+    caption = [Red-red violation]
+    let cv = _resolve-at(event.tree, event.path).value
+    let pv = _resolve-at(event.tree, event.parent-path).value
+    step = (
+      kind: "check",
+      path: event.path,
+      parent-path: event.parent-path,
+      gp-path: event.gp-path,
+      uncle-path: event.uncle-path,
+    )
+    alt = (
+      "Red-red violation between nodes " + str(cv) + " and " + str(pv) + "."
+    )
+  } else if event.kind == "recolor" {
+    caption = [Recolor]
+    step = (
+      kind: "recolor",
+      gp-path: event.gp-path,
+      parent-path: event.parent-path,
+      uncle-path: event.uncle-path,
+    )
+    alt = (
+      "Case 1: parent and uncle recolored black, grandparent recolored red. Continuing the check at the grandparent."
+    )
+  } else if event.kind == "rotate-zigzag" {
+    caption = [Rotate to straighten]
+    step = (kind: "rotate-zigzag", parent-path: event.parent-path)
+    alt = (
+      "Case 2: rotated around the parent to align the red-red pair into a straight line."
+    )
+  } else if event.kind == "rotate-recolor" {
+    caption = [Rotate and color swap]
+    step = (kind: "rotate-recolor", gp-path: event.gp-path)
+    alt = (
+      "Case 3: rotated around the grandparent and swapped its color with the new subtree root."
+    )
+  } else if event.kind == "blacken-root" {
+    caption = [Blacken root]
+    step = (kind: "blacken-root")
+    alt = "Blackened the root to restore the RB invariants."
+  }
+
+  let build = (rbt, op, _rt) => {
+    let r = tree-anim.make-renderer(event.tree)
+    r = _paint-palette(r, event.tree, rbt, bits: bits)
+    if event.kind == "descend" {
+      for p in event.visited {
+        r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
+      }
+    } else if event.kind == "insert" {
+      r = (r.patch)(f => (f.style-node)(
+        event.path,
+        stroke: op.settled-stroke,
+      ))
+      r = (r.patch)(f => (f.style-edge)(
+        event.path,
+        stroke: op.success-stroke,
+      ))
+    } else if event.kind == "check" {
+      r = (r.patch)(f => (f.style-node)(
+        event.path,
+        stroke: op.attention-stroke,
+      ))
+      r = (r.patch)(f => (f.style-node)(
+        event.parent-path,
+        stroke: op.attention-stroke,
+      ))
+      r = (r.patch)(f => (f.note-node)(event.path, [↑]))
+    } else if event.kind == "recolor" {
+      r = (r.patch)(f => (f.style-node)(
+        event.gp-path,
+        stroke: op.settled-stroke,
+      ))
+      r = (r.patch)(f => (f.style-node)(
+        event.parent-path,
+        stroke: op.settled-stroke,
+      ))
+      if _resolve-at(event.tree, event.uncle-path) != none {
+        r = (r.patch)(f => (f.style-node)(
+          event.uncle-path,
+          stroke: op.settled-stroke,
+        ))
+      }
+    } else if event.kind == "rotate-zigzag" {
+      r = (r.patch)(f => (f.style-node)(
+        event.parent-path,
+        stroke: op.attention-stroke,
+      ))
+    } else if event.kind == "rotate-recolor" {
+      r = (r.patch)(f => (f.style-node)(
+        event.gp-path,
+        stroke: op.settled-stroke,
+      ))
+      r = (r.patch)(f => (f.style-edge)(
+        event.gp-path,
+        stroke: op.success-stroke,
+      ))
+    } else if event.kind == "blacken-root" {
+      r = (r.patch)(f => (f.style-node)("", stroke: op.settled-stroke))
+    }
+    r.snapshots.first()
+  }
+
+  (tree: event.tree, build: build, caption: caption, step: step, alt: alt)
 }
 
 // Per-frame variant of `_make-frames-rbt` for animations that cross
@@ -1320,149 +1525,49 @@
           + "."
       )
 
-      let specs = ()
-      for e in events {
-        let event = e
-        let caption = none
-        let step = (kind: event.kind)
-        let alt = ""
+      let specs = events.map(e => _insert-event-to-spec(e, v, bits, init-alt))
+      _make-frames-rbt-multi(specs, resolved-rbt, resolved-render)
+    },
+    fixup-display: (
+      self,
+      violation-path,
+      bits: false,
+      theme: auto,
+      render-theme: auto,
+    ) => {
+      // Animate the CLRS red-red fix-up starting from a hand-constructed
+      // tree that already has a red-red violation at `violation-path` —
+      // the lower of the two reds (i.e. its parent is also red).
+      // The tree is NOT validated; this is intentional, since the goal
+      // is to show fix-up cases that can't arise from a single
+      // `insert` (e.g. a red-red mid-tree, or a multi-level Case 1
+      // propagation that ends in `blacken-root`).
+      //
+      // Frame sequence: "init" (broken starting tree) followed by the
+      // same "check" / "recolor" / "rotate-zigzag" / "rotate-recolor"
+      // / "blacken-root" frames that `insert-display` produces during
+      // its fix-up phase.
+      let cls = self.meta.cls
+      let fix = _clrs-insert-fixup(cls, self, violation-path)
+      let events = ((kind: "init", tree: self),) + fix.events
 
-        if event.kind == "init" {
-          step = (kind: "init")
-          alt = init-alt
-        } else if event.kind == "descend" {
-          caption = [Search for #v]
-          step = (
-            kind: "descend",
-            visited: event.visited,
-            insert-path: event.insert-path,
-          )
-          alt = (
-            "Walked the BST search path for "
-              + str(v)
-              + "; insertion point is one step beyond the last visited node."
-          )
-        } else if event.kind == "insert" {
-          caption = [Insert #v as red leaf]
-          step = (kind: "insert", path: event.path)
-          alt = "Inserted " + str(v) + " as a new red leaf."
-        } else if event.kind == "check" {
-          caption = [Red-red violation]
-          let cv = _resolve-at(event.tree, event.path).value
-          let pv = _resolve-at(event.tree, event.parent-path).value
-          step = (
-            kind: "check",
-            path: event.path,
-            parent-path: event.parent-path,
-            gp-path: event.gp-path,
-            uncle-path: event.uncle-path,
-          )
-          alt = (
-            "Red-red violation between nodes "
-              + str(cv)
-              + " and "
-              + str(pv)
-              + "."
-          )
-        } else if event.kind == "recolor" {
-          caption = [Recolor]
-          step = (
-            kind: "recolor",
-            gp-path: event.gp-path,
-            parent-path: event.parent-path,
-            uncle-path: event.uncle-path,
-          )
-          alt = (
-            "Case 1: parent and uncle recolored black, grandparent recolored red. Continuing the check at the grandparent."
-          )
-        } else if event.kind == "rotate-zigzag" {
-          caption = [Rotate to straighten]
-          step = (kind: "rotate-zigzag", parent-path: event.parent-path)
-          alt = (
-            "Case 2: rotated around the parent to align the red-red pair into a straight line."
-          )
-        } else if event.kind == "rotate-recolor" {
-          caption = [Rotate and color swap]
-          step = (kind: "rotate-recolor", gp-path: event.gp-path)
-          alt = (
-            "Case 3: rotated around the grandparent and swapped its color with the new subtree root."
-          )
-        } else if event.kind == "blacken-root" {
-          caption = [Blacken root]
-          step = (kind: "blacken-root")
-          alt = "Blackened the root to restore the RB invariants."
-        }
+      let resolved-rbt = _resolve-rbt-theme-arg(theme)
+      let resolved-render = _resolve-render-theme-arg(render-theme)
 
-        let build = (rbt, op, _rt) => {
-          let r = tree-anim.make-renderer(event.tree)
-          r = _paint-palette(r, event.tree, rbt, bits: bits)
-          if event.kind == "descend" {
-            for p in event.visited {
-              r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
-            }
-          } else if event.kind == "insert" {
-            r = (r.patch)(f => (f.style-node)(
-              event.path,
-              stroke: op.settled-stroke,
-            ))
-            r = (r.patch)(f => (f.style-edge)(
-              event.path,
-              stroke: op.success-stroke,
-            ))
-          } else if event.kind == "check" {
-            r = (r.patch)(f => (f.style-node)(
-              event.path,
-              stroke: op.attention-stroke,
-            ))
-            r = (r.patch)(f => (f.style-node)(
-              event.parent-path,
-              stroke: op.attention-stroke,
-            ))
-            r = (r.patch)(f => (f.note-node)(event.path, [↑ check]))
-          } else if event.kind == "recolor" {
-            r = (r.patch)(f => (f.style-node)(
-              event.gp-path,
-              stroke: op.settled-stroke,
-            ))
-            r = (r.patch)(f => (f.style-node)(
-              event.parent-path,
-              stroke: op.settled-stroke,
-            ))
-            if _resolve-at(event.tree, event.uncle-path) != none {
-              r = (r.patch)(f => (f.style-node)(
-                event.uncle-path,
-                stroke: op.settled-stroke,
-              ))
-            }
-          } else if event.kind == "rotate-zigzag" {
-            r = (r.patch)(f => (f.style-node)(
-              event.parent-path,
-              stroke: op.attention-stroke,
-            ))
-          } else if event.kind == "rotate-recolor" {
-            r = (r.patch)(f => (f.style-node)(
-              event.gp-path,
-              stroke: op.settled-stroke,
-            ))
-            r = (r.patch)(f => (f.style-edge)(
-              event.gp-path,
-              stroke: op.success-stroke,
-            ))
-          } else if event.kind == "blacken-root" {
-            r = (r.patch)(f => (f.style-node)("", stroke: op.settled-stroke))
-          }
-          r.snapshots.first()
-        }
+      let init-alt = (
+        "Red-black tree: "
+          + (self.describe)()
+          + ". Red-red violation at path \""
+          + violation-path
+          + "\"; about to apply fix-up."
+      )
 
-        specs.push((
-          tree: event.tree,
-          build: build,
-          caption: caption,
-          step: step,
-          alt: alt,
-        ))
-      }
-
+      let specs = events.map(e => _insert-event-to-spec(
+        e,
+        none,
+        bits,
+        init-alt,
+      ))
       _make-frames-rbt-multi(specs, resolved-rbt, resolved-render)
     },
     delete-display: (
