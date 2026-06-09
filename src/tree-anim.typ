@@ -442,6 +442,16 @@
   /// the #raw("prefix") argument to @@path-anchor().
   /// -> str
   node-prefix: "node-",
+  /// Depth-direction layout factor passed to cetz-tree. Values below
+  /// #raw("1") shorten edges between levels; values above #raw("1")
+  /// stretch them. Node sizes are unaffected.
+  /// -> float
+  grow: 1,
+  /// Sibling-direction layout factor passed to cetz-tree. Values below
+  /// #raw("1") pull siblings together; values above #raw("1") push them
+  /// apart. Node sizes are unaffected.
+  /// -> float
+  spread: 1,
 ) = {
   import cetz.draw
   import cetz.tree as cetz-tree
@@ -455,6 +465,8 @@
     _build-cetz-tree(tree, "", forced-phantoms: forced-phantoms),
     name: name,
     group-name-prefix: node-prefix,
+    grow: grow,
+    spread: spread,
     draw-node: (node, ..) => {
         if node.content.at("phantom", default: false) {
           // Reserve a slightly-wider-than-a-node layout footprint, but
