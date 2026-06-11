@@ -402,7 +402,7 @@ The `restructure` frame is the load-bearing one: it shows the new
 tree shape with the rotated edges still hidden, so the student can
 see the new positions form _before_ the edges connect. Without it,
 the rotation would collapse into one cut from "broken" to "rotated +
-green edges", which is too much information at once.
+highlighted edges", which is too much information at once.
 
 == Path-based anchors and the cetz tree quirk <path-based-anchors-and-the-cetz-tree-quirk>
 
@@ -464,9 +464,9 @@ is `"init"` for the initial frame and `"compare"` for each step;
 == Insert
 
 `(t.insert-display)(v)` walks the search path as for `search-display`,
-then transitions to the after-tree with the new node highlighted
-green. `step.kind` is `"init"`, `"compare"` (per search step), and
-finally `"inserted"`.
+then transitions to the after-tree with the new node highlighted via
+`success-stroke` / `success-fill`. `step.kind` is `"init"`, `"compare"`
+(per search step), and finally `"inserted"`.
 
 #align(center, starling.stacked((tour.insert-display)(5)))
 
@@ -480,7 +480,7 @@ ranges over `"init"`, `"highlight"`, `"break"`, `"descend"`,
 The two-children deletion is the most complex: it highlights the
 target, descends into the left subtree to find the in-order
 predecessor, annotates the value transfer, then jumps to the after-tree
-with the new root of the affected subtree highlighted green.
+with the new root of the affected subtree highlighted via `success-stroke`.
 
 #align(center, starling.stacked((tour.delete-display)(4)))
 

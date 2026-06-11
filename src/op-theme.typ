@@ -1,4 +1,4 @@
-#import "@preview/typsy:0.2.2": Any, Refine, Dictionary
+#import "@preview/typsy:0.2.2": Any, Dictionary, Refine
 
 // ===================================================================
 // Op theme — operation-semantic styling, shared across data structures
@@ -35,10 +35,10 @@
 /// #raw("set-op-theme(..)") to override individual roles.
 #let default-op-theme = (
   search-stroke: (paint: blue, thickness: 2pt),
-  attention-stroke: (paint: rgb("#0891b2"), thickness: 2pt),
-  success-stroke: (paint: green, thickness: 2pt),
-  settled-stroke: (paint: green, thickness: 3pt),
-  success-fill: green.lighten(70%),
+  attention-stroke: (paint: rgb("#ffcd00"), thickness: 2pt),
+  success-stroke: (paint: rgb("#7c3aed"), thickness: 2pt),
+  settled-stroke: (paint: rgb("#7c3aed"), thickness: 3pt),
+  success-fill: rgb("#7c3aed").lighten(70%),
   danger-stroke: (paint: red, thickness: 2pt, dash: "dashed"),
   reset-stroke: (paint: black, thickness: 1pt),
   traversal-palette: color.map.magma,
