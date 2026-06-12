@@ -1728,19 +1728,19 @@
           }
           let (int-caption, int-step, int-alt) = if event.kind == "case-1" {
             (
-              [Case 1: rotate parent],
+              [Rotate parent],
               (kind: "case-1-rotate", parent-path: event.parent-path),
               "Case 1: rotated around the parent — sibling moves up, parent demoted. Colors swap next.",
             )
           } else if event.kind == "case-3" {
             (
-              [Case 3: rotate sibling],
+              [Rotate sibling],
               (kind: "case-3-rotate", sibling-path: event.sibling-path),
               "Case 3: rotated around the sibling — near nephew moves up, sibling demoted. Colors swap next.",
             )
           } else {
             (
-              [Case 4: rotate parent],
+              [Rotate parent],
               (kind: "case-4-rotate", parent-path: event.parent-path),
               "Case 4: rotated around the parent — sibling moves up, parent demoted. Colors swap and far nephew is painted black next.",
             )
@@ -1936,7 +1936,10 @@
             for p in event.walk {
               r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
             }
-            r = (r.patch)(f => (f.note-node)(event.predecessor-path, [predecessor]))
+            r = (r.patch)(f => (f.note-node)(
+              event.predecessor-path,
+              [predecessor],
+            ))
           } else if event.kind == "transfer" {
             r = (r.patch)(f => (f.style-node)(
               event.target-path,
