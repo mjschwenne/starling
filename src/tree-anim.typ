@@ -57,6 +57,8 @@
   "hide",
   "shape",
   "tag",
+  "label",
+  "materialize",
 )
 #let _edge-style-keys = (
   "stroke",
@@ -71,18 +73,27 @@
 
 /// Typsy refinement: a dictionary of node-style overrides. Recognised
 /// keys are #raw("fill"), #raw("stroke"), #raw("text-fill"),
-/// #raw("note"), #raw("note-fill"), #raw("hide"), #raw("shape"), and
-/// #raw("tag"). #raw("shape") accepts the string #raw("\"circle\"")
-/// (default), #raw("\"triangle\"") (apex up; useful as a
-/// subtree-summary marker), or #raw("\"rectangle\""). The triangle and
-/// rectangle share a 1.4×1.2 bounding box; the circle keeps its 1.2×1.2
-/// footprint. Named cetz anchors on the node's group (#raw("north"),
-/// #raw("south"), #raw("east"), #raw("west")) follow each shape's
-/// bounding box. #raw("tag") is a small piece of content drawn just
-/// outside the west of the node — useful for compact per-node
-/// annotations that don't compete with the label or the operation
-/// #raw("note") slot (e.g. the RBT black-height bits enabled by
-/// #raw("display(bits: true)")).
+/// #raw("note"), #raw("note-fill"), #raw("hide"), #raw("shape"),
+/// #raw("tag"), #raw("label"), and #raw("materialize"). #raw("shape")
+/// accepts the string #raw("\"circle\"") (default),
+/// #raw("\"triangle\"") (apex up; useful as a subtree-summary marker),
+/// or #raw("\"rectangle\""). The triangle and rectangle share a 1.4×1.2
+/// bounding box; the circle keeps its 1.2×1.2 footprint. Named cetz
+/// anchors on the node's group (#raw("north"), #raw("south"),
+/// #raw("east"), #raw("west")) follow each shape's bounding box.
+/// #raw("tag") is a small piece of content drawn just outside the west
+/// of the node — useful for compact per-node annotations that don't
+/// compete with the label or the operation #raw("note") slot (e.g. the
+/// RBT black-height bits enabled by #raw("display(bits: true)")).
+/// #raw("label") replaces the node's rendered label (otherwise derived
+/// from the tree node's #raw("label") field, or #raw("str(value)") when
+/// that's #raw("auto")). #raw("materialize: true") draws an otherwise-
+/// phantom slot as a real node — useful for one-off pedagogical
+/// animations that need to expose a nil child (e.g. rendering ∅ at a
+/// just-deleted leaf's position). Phantoms only exist at paths the tree
+/// either naturally generates as layout-balance siblings or where an
+/// edge style sets #raw("force-show: true"); materializing without one
+/// of those has no node to attach to.
 #let NodeStyle = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _node-style-keys.contains(k)),
@@ -468,7 +479,13 @@
     grow: grow,
     spread: spread,
     draw-node: (node, ..) => {
-        if node.content.at("phantom", default: false) {
+        let path = node.content.path
+        let s = _merge-into(
+          default-node-style,
+          snapshot.nodes.at(path, default: (:)),
+        )
+        let is-phantom = node.content.at("phantom", default: false)
+        if is-phantom and not s.at("materialize", default: false) {
           // Reserve a slightly-wider-than-a-node layout footprint, but
           // render nothing. `bounds: true` keeps the bounding box for
           // cetz's tree layout while hiding the drawable. Width > node
@@ -477,15 +494,13 @@
           draw.hide(draw.rect((-0.9, -0.6), (0.9, 0.6)), bounds: true)
           return
         }
-        let path = node.content.path
+        if s.at("hide", default: false) { return }
         let value = node.content.value
         let raw-label = node.content.label
-        let label = if raw-label == auto { str(value) } else { raw-label }
-        let s = _merge-into(
-          default-node-style,
-          snapshot.nodes.at(path, default: (:)),
-        )
-        if s.at("hide", default: false) { return }
+        let default-label = if raw-label == auto {
+          if value == none { "" } else { str(value) }
+        } else { raw-label }
+        let label = s.at("label", default: default-label)
         // Shape dispatch. New shapes go here; keep bounding boxes
         // sensible so the named cetz anchors (north/south/east/west on
         // the node group) land where users expect, since the edge
