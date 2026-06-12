@@ -3,7 +3,7 @@
 // delete fix-up: a red-leaf delete (no fix-up), Case 4 (far nephew
 // red, terminal), Case 3 → Case 4 (near nephew red, zigzag), Case 2
 // (recolor, propagates), Case 1 (sibling red, reduces), and a two-
-// children delete with successor transfer.
+// children delete with predecessor transfer.
 
 #import "/src/lib.typ" as starling
 #import starling: RBT
@@ -73,6 +73,6 @@
 
 #pagebreak()
 
-== Two-children delete — successor transfer
+== Two-children delete — predecessor transfer
 #let t6 = bnode(5, rleaf(3), rleaf(8))
 #starling.stacked((t6.delete-display)(5))

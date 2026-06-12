@@ -601,12 +601,12 @@ subtree root 1):
 == Delete
 
 `(t.delete-display)(v)` traces a BST search for the target, the
-in-order successor walk if the target has two children, the
+in-order predecessor walk if the target has two children, the
 value transfer, the structural excise, and the four-case
 rebalancing loop. `step.kind` covers `"init"`, `"descend"` (a
 single frame highlighting the full search path; pass
 `search: true` for one `"compare"` frame per step instead),
-`"not-found"`, `"mark-target"`, `"find-successor"`, `"transfer"`,
+`"not-found"`, `"mark-target"`, `"find-predecessor"`, `"transfer"`,
 `"excise"`, `"paint-black-promoted"`, `"paint-black-db"`, and the
 fix-up cases. Cases 1, 3, and 4 each emit two frames — a
 rotation-only intermediate (`"case-1-rotate"`, `"case-3-rotate"`,

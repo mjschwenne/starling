@@ -166,14 +166,14 @@
 #assert((tl1.check-invariants)())
 #assert.eq(((tl1.resolve)((tl1.by-value)(5))).label, "five")
 
-// Two-children delete: the successor's label travels with its value.
-// (RBT delete uses the in-order successor, matching the CLRS reference
-// image; BST delete uses the predecessor.)
-#let lbl = bnode(5, rleaf(3), rleaf(8, label: "eight"))
+// Two-children delete: the predecessor's label travels with its value.
+// Both BST and RBT delete the same way — replace with the in-order
+// predecessor (rightmost of the left subtree).
+#let lbl = bnode(5, rleaf(3, label: "three"), rleaf(8))
 #let lbl-del = (lbl.delete)(5)
 #assert((lbl-del.check-invariants)())
-#assert.eq(lbl-del.value, 8)
-#assert.eq(lbl-del.label, "eight")
+#assert.eq(lbl-del.value, 3)
+#assert.eq(lbl-del.label, "three")
 
 // --- rbt(..vals) factory --------------------------------------------
 // First arg = black root; rest are insert()-ed in order (so the CLRS

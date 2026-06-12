@@ -95,7 +95,7 @@
 }
 
 // Copy `value` and `label` into the node at `path`, preserving the
-// node's color and children. Used by delete to splice a successor's
+// node's color and children. Used by delete to splice a predecessor's
 // value into the target's position.
 #let _set-value-at(cls, tree, path, value, label) = {
   let n = _resolve-at(tree, path)
@@ -405,13 +405,15 @@
 }
 
 // CLRS-style deletion trace. Returns `(events, tree)`. The
-// algorithm mirrors what the textbook reference image illustrates:
+// algorithm follows the textbook decision tree but uses the in-order
+// predecessor (rather than the successor) so the structural pivot
+// matches BST `delete`:
 //
 //   1. BST descent to find the target. If absent, return unchanged.
-//   2. If the target has two children, walk to its in-order successor
-//      (leftmost of the right subtree), transfer the successor's
-//      value+label into the target slot, and switch the deletion
-//      position to the successor (which has ≤ 1 child).
+//   2. If the target has two children, walk to its in-order
+//      predecessor (rightmost of the left subtree), transfer the
+//      predecessor's value+label into the target slot, and switch the
+//      deletion position to the predecessor (which has ≤ 1 child).
 //   3. Excise the deletion-position node, splicing in its child (or
 //      `none`) in its place.
 //   4. Determine the fix-up branch from the excised node's color:
@@ -462,11 +464,11 @@
 //   (kind: "not-found", tree)
 //                      — search ended without finding v; trace ends
 //   (kind: "mark-target", target-path, tree)
-//   (kind: "find-successor", walk, successor-path, target-path, tree)
+//   (kind: "find-predecessor", walk, predecessor-path, target-path, tree)
 //                      — `walk` is the list of paths visited in the
-//                        right subtree down to the successor
-//   (kind: "transfer", target-path, successor-path, new-value, tree)
-//                      — successor's value+label copied into target's
+//                        left subtree down to the predecessor
+//   (kind: "transfer", target-path, predecessor-path, new-value, tree)
+//                      — predecessor's value+label copied into target's
 //                        slot
 //   (kind: "excise",   path, was-red, tree)
 //                      — node physically removed; tree at `path` now
@@ -545,18 +547,18 @@
 
   let excise-path = target-path
   if two-children {
-    let succ-walk(p) = {
+    let pred-walk(p) = {
       let n = _resolve-at(cur-tree, p)
-      if n.left == none { (p,) } else { (p,) + succ-walk(p + "L") }
+      if n.right == none { (p,) } else { (p,) + pred-walk(p + "R") }
     }
-    let walk-paths = succ-walk(target-path + "R")
-    let succ-path = walk-paths.last()
-    let succ-node = _resolve-at(cur-tree, succ-path)
+    let walk-paths = pred-walk(target-path + "L")
+    let pred-path = walk-paths.last()
+    let pred-node = _resolve-at(cur-tree, pred-path)
 
     events.push((
-      kind: "find-successor",
+      kind: "find-predecessor",
       walk: walk-paths,
-      successor-path: succ-path,
+      predecessor-path: pred-path,
       target-path: target-path,
       tree: cur-tree,
     ))
@@ -565,17 +567,17 @@
       cls,
       cur-tree,
       target-path,
-      succ-node.value,
-      succ-node.label,
+      pred-node.value,
+      pred-node.label,
     )
     events.push((
       kind: "transfer",
       target-path: target-path,
-      successor-path: succ-path,
-      new-value: succ-node.value,
+      predecessor-path: pred-path,
+      new-value: pred-node.value,
       tree: cur-tree,
     ))
-    excise-path = succ-path
+    excise-path = pred-path
   }
 
   let excise-node = _resolve-at(cur-tree, excise-path)
@@ -1585,9 +1587,9 @@
       //      "descend" frame highlighting the full search path.
       //   3. If `v` is not in the tree: "not-found"; animation ends.
       //   4. "mark-target" — target node highlighted with attention-stroke.
-      //   5. If target has two children: "find-successor" walks the
-      //      right subtree to the in-order successor; "transfer" copies
-      //      the successor's value+label into the target slot.
+      //   5. If target has two children: "find-predecessor" walks the
+      //      left subtree to the in-order predecessor; "transfer" copies
+      //      the predecessor's value+label into the target slot.
       //   6. "excise" — deletion-position node removed (its child, if
       //      any, takes its place).
       //   7. Branch on the excised node's color:
@@ -1805,20 +1807,20 @@
           caption = [Delete #v]
           step = (kind: "mark-target", path: event.target-path)
           alt = "Marked node " + str(v) + " for deletion."
-        } else if event.kind == "find-successor" {
-          let sv = _resolve-at(event.tree, event.successor-path).value
-          caption = [Find successor]
+        } else if event.kind == "find-predecessor" {
+          let pv = _resolve-at(event.tree, event.predecessor-path).value
+          caption = [Find predecessor]
           step = (
-            kind: "find-successor",
+            kind: "find-predecessor",
             walk: event.walk,
-            successor-path: event.successor-path,
+            predecessor-path: event.predecessor-path,
             target-path: event.target-path,
           )
           alt = (
             "Node "
               + str(v)
-              + " has two children; walking the right subtree to find the in-order successor: "
-              + str(sv)
+              + " has two children; walking the left subtree to find the in-order predecessor: "
+              + str(pv)
               + "."
           )
         } else if event.kind == "transfer" {
@@ -1826,12 +1828,12 @@
           step = (
             kind: "transfer",
             target-path: event.target-path,
-            successor-path: event.successor-path,
+            predecessor-path: event.predecessor-path,
           )
           alt = (
-            "Copied successor's value "
+            "Copied predecessor's value "
               + str(event.new-value)
-              + " into the target slot; about to remove the successor node."
+              + " into the target slot; about to remove the predecessor node."
           )
         } else if event.kind == "excise" {
           caption = [Remove node]
@@ -1926,7 +1928,7 @@
               stroke: op.attention-stroke,
             ))
             r = (r.patch)(f => (f.note-node)(event.target-path, [delete]))
-          } else if event.kind == "find-successor" {
+          } else if event.kind == "find-predecessor" {
             r = (r.patch)(f => (f.style-node)(
               event.target-path,
               stroke: op.attention-stroke,
@@ -1934,7 +1936,7 @@
             for p in event.walk {
               r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
             }
-            r = (r.patch)(f => (f.note-node)(event.successor-path, [successor]))
+            r = (r.patch)(f => (f.note-node)(event.predecessor-path, [predecessor]))
           } else if event.kind == "transfer" {
             r = (r.patch)(f => (f.style-node)(
               event.target-path,
@@ -1945,7 +1947,7 @@
               [← #(event.new-value)],
             ))
             r = (r.patch)(f => (f.style-node)(
-              event.successor-path,
+              event.predecessor-path,
               stroke: op.attention-stroke,
             ))
           } else if event.kind == "excise" {
