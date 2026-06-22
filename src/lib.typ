@@ -25,6 +25,7 @@
   _rbt-theme-state,
 )
 #import "./avl.typ": AVL, avl
+#import "./b24.typ": B24, b24
 #import "./op-theme.typ": (
   default-op-theme,
   set-op-theme,

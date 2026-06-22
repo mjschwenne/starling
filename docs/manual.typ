@@ -780,6 +780,106 @@ fill from the op-theme's `traversal-palette`, running output sequence
 in the caption. Pass `factors: true` on any traversal to layer the
 balance-factor tags under the per-visit highlights.
 
+= B24 animations tour
+
+The `B24` class is a 2-3-4 tree (a B-tree of order 4) — every internal
+node holds 1, 2, or 3 keys (so 2, 3, or 4 children) and every leaf
+sits at the same depth. The node renderer for this data structure is
+the subdivided rectangle shape `"btree-node"`, which scales its width
+with the number of keys; per-key compartments are individually
+addressable via the `"<path>#<i>"` path syntax and the `key-styles`
+slot on `NodeStyle`.
+
+`B24` exposes the standard suite of `*-display` methods (`display`,
+`search-display`, `insert-display`, `delete-display`, and the four
+`*-order-display` traversals). Insert and delete accept a
+#raw("strategy:") argument that switches between two textbook
+algorithms:
+
+- *Top-down* (the default): preventive — split any 3-key node on the
+  way down for insert; refill any 1-key node on the way down for
+  delete. Single-pass recursion.
+- *Bottom-up*: reactive — walk to the leaf first, then propagate
+  splits or merges back up through the descent path.
+
+Both produce valid 2-3-4 trees containing the same keys but they can
+produce structurally different *shapes* — bottom-up promotes a key
+from the *post-overflow* 4-key state (so the freshly inserted key may
+itself be promoted), while top-down promotes the middle of the
+*pre-insert* 3-key state. There is no per-DS theme — animation strokes
+come from the op-theme; structural defaults from the render theme.
+
+The sample tree throughout this section is seeded via the
+#raw("b24(..vals)") factory:
+
+```typ
+#let t = b24(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
+```
+
+#let b24-tour = starling.b24(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
+
+For finer control, the lower-level
+#raw("(B24.new)(keys:, labels:, children:)") constructor lets you
+hand-build a tree with any compartment count at every depth — useful
+for fixtures that demonstrate a specific fix-up case.
+
+== Static display
+
+`(t.display)()` returns a one-frame array — the unmodified tree.
+Compartment widths scale with key count, and edges fan out from the
+gap anchors (`gap-0` through `gap-k`) on the parent's south face.
+
+#align(center, starling.last((b24-tour.display)()))
+
+== Search
+
+`(t.search-display)(v)` highlights one key compartment per comparison.
+The descent path stays visible as the search progresses (sticky search
+strokes); the inline note at each visited node carries the comparison
+text. Misses end at the leaf without panicking — the final frame
+reports that the value isn't in the tree.
+
+#align(center, starling.stacked((b24-tour.search-display)(19)))
+
+== Insert
+
+`(t.insert-display)(v, strategy: ..)` traces the full insertion
+algorithm. Top-down splits trigger a `td-pre-split-attention` frame
+that outlines a full node about to be split, then a `split-done`
+frame showing the promoted key with its two new child edges. The
+final `settled` frame highlights the inserted compartment.
+
+#align(center, starling.stacked((b24-tour.insert-display)(13)))
+
+The bottom-up variant runs the descent first, then animates the leaf
+insertion plus any cascading splits:
+
+#align(center, starling.stacked((b24-tour.insert-display)(13, strategy: "bottom-up")))
+
+== Delete
+
+`(t.delete-display)(v, strategy: ..)` traces the deletion algorithm.
+Top-down's preventive `td-pre-fix-attention` frame outlines a 1-key
+descent target before the fix; subsequent `td-borrow-left` /
+`td-borrow-right` / `td-merge` frames carry out the rotation or merge.
+Internal-key deletions visit a `td-target` highlight, swap with the
+predecessor (`td-pred-swap`), then continue the descent to remove the
+predecessor's old value from its leaf.
+
+#align(center, starling.stacked((b24-tour.delete-display)(15)))
+
+== Traversals
+
+The four traversal animations sample the op-theme's
+`traversal-palette` across the per-compartment visit order — each
+visited compartment gets a fill from the gradient and the caption
+accumulates the output sequence. In-order on a 2-3-4 tree threads
+keys with their flanking subtrees (child[0], key[0], child[1], key[1],
+…, child[k]); pre- and post-order group all of a node's keys at the
+node-visit point.
+
+#align(center, starling.last((b24-tour.in-order-display)()))
+
 = Theming <theming>
 
 Starling exposes three theme layers so document authors can match
