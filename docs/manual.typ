@@ -655,6 +655,131 @@ Or per-call to skip state and run at the no-state baseline:
 (t.display)(theme: (red-fill: red.darken(20%)))
 ```
 
+= AVL animations tour
+
+The `AVL` class is a height-balanced BST. Each node carries an extra
+`height` field; after every public operation the height is up-to-date
+and #raw("|h(left) - h(right)|") (the *balance factor*) is at most 1.
+Imbalances are repaired with single or double rotations, dispatched on
+four cases (LL, RR, LR, RL) — the same ones every textbook walks
+through.
+
+`AVL` ships the standard suite of `*-display` methods (`display`,
+`search-display`, `insert-display`, `delete-display`,
+`rotate-display`, `fixup-display`, and the four `*-order-display`
+traversals), all returning `Array(Frame)` so the render helpers and
+caption / `step` / `alt` conventions carry across unchanged. AVL has
+no per-DS theme — animation strokes come from the op-theme, structural
+defaults from the render theme.
+
+The sample tree throughout this section is seeded via the
+#raw("avl(..vals)") factory — first arg becomes the root, the rest
+are inserted in order so the AVL rebalancing produces a clean balanced
+shape:
+
+```typ
+#let t = avl(5, 3, 7, 2, 4, 6, 8, 1, 9)
+```
+
+#let avl-tour = starling.avl(5, 3, 7, 2, 4, 6, 8, 1, 9)
+
+For finer control, the lower-level
+#raw("(AVL.new)(value:, label:, height:, left:, right:)") constructor
+plus #raw("(t.insert-many)(..vals)") method are still available — the
+root takes a #raw("height:") argument because a single-node tree
+already has height 1.
+
+== Static display
+
+`(t.display)()` returns a one-element frame array — the unmodified
+tree. Pass `factors: true` to tag every node with its signed balance
+factor (e.g. #raw("\"+1\""), #raw("\"0\""), #raw("\"-1\"")), drawn
+just west of the node so it doesn't compete with the label or the
+operation `note` slot. The tag layer is reused by every `*-display`
+method as a base layer (off by default; opt in per call).
+
+#grid(
+  columns: 2,
+  gutter: 1.5em,
+  align: center,
+  starling.last((avl-tour.display)()),
+  starling.last((avl-tour.display)(factors: true)),
+)
+
+== Insert
+
+`(t.insert-display)(v)` traces the AVL insertion algorithm. A BST
+descent records each visited node, the new leaf appears with height 1,
+then the climb back to the root recomputes each ancestor's height
+in turn. On the first ancestor whose balance factor reaches ±2, the
+animation labels the imbalance case (LL/LR/RR/RL), applies a child
+rotation if the case is a zigzag (LR or RL), and finishes with the
+single rotation at the imbalanced node. After a single insertion the
+subtree's height returns to its pre-insert value, so the climb stops
+there. `step.kind` ranges over #raw("\"init\""), #raw("\"descend\""),
+#raw("\"insert\""), #raw("\"recompute\""), #raw("\"check\""),
+#raw("\"rotate-zigzag\""), and #raw("\"rotate-finish\"").
+
+Inserting 0 into the sample tree triggers an LL fix-up at node 2
+(after the climb sees node 1's height grow). The fix-up is a single
+right rotation:
+
+#align(center, starling.stacked((avl-tour.insert-display)(0, factors: true)))
+
+The zigzag cases (LR/RL) emit an extra `rotate-zigzag` frame between
+`check` and `rotate-finish` for the child rotation that straightens the
+configuration before the final rotation at the imbalanced node.
+
+== Delete
+
+`(t.delete-display)(v)` traces a BST search for the target, the
+in-order predecessor walk if the target has two children, the value
+transfer, the structural excise, and then a climb that recomputes
+heights and rotates at every imbalanced ancestor. Unlike insert, a
+single deletion can trigger several rotations on the way up — the
+loop runs to the root. `step.kind` covers #raw("\"init\""),
+#raw("\"descend\"") (single frame; pass `search: true` for one
+#raw("\"compare\"") per step instead), #raw("\"not-found\""),
+#raw("\"mark-target\""), #raw("\"find-predecessor\""),
+#raw("\"transfer\""), #raw("\"excise\""), and the same
+#raw("\"recompute\"") / #raw("\"check\"") /
+#raw("\"rotate-zigzag\"") / #raw("\"rotate-finish\"") events insert
+emits.
+
+Deleting 3 from the sample tree takes the two-child branch
+(predecessor transfer from 2) and stays balanced — the climb
+recomputes heights without triggering any rotation:
+
+#align(center, starling.stacked((avl-tour.delete-display)(3, factors: true)))
+
+== Rotate
+
+`(t.rotate-display)(c)` is the same six-frame structural rotation
+animation BST exposes, with heights refreshed in the after-tree. AVL
+rebalancing in `insert` / `delete` does *not* go through this method —
+the case-dispatch rotations are applied directly so the animation can
+narrate the recompute-then-rotate logic.
+
+== Fix-up
+
+`(t.fixup-display)(violation-path)` runs the AVL fix-up climb from a
+hand-constructed (possibly invalid) tree. The tree is *not* validated:
+this is intended for teaching configurations that can't arise from a
+single insert or delete — for example, multiple imbalances on one
+spine where the inner rotation propagates the imbalance up. The climb
+walks every proper prefix of `violation-path` deepest-first, emitting
+the same `recompute` / `check` / `rotate-zigzag` / `rotate-finish`
+events that insert and delete use.
+
+== Traversals
+
+`(t.in-order-display)()`, `(t.pre-order-display)()`,
+`(t.post-order-display)()`, and `(t.level-order-display)()` work
+exactly like their BST counterparts — one frame per visit, gradient
+fill from the op-theme's `traversal-palette`, running output sequence
+in the caption. Pass `factors: true` on any traversal to layer the
+balance-factor tags under the per-visit highlights.
+
 = Theming <theming>
 
 Starling exposes three theme layers so document authors can match

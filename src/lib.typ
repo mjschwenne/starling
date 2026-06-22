@@ -24,6 +24,7 @@
   paint-rbt,
   _rbt-theme-state,
 )
+#import "./avl.typ": AVL, avl
 #import "./op-theme.typ": (
   default-op-theme,
   set-op-theme,

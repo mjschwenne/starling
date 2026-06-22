@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `AVL` class with pure operations (`insert`, `delete`, `rotate`,
+  `contains`, `describe`, traversals, `check-invariants`) and a full set
+  of `*-display` methods (`display`, `search-display`,
+  `insert-display`, `delete-display`, `rotate-display`,
+  `fixup-display`, and the four `*-order-display` traversals). The
+  `factors:` flag on each display tags every node with its signed
+  balance factor, mirroring RBT's `bits:` flag for black-height bits.
+- `avl(..vals)` factory matching the `bst(..)` / `rbt(..)` signature.
+
 ## [0.2.0]
 
 <details>
