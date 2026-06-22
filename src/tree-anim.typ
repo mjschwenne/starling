@@ -849,26 +849,56 @@
             text(fill: nf, size: 0.8em, n),
           )
         }
-        // `tag` sits *off* the edge line so it doesn't overlap the
-        // stroke — placed at the midpoint of the outer perimeter
-        // (SW/NW for L children, SE/NE for R children). For a typical
-        // downward layout this shifts the label into the outer wedge,
-        // away from the diagonal stroke and away from the sibling
-        // subtree on the inside.
+        // `tag` sits *off* the edge line, at its midpoint offset
+        // perpendicular to the edge direction. The earlier SW/NW vs
+        // SE/NE corner-anchor interpolation broke down for wide
+        // subtrees — at shallow edge slopes, the parent's and child's
+        // outer corners lined up with the edge line itself, putting
+        // the tag on top of the stroke. A geometric perpendicular
+        // works at any slope.
         let tag = s.at("tag", default: none)
         if tag != none {
-          // For n-ary children the L/R wedge heuristic doesn't apply —
-          // default to east so the tag sits clear of the typical
-          // downward-left-fan layout.
-          let outside = if child-path.ends-with("L") { "west" } else { "east" }
-          draw.content(
-            (
-              from.group-name + ".south-" + outside,
-              0.5,
-              to.group-name + ".north-" + outside,
-            ),
-            text(fill: render-theme.edge-tag-fill, size: 0.7em, tag),
-          )
+          // Sign of the perpendicular offset picks the "outside" of
+          // the V (away from the sibling subtree):
+          //   binary — L child → negative-x, R child → positive-x.
+          //   n-ary  — child index left of center → negative-x, else
+          //           positive-x.
+          let want-x-sign = if "keys" in from.content {
+            let n-children = from.content.keys.len() + 1
+            let idx = int(child-path.at(child-path.len() - 1))
+            if idx * 2 < n-children - 1 { -1 } else { 1 }
+          } else if child-path.ends-with("L") { -1 } else { 1 }
+          draw.get-ctx(ctx => {
+            let (_, p, c) = cetz.coordinate.resolve(
+              ctx, parent-coord, child-coord,
+            )
+            let dx = c.at(0) - p.at(0)
+            let dy = c.at(1) - p.at(1)
+            let len = calc.sqrt(dx * dx + dy * dy)
+            // Rotate the edge vector 90° to get a perpendicular, then
+            // flip if its x-sign disagrees with the desired outside
+            // direction. Degenerate case (len == 0) falls back to a
+            // pure-x offset.
+            let (px, py) = if len == 0 {
+              (want-x-sign, 0)
+            } else {
+              let cx = -dy / len
+              let cy = dx / len
+              if (cx >= 0) == (want-x-sign > 0) {
+                (cx, cy)
+              } else {
+                (-cx, -cy)
+              }
+            }
+            let offset = 0.3
+            draw.content(
+              (
+                (p.at(0) + c.at(0)) / 2 + px * offset,
+                (p.at(1) + c.at(1)) / 2 + py * offset,
+              ),
+              text(fill: render-theme.edge-tag-fill, size: 0.7em, tag),
+            )
+          })
         }
       },
   )
