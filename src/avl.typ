@@ -731,6 +731,25 @@
   result
 }
 
+// Tag every edge with the height of its child subtree. Root is skipped
+// (no incoming edge); an edge into the root would just label the height
+// of the whole tree, easily read off the children's labels. Used by
+// `display(heights: true)` and as a base layer for all *-display methods
+// that want height labels visible on the animation.
+#let _tag-heights(r, tree) = {
+  let walk(node, path) = if node == none { () } else {
+    let here = if path == "" { () } else { (path,) }
+    here + walk(node.left, path + "L") + walk(node.right, path + "R")
+  }
+  let paths = walk(tree, "")
+  let result = r
+  for p in paths {
+    let n = _resolve-at(tree, p)
+    result = (result.patch)(f => (f.style-edge)(p, tag: str(n.height)))
+  }
+  result
+}
+
 // ===================================================================
 // Op-theme resolution (matches BST's _resolve-op-theme-arg, inlined
 // here so we don't have to thread an extra import).
@@ -746,7 +765,7 @@
 // tag layer is applied to every snapshot. `init-alt` is the alt text
 // for the "init" frame (varies per call site — insert-display vs
 // fixup-display).
-#let _insert-event-to-spec(event, v, factors, init-alt) = {
+#let _insert-event-to-spec(event, v, factors, heights, init-alt) = {
   let caption = none
   let step = (kind: event.kind)
   let alt = ""
@@ -815,6 +834,7 @@
   let build = (op, _rt) => {
     let r = tree-anim.make-renderer(event.tree)
     if factors { r = _tag-factors(r, event.tree) }
+    if heights { r = _tag-heights(r, event.tree) }
     if event.kind == "descend" {
       for p in event.visited {
         r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
@@ -868,7 +888,7 @@
 // Most events overlap with insert; the search/excise/transfer events
 // are unique to delete. `visited-snapshot` is the accumulated search
 // trail for compare frames so each one shows the whole walk.
-#let _delete-event-to-spec(event, v, factors, init-alt, visited-snapshot) = {
+#let _delete-event-to-spec(event, v, factors, heights, init-alt, visited-snapshot) = {
   let caption = none
   let step = (kind: event.kind)
   let alt = ""
@@ -982,6 +1002,7 @@
   let build = (op, _rt) => {
     let r = tree-anim.make-renderer(event.tree)
     if factors { r = _tag-factors(r, event.tree) }
+    if heights { r = _tag-heights(r, event.tree) }
     if event.kind == "compare" {
       for p in visited-snapshot {
         r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
@@ -1066,7 +1087,7 @@
   if l < 60% { white } else { black }
 }
 
-#let _render-traversal(self, paths, name, factors, theme, render-theme) = {
+#let _render-traversal(self, paths, name, factors, heights, theme, render-theme) = {
   let n = paths.len()
 
   let captions = (none,)
@@ -1107,6 +1128,7 @@
     let g = gradient.linear(..op.traversal-palette)
     let r = tree-anim.make-renderer(self, sticky: true)
     if factors { r = _tag-factors(r, self) }
+    if heights { r = _tag-heights(r, self) }
     for (i, p) in paths.enumerate() {
       let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
       let fill = g.sample(t)
@@ -1144,6 +1166,9 @@
 // `*-display` methods accept optional `theme:` and `render-theme:`
 // arguments. `auto` (the default) reads the active theme from state at
 // layout time. `factors:` toggles the per-node balance-factor tag.
+// `heights:` toggles the per-edge subtree-height tag (rendered in the
+// render theme's `edge-tag-fill` color); skips the root, since its
+// incoming edge doesn't exist.
 #let AVL = class(
   name: "AVL",
   fields: (
@@ -1340,16 +1365,27 @@
       let _ = walk(self)
       true
     },
-    display: (self, factors: false, theme: auto, render-theme: auto) => {
+    display: (
+      self,
+      factors: false,
+      heights: false,
+      theme: auto,
+      render-theme: auto,
+    ) => {
       // Returns a one-element Frame array — the static tree. With
       // `factors: true`, each node is tagged with its signed balance
       // factor (e.g. "+1", "0", "-1") drawn just west of the node.
+      // With `heights: true`, each edge is labeled with the height of
+      // the subtree it points to (the root is skipped — no incoming
+      // edge — but its children's heights make its balance factor
+      // computable).
       let captions = (none,)
       let steps-meta = (none,)
       let alts = ("AVL tree: " + (self.describe)() + ".",)
       let build-snapshots = (_op, _rt) => {
         let r = tree-anim.make-renderer(self)
         if factors { r = _tag-factors(r, self) }
+        if heights { r = _tag-heights(r, self) }
         r.snapshots
       }
       _make-frames-avl(
@@ -1362,7 +1398,14 @@
         _resolve-render-theme-arg(render-theme),
       )
     },
-    search-display: (self, v, factors: false, theme: auto, render-theme: auto) => {
+    search-display: (
+      self,
+      v,
+      factors: false,
+      heights: false,
+      theme: auto,
+      render-theme: auto,
+    ) => {
       // One frame per comparison along the search path. Mirrors BST's
       // search-display, with the optional balance-factor tag layer.
       let walk(node, path) = {
@@ -1430,6 +1473,7 @@
       let build-snapshots = (op, _rt) => {
         let r = tree-anim.make-renderer(self, sticky: true)
         if factors { r = _tag-factors(r, self) }
+        if heights { r = _tag-heights(r, self) }
         for s in steps {
           r = (r.push-with-node)(s.path, stroke: op.search-stroke)
           r = (r.patch)(f => (f.note-node)(s.path, s.cmp))
@@ -1450,6 +1494,7 @@
     in-order-display: (
       self,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => _render-traversal(
@@ -1457,12 +1502,14 @@
       (self.in-order)(),
       "in-order",
       factors,
+      heights,
       _resolve-op-theme-arg(theme),
       _resolve-render-theme-arg(render-theme),
     ),
     pre-order-display: (
       self,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => _render-traversal(
@@ -1470,12 +1517,14 @@
       (self.pre-order)(),
       "pre-order",
       factors,
+      heights,
       _resolve-op-theme-arg(theme),
       _resolve-render-theme-arg(render-theme),
     ),
     post-order-display: (
       self,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => _render-traversal(
@@ -1483,12 +1532,14 @@
       (self.post-order)(),
       "post-order",
       factors,
+      heights,
       _resolve-op-theme-arg(theme),
       _resolve-render-theme-arg(render-theme),
     ),
     level-order-display: (
       self,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => _render-traversal(
@@ -1496,6 +1547,7 @@
       (self.level-order)(),
       "level-order",
       factors,
+      heights,
       _resolve-op-theme-arg(theme),
       _resolve-render-theme-arg(render-theme),
     ),
@@ -1503,6 +1555,7 @@
       self,
       v,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => {
@@ -1525,6 +1578,7 @@
         e,
         v,
         factors,
+        heights,
         init-alt,
       ))
       _make-frames-avl-multi(specs, resolved-op, resolved-render)
@@ -1533,6 +1587,7 @@
       self,
       violation-path,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => {
@@ -1562,6 +1617,7 @@
         e,
         none,
         factors,
+        heights,
         init-alt,
       ))
       _make-frames-avl-multi(specs, resolved-op, resolved-render)
@@ -1571,6 +1627,7 @@
       v,
       search: false,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => {
@@ -1608,6 +1665,7 @@
           e,
           v,
           factors,
+          heights,
           init-alt,
           visited-by-event.at(i),
         ))
@@ -1618,6 +1676,7 @@
       self,
       child,
       factors: false,
+      heights: false,
       theme: auto,
       render-theme: auto,
     ) => {
@@ -1692,6 +1751,7 @@
       let build-snapshots-a = (op, _rt) => {
         let r = tree-anim.make-renderer(self, sticky: true)
         if factors { r = _tag-factors(r, self) }
+        if heights { r = _tag-heights(r, self) }
         r = (r.push-with-node)(parent-path, stroke: op.attention-stroke)
         r = (r.patch)(f => (f.style-node)(
           child-path,
@@ -1730,6 +1790,7 @@
       let build-snapshots-b = (op, _rt) => {
         let r = tree-anim.make-renderer(after, sticky: true)
         if factors { r = _tag-factors(r, after) }
+        if heights { r = _tag-heights(r, after) }
         r = (r.patch)(f => (f.style-node)(
           parent-path,
           stroke: op.attention-stroke,

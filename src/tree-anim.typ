@@ -64,6 +64,7 @@
   "stroke",
   "note",
   "note-fill",
+  "tag",
   "mark",
   "hide",
   "parent-anchor",
@@ -101,7 +102,7 @@
 
 /// Typsy refinement: a dictionary of edge-style overrides. Recognised
 /// keys are #raw("stroke"), #raw("note"), #raw("note-fill"),
-/// #raw("mark"), #raw("hide"), #raw("parent-anchor"),
+/// #raw("tag"), #raw("mark"), #raw("hide"), #raw("parent-anchor"),
 /// #raw("child-anchor"), and #raw("force-show"). The two
 /// #raw("*-anchor") keys accept a cetz anchor name (e.g.
 /// #raw("\"north\"")) and override the default fractional-distance
@@ -110,7 +111,12 @@
 /// \"north\"") to land on a triangle's apex). #raw("force-show: true")
 /// renders an edge even when one endpoint is a phantom — used by the
 /// RBT delete animation to draw a stub edge into a now-nil position
-/// when marking double-black.
+/// when marking double-black. #raw("tag") is a small persistent
+/// annotation drawn near the edge midpoint in the render theme's
+/// #raw("edge-tag-fill") color — the edge counterpart to a node's
+/// #raw("tag"), distinct from the gold operation-level #raw("note")
+/// slot. Used by AVL #raw("display(heights: true)") to label each edge
+/// with the height of the subtree it points to.
 #let EdgeStyle = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _edge-style-keys.contains(k)),
@@ -145,6 +151,7 @@
   node-text-fill: black,
   edge-stroke: black,
   note-fill: rgb("#d4a017"),
+  edge-tag-fill: rgb("#2b6cb0"),
 )
 
 #let _render-theme-keys = (
@@ -153,11 +160,13 @@
   "node-text-fill",
   "edge-stroke",
   "note-fill",
+  "edge-tag-fill",
 )
 
 /// Typsy refinement: a dictionary whose keys are a subset of the
 /// render-theme keys (#raw("node-fill"), #raw("node-stroke"),
-/// #raw("node-text-fill"), #raw("edge-stroke"), #raw("note-fill")).
+/// #raw("node-text-fill"), #raw("edge-stroke"), #raw("note-fill"),
+/// #raw("edge-tag-fill")).
 #let RenderTheme = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _render-theme-keys.contains(k)),
@@ -612,12 +621,35 @@
           stroke: s.at("stroke", default: render-theme.edge-stroke),
           ..if mark != none { (mark: mark) },
         )
+        // `note` sits on the edge line itself — midpoint of the
+        // parent's south anchor and the child's north anchor. Bare
+        // group names happen to resolve near the parent's centroid
+        // rather than midway between centroids, so we use named
+        // anchors explicitly.
         let n = s.at("note", default: none)
         if n != none {
           let nf = s.at("note-fill", default: render-theme.note-fill)
           draw.content(
-            (from.group-name, 0.5, to.group-name),
+            (from.group-name + ".south", 0.5, to.group-name + ".north"),
             text(fill: nf, size: 0.8em, n),
+          )
+        }
+        // `tag` sits *off* the edge line so it doesn't overlap the
+        // stroke — placed at the midpoint of the outer perimeter
+        // (SW/NW for L children, SE/NE for R children). For a typical
+        // downward layout this shifts the label into the outer wedge,
+        // away from the diagonal stroke and away from the sibling
+        // subtree on the inside.
+        let tag = s.at("tag", default: none)
+        if tag != none {
+          let outside = if child-path.ends-with("L") { "west" } else { "east" }
+          draw.content(
+            (
+              from.group-name + ".south-" + outside,
+              0.5,
+              to.group-name + ".north-" + outside,
+            ),
+            text(fill: render-theme.edge-tag-fill, size: 0.7em, tag),
           )
         }
       },

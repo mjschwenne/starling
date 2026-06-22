@@ -15,3 +15,17 @@
 // 2. Display with balance-factor tags. Tags read 0 / +1 / -1 since
 // the tree is balanced.
 #starling.last((t.display)(factors: true))
+
+#pagebreak()
+
+// 3. Display with subtree-height edge tags. Each edge is labelled
+// with the height of the subtree it points to; the root has no
+// incoming edge.
+#starling.last((t.display)(heights: true))
+
+#pagebreak()
+
+// 4. Both layers together: balance factors on nodes and subtree
+// heights on edges. Lets a student see exactly how each bf is
+// derived from its children's heights.
+#starling.last((t.display)(factors: true, heights: true))
