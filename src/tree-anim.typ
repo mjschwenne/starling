@@ -685,6 +685,14 @@
             let x = -half-w + 1.2 * i
             draw.anchor("gap-" + str(i), (x, -0.6))
           }
+          // Top-center anchor — where the incoming parent edge lands.
+          // Explicit rather than the group's computed `north` so the
+          // note drawn east of the node can't drag the bounding-box
+          // center (and hence the edge endpoint) off the box. Most
+          // visible on a 1-key node, where the note is wide relative to
+          // the box's 1.2 width; the south-side `gap-<i>` anchors give
+          // the outgoing child edges the same note-independence.
+          draw.anchor("top", (0, 0.6))
           // Note slot — anchored east of the entire node.
           let n-note = s.at("note", default: none)
           if n-note != none {
@@ -811,9 +819,10 @@
         // default parent anchor is the `gap-<i>` anchor on the south
         // face, where `i` is the child's index — i.e. the last digit
         // of the child path. Likewise n-ary children default to
-        // landing at their group's `north` (centered, since the
-        // btree-node centers on x=0). Explicit `parent-anchor` /
-        // `child-anchor` overrides still win.
+        // landing at their group's explicit `top` anchor — the box's
+        // true top-center, unlike the computed `north`, which the
+        // east-side note would drag off the box. Explicit
+        // `parent-anchor` / `child-anchor` overrides still win.
         let parent-is-nary = "keys" in from.content
         let child-is-nary = "keys" in to.content
         let parent-coord = if "parent-anchor" in s {
@@ -826,7 +835,7 @@
         let child-coord = if "child-anchor" in s {
           to.group-name + "." + s.at("child-anchor")
         } else if child-is-nary {
-          to.group-name + ".north"
+          to.group-name + ".top"
         } else {
           (to.group-name, 0.4, from.group-name)
         }
