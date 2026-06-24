@@ -764,8 +764,13 @@
 // One spec per event. `factors` controls whether the balance-factor
 // tag layer is applied to every snapshot. `init-alt` is the alt text
 // for the "init" frame (varies per call site — insert-display vs
-// fixup-display).
-#let _insert-event-to-spec(event, v, factors, heights, init-alt) = {
+// fixup-display). `prev-tree` is the previous event's tree (or `none`
+// for the first event): for `recompute` events we compute balance
+// factors from `prev-tree` so the just-recomputed node's parent
+// doesn't visually update its bf until the parent itself is the
+// recompute target. Heights tags still use the current tree so the
+// height label updates with the caption.
+#let _insert-event-to-spec(event, v, factors, heights, init-alt, prev-tree) = {
   let caption = none
   let step = (kind: event.kind)
   let alt = ""
@@ -781,59 +786,46 @@
       insert-path: event.insert-path,
     )
     alt = (
-      "Walked the BST search path for "
-        + str(v)
-        + "; insertion point is one step beyond the last visited node."
+      "Walked the BST search path for " + str(v) + "; insertion point is one step beyond the last visited node."
     )
   } else if event.kind == "insert" {
     caption = [Insert #v as new leaf]
     step = (kind: "insert", path: event.path)
     alt = "Inserted " + str(v) + " as a new leaf with height 1."
   } else if event.kind == "recompute" {
-    caption = [Recompute height = #(event.height)]
+    caption = [Recompute height]
     step = (kind: "recompute", path: event.path, height: event.height)
     let nv = _resolve-at(event.tree, event.path).value
     alt = (
-      "Recomputed height at node "
-        + str(nv)
-        + ": new height is "
-        + str(event.height)
-        + "."
+      "Recomputed height at node " + str(nv) + ": new height is " + str(event.height) + "."
     )
   } else if event.kind == "check" {
     caption = [Imbalance: case #(event.case)]
     step = (kind: "check", path: event.path, case: event.case, bf: event.bf)
     let nv = _resolve-at(event.tree, event.path).value
     alt = (
-      "Balance factor at node "
-        + str(nv)
-        + " is "
-        + str(event.bf)
-        + "; case "
-        + event.case
-        + " applies."
+      "Balance factor at node " + str(nv) + " is " + str(event.bf) + "; case " + event.case + " applies."
     )
   } else if event.kind == "rotate-zigzag" {
     caption = [Rotate child]
     step = (kind: "rotate-zigzag", path: event.path, case: event.case)
     alt = (
-      "Case "
-        + event.case
-        + " (zigzag): rotated the imbalanced node's child to straighten the configuration."
+      "Case " + event.case + " (zigzag): rotated the imbalanced node's child to straighten the configuration."
     )
   } else if event.kind == "rotate-finish" {
     caption = [Rotate (case #(event.case))]
     step = (kind: "rotate-finish", path: event.path, case: event.case)
     alt = (
-      "Case "
-        + event.case
-        + ": rotated the imbalanced node; AVL invariant restored at this subtree."
+      "Case " + event.case + ": rotated the imbalanced node; AVL invariant restored at this subtree."
     )
   }
 
+  let bf-tree = if event.kind == "recompute" and prev-tree != none {
+    prev-tree
+  } else { event.tree }
   let build = (op, _rt) => {
     let r = tree-anim.make-renderer(event.tree)
-    if factors { r = _tag-factors(r, event.tree) }
+    if factors { r = _tag-factors(r, bf-tree) }
     if heights { r = _tag-heights(r, event.tree) }
     if event.kind == "descend" {
       for p in event.visited {
@@ -888,7 +880,7 @@
 // Most events overlap with insert; the search/excise/transfer events
 // are unique to delete. `visited-snapshot` is the accumulated search
 // trail for compare frames so each one shows the whole walk.
-#let _delete-event-to-spec(event, v, factors, heights, init-alt, visited-snapshot) = {
+#let _delete-event-to-spec(event, v, factors, heights, init-alt, visited-snapshot, prev-tree) = {
   let caption = none
   let step = (kind: event.kind)
   let alt = ""
@@ -958,50 +950,39 @@
     step = (kind: "excise", path: event.path)
     alt = "Removed the deletion-position node from the tree."
   } else if event.kind == "recompute" {
-    caption = [Recompute height = #(event.height)]
+    caption = [Recompute height]
     step = (kind: "recompute", path: event.path, height: event.height)
     let nv = _resolve-at(event.tree, event.path).value
     alt = (
-      "Recomputed height at node "
-        + str(nv)
-        + ": new height is "
-        + str(event.height)
-        + "."
+      "Recomputed height at node " + str(nv) + ": new height is " + str(event.height) + "."
     )
   } else if event.kind == "check" {
     caption = [Imbalance: case #(event.case)]
     step = (kind: "check", path: event.path, case: event.case, bf: event.bf)
     let nv = _resolve-at(event.tree, event.path).value
     alt = (
-      "Balance factor at node "
-        + str(nv)
-        + " is "
-        + str(event.bf)
-        + "; case "
-        + event.case
-        + " applies."
+      "Balance factor at node " + str(nv) + " is " + str(event.bf) + "; case " + event.case + " applies."
     )
   } else if event.kind == "rotate-zigzag" {
     caption = [Rotate child]
     step = (kind: "rotate-zigzag", path: event.path, case: event.case)
     alt = (
-      "Case "
-        + event.case
-        + " (zigzag): rotated the imbalanced node's child to straighten the configuration."
+      "Case " + event.case + " (zigzag): rotated the imbalanced node's child to straighten the configuration."
     )
   } else if event.kind == "rotate-finish" {
     caption = [Rotate (case #(event.case))]
     step = (kind: "rotate-finish", path: event.path, case: event.case)
     alt = (
-      "Case "
-        + event.case
-        + ": rotated the imbalanced node; AVL invariant restored at this subtree."
+      "Case " + event.case + ": rotated the imbalanced node; AVL invariant restored at this subtree."
     )
   }
 
+  let bf-tree = if event.kind == "recompute" and prev-tree != none {
+    prev-tree
+  } else { event.tree }
   let build = (op, _rt) => {
     let r = tree-anim.make-renderer(event.tree)
-    if factors { r = _tag-factors(r, event.tree) }
+    if factors { r = _tag-factors(r, bf-tree) }
     if heights { r = _tag-heights(r, event.tree) }
     if event.kind == "compare" {
       for p in visited-snapshot {
@@ -1034,7 +1015,7 @@
       for p in event.walk {
         r = (r.patch)(f => (f.style-node)(p, stroke: op.search-stroke))
       }
-      r = (r.patch)(f => (f.note-node)(event.predecessor-path, [predecessor]))
+      r = (r.patch)(f => (f.note-node)(event.predecessor-path, [pred]))
     } else if event.kind == "transfer" {
       r = (r.patch)(f => (f.style-node)(
         event.target-path,
@@ -1093,11 +1074,7 @@
   let captions = (none,)
   let steps-meta = ((kind: "init"),)
   let alts = (
-    "AVL tree: "
-      + (self.describe)()
-      + ". About to traverse "
-      + name
-      + ".",
+    "AVL tree: " + (self.describe)() + ". About to traverse " + name + ".",
   )
 
   let output = ()
@@ -1321,20 +1298,12 @@
       } else {
         if node.left != none and node.left.value > node.value {
           panic(
-            "BST invariant violated at "
-              + str(node.value)
-              + ": left child "
-              + str(node.left.value)
-              + " > node",
+            "BST invariant violated at " + str(node.value) + ": left child " + str(node.left.value) + " > node",
           )
         }
         if node.right != none and node.right.value < node.value {
           panic(
-            "BST invariant violated at "
-              + str(node.value)
-              + ": right child "
-              + str(node.right.value)
-              + " < node",
+            "BST invariant violated at " + str(node.value) + ": right child " + str(node.right.value) + " < node",
           )
         }
         let lh = walk(node.left)
@@ -1353,11 +1322,7 @@
         let bf = lh - rh
         if bf < -1 or bf > 1 {
           panic(
-            "AVL invariant: balance factor "
-              + str(bf)
-              + " at node "
-              + str(node.value)
-              + " (|bf| > 1)",
+            "AVL invariant: balance factor " + str(bf) + " at node " + str(node.value) + " (|bf| > 1)",
           )
         }
         expected
@@ -1430,11 +1395,7 @@
       let captions = (none,)
       let steps-meta = ((kind: "init"),)
       let alts = (
-        "AVL tree: "
-          + (self.describe)()
-          + ". About to search for "
-          + str(v)
-          + ".",
+        "AVL tree: " + (self.describe)() + ". About to search for " + str(v) + ".",
       )
       for (i, s) in steps.enumerate() {
         captions.push(s.cmp)
@@ -1450,21 +1411,11 @@
           "Match found at node " + node-value + "."
         } else if is-last {
           (
-            "Comparing "
-              + s.cmp
-              + " at node "
-              + node-value
-              + "; search ends here, "
-              + str(v)
-              + " is not in the tree."
+            "Comparing " + s.cmp + " at node " + node-value + "; search ends here, " + str(v) + " is not in the tree."
           )
         } else {
           (
-            "Comparing "
-              + s.cmp
-              + " at node "
-              + node-value
-              + "; continuing search."
+            "Comparing " + s.cmp + " at node " + node-value + "; continuing search."
           )
         }
         alts.push(alt)
@@ -1567,20 +1518,22 @@
       let resolved-render = _resolve-render-theme-arg(render-theme)
 
       let init-alt = (
-        "AVL tree: "
-          + (self.describe)()
-          + ". About to insert "
-          + str(v)
-          + "."
+        "AVL tree: " + (self.describe)() + ". About to insert " + str(v) + "."
       )
 
-      let specs = events.map(e => _insert-event-to-spec(
-        e,
-        v,
-        factors,
-        heights,
-        init-alt,
-      ))
+      let specs = ()
+      let prev-tree = none
+      for e in events {
+        specs.push(_insert-event-to-spec(
+          e,
+          v,
+          factors,
+          heights,
+          init-alt,
+          prev-tree,
+        ))
+        prev-tree = e.tree
+      }
       _make-frames-avl-multi(specs, resolved-op, resolved-render)
     },
     fixup-display: (
@@ -1613,13 +1566,19 @@
           + "\"; about to run the fix-up climb."
       )
 
-      let specs = events.map(e => _insert-event-to-spec(
-        e,
-        none,
-        factors,
-        heights,
-        init-alt,
-      ))
+      let specs = ()
+      let prev-tree = none
+      for e in events {
+        specs.push(_insert-event-to-spec(
+          e,
+          none,
+          factors,
+          heights,
+          init-alt,
+          prev-tree,
+        ))
+        prev-tree = e.tree
+      }
       _make-frames-avl-multi(specs, resolved-op, resolved-render)
     },
     delete-display: (
@@ -1639,11 +1598,7 @@
       let resolved-render = _resolve-render-theme-arg(render-theme)
 
       let init-alt = (
-        "AVL tree: "
-          + (self.describe)()
-          + ". About to delete "
-          + str(v)
-          + "."
+        "AVL tree: " + (self.describe)() + ". About to delete " + str(v) + "."
       )
 
       // For compare frames (with search: true), accumulate descended
@@ -1658,6 +1613,7 @@
       }
 
       let specs = ()
+      let prev-tree = none
       for (i, e) in events.enumerate() {
         // Skip empty-tree excise of a single-node delete.
         if e.tree == none { continue }
@@ -1668,7 +1624,9 @@
           heights,
           init-alt,
           visited-by-event.at(i),
+          prev-tree,
         ))
+        prev-tree = e.tree
       }
       _make-frames-avl-multi(specs, resolved-op, resolved-render)
     },
@@ -1688,9 +1646,7 @@
       let child-path = (self.by-value)(child-value)
       if child-path == "" {
         panic(
-          "rotate-display: cannot rotate around root node "
-            + str(child-value)
-            + "; child must have a parent.",
+          "rotate-display: cannot rotate around root node " + str(child-value) + "; child must have a parent.",
         )
       }
       let parent-path = child-path.slice(0, child-path.len() - 1)
@@ -1733,18 +1689,8 @@
         (kind: "break", paths: broken-paths),
       )
       let alts-a = (
-        "AVL tree: "
-          + (self.describe)()
-          + ". About to "
-          + direction
-          + "-rotate around node "
-          + child-value-str
-          + ".",
-        "Rotation pivots identified: parent "
-          + parent-value
-          + " and child "
-          + child-value-str
-          + ".",
+        "AVL tree: " + (self.describe)() + ". About to " + direction + "-rotate around node " + child-value-str + ".",
+        "Rotation pivots identified: parent " + parent-value + " and child " + child-value-str + ".",
         "Breaking the edges that will rotate.",
       )
 
