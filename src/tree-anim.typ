@@ -835,7 +835,20 @@
         let child-coord = if "child-anchor" in s {
           to.group-name + "." + s.at("child-anchor")
         } else if child-is-nary {
-          to.group-name + ".top"
+          // The `top` anchor is only drawn by the btree-node shape. If a
+          // caller overrode this n-ary node's shape (e.g. a triangle
+          // standing in for a subtree), fall back to the group's
+          // computed `north`, which every shape provides and which lands
+          // on the apex / top-center of the symmetric binary shapes.
+          let child-shape = _merge-into(
+            default-node-style,
+            snapshot.nodes.at(child-path, default: (:)),
+          ).at("shape", default: "circle")
+          if child-shape == "btree-node" {
+            to.group-name + ".top"
+          } else {
+            to.group-name + ".north"
+          }
         } else {
           (to.group-name, 0.4, from.group-name)
         }
