@@ -1016,6 +1016,16 @@ signature:
   starling.last((g-tour.dfs-display)("A")),
 )
 
+Pass a `target:` node id to either method to turn the traversal into a
+*search* that stops the moment the target is visited (mirroring
+`dijkstra-display`'s `target:`). The visit gradient builds up only over
+the nodes examined before the target, and a terminal frame states the
+outcome: on success the target gains a `settled-stroke` ring and a
+`Found <t>` caption; if the target is unreachable the search visits the
+whole reachable component and ends with a `<t> not found` frame.
+
+#align(center, starling.stacked((g-tour.bfs-display)("A", target: "D")))
+
 == Optional auto-layout with graphviz
 
 For graphs too large to place by hand, `auto-layout` (in the separate

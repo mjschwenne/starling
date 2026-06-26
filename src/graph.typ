@@ -51,27 +51,33 @@
 // accumulates the visit sequence. Mirrors `_render-traversal` in
 // `bst.typ`.
 //
+// When `target` is non-`none` the animation is a *search*: the caller
+// has truncated `order` at the target (or run it to completion if the
+// target was unreachable), and a final terminal frame states the
+// outcome. On success the target node gains a `settled-stroke` ring.
+//
 // step.kind values: "init" (initial frame), "visit" (per node, with
-// node id and 1-indexed position).
-#let _render-graph-traversal(self, pg, order, name, theme, render-theme) = {
+// node id and 1-indexed position), and — in search mode — a terminal
+// "found" (node, visits) or "not-found" (target, visits).
+#let _render-graph-traversal(self, pg, order, name, theme, render-theme, target: none) = {
   let n = order.len()
+  let searching = target != none
+  let found = searching and order.contains(target)
   let captions = (none,)
   let steps-meta = ((kind: "init"),)
   let start = if n > 0 { order.first() } else { "" }
-  let alts = (
-    "Graph: "
-      + (self.describe)()
-      + ". About to traverse "
-      + name
-      + " from "
-      + start
-      + ".",
-  )
+  let intro = if searching {
+    "About to search " + name + " from " + start + " for " + target + "."
+  } else {
+    "About to traverse " + name + " from " + start + "."
+  }
+  let alts = ("Graph: " + (self.describe)() + ". " + intro,)
   let output = ()
   for (i, id) in order.enumerate() {
     output.push(id)
     captions.push([Visited: #raw("[" + output.join(", ") + "]")])
     steps-meta.push((kind: "visit", node: id, index: i + 1))
+    let suffix = if searching and id == target { " — this is the target." } else { "." }
     alts.push(
       "Visited "
         + id
@@ -79,8 +85,24 @@
         + str(i + 1)
         + " of "
         + str(n)
-        + ").",
+        + ")"
+        + suffix,
     )
+  }
+  if searching {
+    if found {
+      captions.push([Found #target])
+      steps-meta.push((kind: "found", node: target, visits: n))
+      alts.push(
+        "Found " + target + " after visiting " + str(n) + " node(s); the search stops here.",
+      )
+    } else {
+      captions.push([#target not found])
+      steps-meta.push((kind: "not-found", target: target, visits: n))
+      alts.push(
+        "Visited all " + str(n) + " reachable node(s); " + target + " was not found.",
+      )
+    }
   }
   let build-snapshots = (op, _rt) => {
     let g = gradient.linear(..op.traversal-palette)
@@ -94,6 +116,12 @@
         text-fill: _text-fill-for(fill),
         note: str(i + 1),
       )
+    }
+    if searching {
+      r = (r.push-frame)()
+      if found {
+        r = (r.patch)(f => (f.style-node)(target, stroke: op.settled-stroke))
+      }
     }
     r.snapshots
   }
@@ -685,10 +713,19 @@
         _resolve-render-theme-arg(render-theme),
       )
     },
-    // ---- Breadth-first traversal ----
-    bfs-display: (self, start, positions: auto, theme: auto, render-theme: auto) => {
+    // ---- Breadth-first traversal / search ----
+    // With `target: none` this is a full traversal of the reachable
+    // component. Pass a `target` node id to turn it into a search that
+    // stops the moment the target is dequeued (or runs to completion if
+    // the target is unreachable); `_render-graph-traversal` then appends
+    // a terminal "found" / "not-found" frame.
+    bfs-display: (self, start, target: none, positions: auto, theme: auto, render-theme: auto) => {
       let pg = (self.positioned)(positions: positions)
       assert(start in self.nodes, message: "bfs-display: start node '" + start + "' not in graph.")
+      assert(
+        target == none or target in self.nodes,
+        message: "bfs-display: target node " + repr(target) + " not in graph.",
+      )
       let order = ()
       let seen = (start,)
       let queue = (start,)
@@ -696,6 +733,7 @@
         let u = queue.first()
         queue = queue.slice(1)
         order.push(u)
+        if u == target { break }
         for nb in (self.neighbors)(u) {
           if not seen.contains(nb.id) {
             seen.push(nb.id)
@@ -710,12 +748,19 @@
         "breadth-first",
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        target: target,
       )
     },
-    // ---- Depth-first traversal (iterative pre-order) ----
-    dfs-display: (self, start, positions: auto, theme: auto, render-theme: auto) => {
+    // ---- Depth-first traversal / search (iterative pre-order) ----
+    // As with `bfs-display`, a non-`none` `target` turns the traversal
+    // into a search that stops the moment the target is visited.
+    dfs-display: (self, start, target: none, positions: auto, theme: auto, render-theme: auto) => {
       let pg = (self.positioned)(positions: positions)
       assert(start in self.nodes, message: "dfs-display: start node '" + start + "' not in graph.")
+      assert(
+        target == none or target in self.nodes,
+        message: "dfs-display: target node " + repr(target) + " not in graph.",
+      )
       let order = ()
       let seen = ()
       let stack = (start,)
@@ -725,6 +770,7 @@
         if not seen.contains(u) {
           seen.push(u)
           order.push(u)
+          if u == target { break }
           // Push unseen neighbours reversed so the first neighbour is
           // explored first (pre-order).
           let nbs = (self.neighbors)(u).map(nb => nb.id).filter(id => not seen.contains(id))
@@ -738,6 +784,7 @@
         "depth-first",
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        target: target,
       )
     },
   ),
