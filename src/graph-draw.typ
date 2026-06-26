@@ -234,21 +234,33 @@
     // `show strong` rule can't override the contrast-aware fill.
     draw.content(pos, text(weight: "bold", fill: tf, label))
     // Note slot (gold) — east of the node. Carries Dijkstra distances.
+    // A filled `note-bg` frame sits behind it so the annotation stays
+    // legible when an edge leaving the node passes underneath — graphs
+    // can't predict edge directions the way trees can.
     let note = s.at("note", default: none)
     if note != none {
       let nf = s.at("note-fill", default: render-theme.note-fill)
       draw.content(
         (x + 0.75, y),
         anchor: "west",
+        frame: "rect",
+        fill: render-theme.note-bg,
+        stroke: none,
+        padding: 0.06,
         text(fill: nf, size: 0.8em, note),
       )
     }
-    // Tag slot — west of the node, marginal annotation color.
+    // Tag slot — west of the node, marginal annotation color. Same
+    // `note-bg` backing as the note slot.
     let tag = s.at("tag", default: none)
     if tag != none {
       draw.content(
         (x - 0.65, y),
         anchor: "east",
+        frame: "rect",
+        fill: render-theme.note-bg,
+        stroke: none,
+        padding: 0.06,
         text(fill: render-theme.edge-stroke, size: 0.7em, tag),
       )
     }

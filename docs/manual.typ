@@ -272,8 +272,11 @@ Theming is split into three dicts that each own a different concern:
 
 - *Render theme* (`default-render-theme`, in `anim-core.typ`) holds
   structural defaults — node fill, node stroke, node text fill, edge
-  stroke, note fill. Anything any data structure would need to render
-  a tree at all.
+  stroke, note fill, edge-tag fill (persistent edge labels like AVL
+  heights and graph weights), and note-bg (the fill drawn behind a
+  node's in-canvas annotations so they stay legible over edges;
+  defaults to `white`, set it to the page color on a dark background).
+  Anything any data structure would need to render at all.
 - *Op theme* (`default-op-theme`, in `op-theme.typ`) holds operation-
   semantic strokes/fills/palettes that apply to _any_ data structure
   with those operations — `search-stroke`, `attention-stroke`,
@@ -1284,6 +1287,82 @@ renderer-level, set via `r.with-caption(...)` / `r.with-step(...)`
 directly between Op batches. The split keeps each Op's responsibility
 narrow (modifying the current snapshot) and matches how the
 `*-display` methods are written internally.
+
+== On a graph
+
+The Op stream is structure-agnostic: an op's `path` is an opaque
+string, so the same machinery drives a graph. Address nodes by their
+id and edges by `edge-key(u, v)` (the canonical key the renderer uses
+— sorted `"u--v"` when undirected, `"u->v"` when directed), and build
+the renderer with `make-graph-renderer` over a positioned graph
+instead of `make-renderer`. Everything else — `Op.Highlight`,
+`Op.StyleEdge`, `Op.Annotate`, `Op.Commit` — is identical.
+
+This is the escape hatch for animations the built-in MST / Dijkstra /
+traversal displays don't cover. Here we trace a custom walk
+A → C → D, coloring each node and edge and carrying the running cost
+in the gold note slot (reusing the `g` from the graph tour above):
+
+```typ
+#let r = starling.make-graph-renderer((g.positioned)(), sticky: true)
+#let r = (r.with-caption)([start at A])
+#let r = starling.apply-ops(r, (
+  (starling.Op.Highlight.new)(path: "A", color: blue),
+  (starling.Op.Commit.new)(alt: "Start the walk at A."),
+))
+#let r = (r.with-caption)([A → C  (+4)])
+#let r = starling.apply-ops(r, (
+  (starling.Op.StyleEdge.new)(
+    path: starling.edge-key("A", "C"), style: (stroke: blue + 2pt),
+  ),
+  (starling.Op.Highlight.new)(path: "C", color: blue),
+  (starling.Op.Annotate.new)(path: "C", text: [4]),
+  (starling.Op.Commit.new)(alt: "Follow edge A–C (weight 4); cost so far 4."),
+))
+#let r = (r.with-caption)([C → D  (+5)])
+#let r = starling.apply-ops(r, (
+  (starling.Op.StyleEdge.new)(
+    path: starling.edge-key("C", "D"), style: (stroke: blue + 2pt),
+  ),
+  (starling.Op.Highlight.new)(path: "D", color: blue),
+  (starling.Op.Annotate.new)(path: "D", text: [9]),
+  (starling.Op.Alt.new)(text: "Follow edge C–D (weight 5); total cost 9."),
+))
+#starling.stacked((r.render)())
+```
+
+#let gop-r = starling.make-graph-renderer((g-tour.positioned)(), sticky: true)
+#let gop-r = (gop-r.with-caption)([start at A])
+#let gop-r = (starling.apply-ops)(gop-r, (
+  (starling.Op.Highlight.new)(path: "A", color: blue),
+  (starling.Op.Commit.new)(alt: "Start the walk at A."),
+))
+#let gop-r = (gop-r.with-caption)([A → C  (+4)])
+#let gop-r = (starling.apply-ops)(gop-r, (
+  (starling.Op.StyleEdge.new)(
+    path: starling.edge-key("A", "C"), style: (stroke: blue + 2pt),
+  ),
+  (starling.Op.Highlight.new)(path: "C", color: blue),
+  (starling.Op.Annotate.new)(path: "C", text: [4]),
+  (starling.Op.Commit.new)(alt: "Follow edge A–C (weight 4); cost so far 4."),
+))
+#let gop-r = (gop-r.with-caption)([C → D  (+5)])
+#let gop-r = (starling.apply-ops)(gop-r, (
+  (starling.Op.StyleEdge.new)(
+    path: starling.edge-key("C", "D"), style: (stroke: blue + 2pt),
+  ),
+  (starling.Op.Highlight.new)(path: "D", color: blue),
+  (starling.Op.Annotate.new)(path: "D", text: [9]),
+  (starling.Op.Alt.new)(text: "Follow edge C–D (weight 5); total cost 9."),
+))
+
+#align(center, starling.stacked((gop-r.render)()))
+
+`edge-key` is exported from the package so user code can compute the
+same key the renderer stores; for a directed graph pass
+`directed: true` to match. Node and edge ids never collide because
+they live in separate snapshot dictionaries, so `"A"` (a node) and
+`"A--C"` (an edge) address different things.
 
 == Custom shapes and edge anchors
 

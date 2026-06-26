@@ -148,6 +148,7 @@
   edge-stroke: black,
   note-fill: rgb("#d4a017"),
   edge-tag-fill: rgb("#2b6cb0"),
+  note-bg: white,
 )
 
 #let _render-theme-keys = (
@@ -157,12 +158,16 @@
   "edge-stroke",
   "note-fill",
   "edge-tag-fill",
+  "note-bg",
 )
 
 /// Typsy refinement: a dictionary whose keys are a subset of the
 /// render-theme keys (#raw("node-fill"), #raw("node-stroke"),
 /// #raw("node-text-fill"), #raw("edge-stroke"), #raw("note-fill"),
-/// #raw("edge-tag-fill")).
+/// #raw("edge-tag-fill"), #raw("note-bg")). #raw("note-bg") is the fill
+/// drawn behind in-canvas node annotations (the #raw("note") and
+/// #raw("tag") slots) so they stay legible over edges — defaults to
+/// #raw("white"); set it to the page color on a non-white background.
 #let RenderTheme = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _render-theme-keys.contains(k)),
