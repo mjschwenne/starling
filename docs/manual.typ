@@ -74,14 +74,31 @@ responsibility:
   inset: 6pt,
   align: (left, left),
   table.header[*File*][*Role*],
+  [`src/anim-core.typ`],
+  [The structure-agnostic animation core — defines `Snapshot`,
+   `Frame`, the `Renderer` (with a pluggable draw backend),
+   `make-renderer`, `Op`, and `apply-ops`. Knows nothing about any
+   particular structure.],
   [`src/tree-anim.typ`],
-  [The animation kernel — defines `Snapshot`, `Frame`,
-   `TreeRenderer`, `draw-tree`, `Op`, and `apply-ops`. Knows nothing
-   about binary search trees specifically.],
+  [The tree backend on the core — `draw-tree`, the cetz-tree
+   builders, `PathId`, `path-anchor`, and the tree-bound
+   `make-renderer` wrapper. Re-exports the core.],
   [`src/bst.typ`],
   [The BST class — implements pure operations (`insert`, `delete`,
    `rotate`) and the `*-display` methods that build animations using
    the kernel.],
+  [`src/graph-draw.typ`],
+  [The graph renderer on the core — `draw-graph`, `edge-key`,
+   `node-anchor`, and the graph-bound `make-graph-renderer` wrapper.
+   The graph analog of `tree-anim.typ`; knows drawing, not algorithms.],
+  [`src/graph.typ`],
+  [The Graph class — data plus the MST / Dijkstra / BFS / DFS
+   `*-display` algorithms. Split from its renderer, like `bst.typ` is
+   from `draw-tree`.],
+  [`src/graph-layout.typ`],
+  [Optional graphviz auto-layout (`auto-layout`) via `diagraph-layout`.
+   The only file importing that dependency, and nothing on the
+   `lib.typ` path imports it — so it stays optional.],
   [`src/lib.typ`],
   [The public surface — re-exports everything users need, plus the
    render helpers (`last`, `stacked`, `figures`, `canvases-only`).],
@@ -253,7 +270,7 @@ layer (see _State for ergonomics, per-call for perf_ below).
 
 Theming is split into three dicts that each own a different concern:
 
-- *Render theme* (`default-render-theme`, in `tree-anim.typ`) holds
+- *Render theme* (`default-render-theme`, in `anim-core.typ`) holds
   structural defaults — node fill, node stroke, node text fill, edge
   stroke, note fill. Anything any data structure would need to render
   a tree at all.
@@ -880,6 +897,140 @@ node-visit point.
 
 #align(center, starling.last((b24-tour.in-order-display)()))
 
+= Graph animations tour
+
+The `Graph` class is the first non-tree structure in starling: an
+undirected-or-directed weighted graph for teaching minimum spanning
+trees (Prim and Kruskal), Dijkstra's shortest paths, and breadth- and
+depth-first traversals. It rides the same `Frame` / op-theme /
+render-theme stack as the trees, so every render helper, theming knob,
+and touying composition works unchanged. There is no per-DS theme —
+animation strokes come from the op-theme, structural defaults from the
+render theme.
+
+Unlike trees, graphs have no root and no path-from-root, so node
+identity is a plain string id and edges are keyed by
+#raw("edge-key(u, v, directed:)") (sorted `"u--v"` when undirected,
+`"u->v"` when directed). The renderer (`graph-draw.typ`, the
+`draw-graph` backend) is split from the `Graph` class (`graph.typ`,
+data plus algorithms) exactly as `draw-tree` is split from the tree
+classes — both inject their backend into the shared `Renderer` in
+`anim-core.typ`.
+
+== Construction and layout
+
+Layout is decoupled from rendering: the `Graph` carries node positions
+(in cetz units) and the renderer simply draws nodes there. The
+#raw("graph(..)") factory takes placed nodes and weighted edges:
+
+```typ
+#let g = graph(
+  (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2)),
+  edges: (("A", "B", 7), ("B", "C", 2), ("A", "C", 4),
+          ("C", "D", 5), ("B", "D", 1)),
+)
+```
+
+#let g-tour = starling.graph(
+  (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2)),
+  edges: (
+    ("A", "B", 7),
+    ("B", "C", 2),
+    ("A", "C", 4),
+    ("C", "D", 5),
+    ("B", "D", 1),
+  ),
+)
+
+Hand-placement is the first-class path — small teaching graphs read
+best when you control the layout. For larger graphs, the optional
+`auto-layout` helper (below) computes positions with graphviz.
+
+== Static display
+
+`(g.display)()` returns a one-frame array. Edge weights are drawn at
+each edge midpoint; a directed graph gets arrowheads.
+
+#align(center, starling.last((g-tour.display)()))
+
+== Prim's minimum spanning tree
+
+`(g.mst-prim-display)(start)` grows the tree from `start`. Each
+selection shows the frontier (crossing edges in the search stroke) with
+the lightest edge picked out in the attention stroke, then commits it
+to the tree (success stroke) and settles the newly reached node. The
+caption tracks the running tree weight.
+
+#align(center, starling.stacked((g-tour.mst-prim-display)("A")))
+
+== Kruskal's minimum spanning tree
+
+`(g.mst-kruskal-display)()` considers edges in weight order, adding
+each unless it would join two nodes already in the same component (a
+cycle, drawn in the danger stroke). The union-find forest is shown by
+*node color*: same color means same set, and colors merge as the
+components do — no extra dependency, and robust to any layout.
+
+#align(center, starling.stacked((g-tour.mst-kruskal-display)()))
+
+== Dijkstra's shortest paths
+
+`(g.dijkstra-display)(source, target: ..)` carries each node's
+tentative distance in its note slot (∞ until reached). Each round
+finalizes the nearest unvisited node (attention stroke, then settled),
+relaxes its outgoing edges (search stroke, updating distances), and
+grows the shortest-path tree in the success stroke. With a `target`
+the search stops early and the path is highlighted. It works on
+directed graphs:
+
+#let dg-tour = starling.graph(
+  (("S", 0, 0), ("A", 2.5, 1.2), ("B", 2.5, -1.2), ("T", 5, 0)),
+  edges: (
+    ("S", "A", 1),
+    ("S", "B", 4),
+    ("A", "B", 1),
+    ("A", "T", 5),
+    ("B", "T", 1),
+  ),
+  directed: true,
+)
+
+#align(center, starling.stacked((dg-tour.dijkstra-display)("S", target: "T")))
+
+== Traversals
+
+`(g.bfs-display)(start)` and `(g.dfs-display)(start)` sample the
+op-theme's `traversal-palette` across the visit order — each visited
+node gets a fill from the gradient and a 1-indexed badge, and the
+caption accumulates the visit sequence (the same pattern as the tree
+`*-order-display` methods). The final frame wears the full visit
+signature:
+
+#grid(
+  columns: (1fr, 1fr),
+  align: center,
+  starling.last((g-tour.bfs-display)("A")),
+  starling.last((g-tour.dfs-display)("A")),
+)
+
+== Optional auto-layout with graphviz
+
+For graphs too large to place by hand, `auto-layout` (in the separate
+`graph-layout.typ` module) computes positions with graphviz via the
+`diagraph-layout` package — a WASM build, so no external binary is
+needed. It is an *optional* dependency: nothing on the
+`import starling` path imports it, so projects that only hand-place
+graphs never pull it in. Import it explicitly and feed the result to
+any display via the `positions:` argument:
+
+```typ
+#import "@preview/starling:0.3.0/src/graph-layout.typ": auto-layout
+
+// Position-less graph — bare ids, no coordinates.
+#let g = graph(("A", "B", "C"), edges: (("A", "B", 7), ("B", "C", 2)))
+#last((g.mst-prim-display)("A", positions: auto-layout(g)))
+```
+
 = Theming <theming>
 
 Starling exposes three theme layers so document authors can match
@@ -1212,10 +1363,38 @@ by the `tidy` package from doc-comments in the source.
   scope: (starling: starling, cetz: cetz),
 )
 
+#let core-docs = tidy.parse-module(
+  read("/src/anim-core.typ"),
+  name: "Animation core",
+  label-prefix: "core-",
+  scope: (starling: starling, cetz: cetz),
+)
+
 #let anim-docs = tidy.parse-module(
   read("/src/tree-anim.typ"),
-  name: "Animation kernel",
+  name: "Tree backend",
   label-prefix: "anim-",
+  scope: (starling: starling, cetz: cetz),
+)
+
+#let graph-docs = tidy.parse-module(
+  read("/src/graph.typ"),
+  name: "Graph",
+  label-prefix: "graph-",
+  scope: (starling: starling, cetz: cetz),
+)
+
+#let gdraw-docs = tidy.parse-module(
+  read("/src/graph-draw.typ"),
+  name: "Graph renderer",
+  label-prefix: "gdraw-",
+  scope: (starling: starling, cetz: cetz),
+)
+
+#let glayout-docs = tidy.parse-module(
+  read("/src/graph-layout.typ"),
+  name: "Graph auto-layout",
+  label-prefix: "glayout-",
   scope: (starling: starling, cetz: cetz),
 )
 
@@ -1223,6 +1402,22 @@ by the `tidy` package from doc-comments in the source.
 
 #tidy.show-module(lib-docs, style: tidy.styles.default, show-module-name: false)
 
-== Animation kernel
+== Animation core
+
+#tidy.show-module(core-docs, style: tidy.styles.default, show-module-name: false)
+
+== Tree backend
 
 #tidy.show-module(anim-docs, style: tidy.styles.default, show-module-name: false)
+
+== Graph
+
+#tidy.show-module(graph-docs, style: tidy.styles.default, show-module-name: false)
+
+== Graph renderer
+
+#tidy.show-module(gdraw-docs, style: tidy.styles.default, show-module-name: false)
+
+== Graph auto-layout
+
+#tidy.show-module(glayout-docs, style: tidy.styles.default, show-module-name: false)

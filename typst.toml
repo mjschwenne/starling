@@ -2,14 +2,14 @@
 
 [package]
 name = "starling"
-version = "0.2.0"
+version = "0.3.0"
 entrypoint = "src/lib.typ"
 authors = ["Matt Schwennesen <mjschwenne@gmail.com>"]
 license = "GPL-3.0-or-later"
-description = "Animated renderings of data structures (binary search trees, and more to come) for teaching."
+description = "Animated renderings of data structures (binary search trees, 2-3-4 trees, and weighted graphs) for teaching."
 homepage = "https://github.com/mjschwenne/starling"
 repository = "https://github.com/mjschwenne/starling"
-keywords = ["data-structures", "animation", "education", "cetz", "bst"]
+keywords = ["data-structures", "animation", "education", "cetz", "graph"]
 categories = ["visualization"]
 disciplines = ["computer-science"]
 # compiler = ""

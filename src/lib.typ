@@ -26,6 +26,14 @@
 )
 #import "./avl.typ": AVL, avl
 #import "./b24.typ": B24, b24
+#import "./graph.typ": Graph, graph
+#import "./graph-draw.typ": (
+  draw-graph,
+  node-anchor,
+  edge-key,
+  make-graph-renderer,
+  GraphNodeId,
+)
 #import "./op-theme.typ": (
   default-op-theme,
   set-op-theme,
