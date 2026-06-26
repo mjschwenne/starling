@@ -1476,6 +1476,28 @@ same key the renderer stores; for a directed graph pass
 they live in separate snapshot dictionaries, so `"A"` (a node) and
 `"A--C"` (an edge) address different things.
 
+`make-graph-renderer` takes a *positioned* graph, and `(g.positioned)()`
+defaults to the graph's own stored coordinates. To drive a manual op
+stream over a graphviz layout instead of hand-placed nodes, compute the
+positions with `auto-layout` first and thread them through
+`positioned`'s `positions:` argument before building the renderer — the
+same seam the displays' `layout:` argument uses internally, done by
+hand:
+
+```typ
+#let pos = starling.auto-layout(g, engine: "neato", sizes: auto)
+#let r = starling.make-graph-renderer(
+  (g.positioned)(positions: pos), sticky: true,
+)
+// ...then apply-ops exactly as above.
+```
+
+Pass `sizes: auto` so graphviz reserves room per node (it also sets
+`overlap=false`) when the nodes are `autosize`d; tune absolute spacing
+with `auto-layout`'s `unit:` or `positioned`'s `scale:`. Keeping this
+`auto-layout` call explicit is what preserves its laziness — the manual
+op-stream path never pulls `diagraph-layout` unless you make the call.
+
 == Custom shapes and edge anchors
 
 Two node-style and edge-style keys let you swap the default circular
