@@ -100,6 +100,24 @@
   if len == 0 { (0, 0) } else { (-dy / len * amount, dx / len * amount) }
 }
 
+// Place an edge's intrinsic weight/label (`tag`) at `pos` with a filled
+// `note-bg` halo behind it, mirroring the node note/tag slots. The fixed
+// perpendicular offset that seats the label off the line is in cetz
+// units (absolute), but the label text is sized in `em`, so under a
+// larger ambient font (touying) it grows past that offset and a bare
+// label would clip the edge. The opaque halo — sized to the em-scaled
+// text, so it scales too — masks the sliver of edge beneath the label
+// instead, keeping it legible at any font size without needing a layout
+// `context` for `measure` (so direct `cetz.canvas` use still works).
+#let _edge-tag(draw, pos, tag, render-theme) = draw.content(
+  pos,
+  frame: "rect",
+  fill: render-theme.note-bg,
+  stroke: none,
+  padding: 0.06,
+  text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
+)
+
 // The paint (color) of a stroke spec, for filling a directed edge's
 // arrowhead to match its line. Accepts a color, dict, or stroke; falls
 // back to black for `auto`/`none` or a stroke with no explicit paint.
@@ -300,10 +318,7 @@
         0.125 * start.at(1) + 0.375 * c1.at(1) + 0.375 * c2.at(1) + 0.125 * end.at(1)
       )
       if tag != none {
-        draw.content(
-          (x, apex-y + 0.35),
-          text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
-        )
+        _edge-tag(draw, (x, apex-y + 0.35), tag, render-theme)
       }
       if note != none {
         let nf = s.at("note-fill", default: render-theme.note-fill)
@@ -341,10 +356,7 @@
       // Intrinsic weight/label, off the line; snapshot `tag` overrides.
       if tag != none {
         let (ox, oy) = _perp-offset(dx, dy, 0.32)
-        draw.content(
-          (mid.at(0) + ox, mid.at(1) + oy),
-          text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
-        )
+        _edge-tag(draw, (mid.at(0) + ox, mid.at(1) + oy), tag, render-theme)
       }
       // Operation note (gold) on the edge midpoint.
       if note != none {
@@ -375,10 +387,7 @@
       )
       if tag != none {
         let (tx, ty) = _perp-offset(dx, dy, if bend > 0 { 0.3 } else { -0.3 })
-        draw.content(
-          (apex.at(0) + tx, apex.at(1) + ty),
-          text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
-        )
+        _edge-tag(draw, (apex.at(0) + tx, apex.at(1) + ty), tag, render-theme)
       }
       if note != none {
         let nf = s.at("note-fill", default: render-theme.note-fill)
