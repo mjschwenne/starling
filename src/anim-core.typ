@@ -38,6 +38,17 @@
   "label",
   "materialize",
   "key-styles",
+  // Graph node geometry (consumed by `draw-graph`; the tree backend
+  // uses fixed bounding boxes and ignores these). `r` is the circle
+  // radius; `rx`/`ry` are the ellipse/rectangle half-extents;
+  // `autosize` fits the node to its label via `measure`; `pad-x`/
+  // `pad-y` pad the autosize fit. All in cetz units.
+  "r",
+  "rx",
+  "ry",
+  "autosize",
+  "pad-x",
+  "pad-y",
 )
 #let _edge-style-keys = (
   "stroke",
@@ -688,6 +699,12 @@
   alts,
   theme,
   render-theme,
+  // Base style layers applied beneath every per-frame snapshot at draw
+  // time (the `dns`/`des` args of the draw backend). Graph displays use
+  // `default-node-style` to set a doc-wide node shape/size; trees leave
+  // them empty and style per-node via snapshots.
+  default-node-style: (:),
+  default-edge-style: (:),
 ) = {
   let n = captions.len()
   range(n).map(i => (Frame.new)(
@@ -696,7 +713,14 @@
         let op = if theme == auto { op-arg } else { theme }
         let rt = if render-theme == auto { rt-arg } else { render-theme }
         let snaps = build-snapshots(op, rt)
-        _make-canvas(draw, structure, snaps.at(i), (:), (:), rt)
+        _make-canvas(
+          draw,
+          structure,
+          snaps.at(i),
+          default-node-style,
+          default-edge-style,
+          rt,
+        )
       },
     ),
     caption: captions.at(i),

@@ -1,6 +1,7 @@
 #import "@preview/typsy:0.2.2": Any, Bool, Array, Dictionary, class
 #import "./anim-core.typ" as core
 #import "./graph-draw.typ" as graph-draw
+#import "./graph-layout.typ" as graph-layout
 #import "./op-theme.typ": _resolve-op-theme-arg
 
 // The Graph class — an undirected-or-directed weighted graph for
@@ -34,6 +35,28 @@
   if l < 60% { white } else { black }
 }
 
+// Resolve the node positions a display will draw with. With
+// `layout: none` the caller's manual `positions` (or, via `auto`, the
+// graph's own) are used unchanged and `diagraph-layout` is never
+// touched. With `layout: <engine>` (e.g. "neato") the display lays the
+// graph out itself through `auto-layout`, passing `sizes: auto` so
+// graphviz reserves room per node from a cheap label-length estimate
+// (graph-layout.typ). Gating the call behind opt-in is what keeps
+// `diagraph-layout` an OPTIONAL dependency — importing starling and
+// using manual positions pulls none of the WASM layout package; only a
+// non-`none` `layout:` does. Tradeoff: the layout estimate is eager
+// (no `measure`, so it can run here outside a context) while the drawn
+// node size is measured precisely in `draw-graph`. The two only
+// approximate each other, but graphviz's node margins absorb the slack;
+// tune absolute spacing with `layout-unit:`/`scale:` if needed.
+#let _resolve-positions(self, positions, layout, layout-unit) = {
+  if layout == none {
+    positions
+  } else {
+    graph-layout.auto-layout(self, engine: layout, unit: layout-unit, sizes: auto)
+  }
+}
+
 // Union-find root of `x` given a `parent` map. No path compression —
 // teaching graphs are small, and keeping it a pure function of its
 // arguments lets it run against a per-frame snapshot of the map.
@@ -59,7 +82,7 @@
 // step.kind values: "init" (initial frame), "visit" (per node, with
 // node id and 1-indexed position), and — in search mode — a terminal
 // "found" (node, visits) or "not-found" (target, visits).
-#let _render-graph-traversal(self, pg, order, name, theme, render-theme, target: none) = {
+#let _render-graph-traversal(self, pg, order, name, theme, render-theme, target: none, node-style: (:)) = {
   let n = order.len()
   let searching = target != none
   let found = searching and order.contains(target)
@@ -134,6 +157,7 @@
     alts,
     theme,
     render-theme,
+    default-node-style: node-style,
   )
 }
 
@@ -292,7 +316,8 @@
       (directed: self.directed, nodes: nodes, edges: edges)
     },
     // Returns a one-element Frame array — the static graph, no styling.
-    display: (self, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+    display: (self, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+      let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       let captions = (none,)
       let steps-meta = (none,)
@@ -307,6 +332,7 @@
         alts,
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        default-node-style: node-style,
       )
     },
     // ---- Prim's minimum spanning tree ----
@@ -317,7 +343,8 @@
     // Visited nodes / tree edges accumulate; the closure recomputes the
     // full styling per frame (sticky: false) so transient frontier
     // highlights clear cleanly.
-    mst-prim-display: (self, start, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+    mst-prim-display: (self, start, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+      let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       let all-ids = self.nodes.keys()
       assert(
@@ -448,6 +475,7 @@
         alts,
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        default-node-style: node-style,
       )
     },
     // ---- Kruskal's minimum spanning tree ----
@@ -457,7 +485,8 @@
     // set. Three frames per edge: "consider" (attention), then "add"
     // (success-stroke, components merge → recolor) or "reject"
     // (danger-stroke).
-    mst-kruskal-display: (self, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+    mst-kruskal-display: (self, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+      let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       let all-ids = self.nodes.keys()
       let n = all-ids.len()
@@ -561,6 +590,7 @@
         alts,
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        default-node-style: node-style,
       )
     },
     // ---- Dijkstra's shortest paths ----
@@ -572,7 +602,8 @@
     // tree (predecessor edges) accumulates in success-stroke. With a
     // `target`, the search stops early and the path is highlighted in
     // settled-stroke.
-    dijkstra-display: (self, source, target: none, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+    dijkstra-display: (self, source, target: none, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+      let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       let all-ids = self.nodes.keys()
       assert(
@@ -715,6 +746,7 @@
         alts,
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        default-node-style: node-style,
       )
     },
     // ---- Breadth-first traversal / search ----
@@ -723,7 +755,8 @@
     // stops the moment the target is dequeued (or runs to completion if
     // the target is unreachable); `_render-graph-traversal` then appends
     // a terminal "found" / "not-found" frame.
-    bfs-display: (self, start, target: none, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+    bfs-display: (self, start, target: none, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+      let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       assert(start in self.nodes, message: "bfs-display: start node '" + start + "' not in graph.")
       assert(
@@ -753,12 +786,14 @@
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
         target: target,
+        node-style: node-style,
       )
     },
     // ---- Depth-first traversal / search (iterative pre-order) ----
     // As with `bfs-display`, a non-`none` `target` turns the traversal
     // into a search that stops the moment the target is visited.
-    dfs-display: (self, start, target: none, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+    dfs-display: (self, start, target: none, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+      let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       assert(start in self.nodes, message: "dfs-display: start node '" + start + "' not in graph.")
       assert(
@@ -789,6 +824,7 @@
         _resolve-op-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
         target: target,
+        node-style: node-style,
       )
     },
   ),

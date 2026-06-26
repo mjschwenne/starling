@@ -1064,6 +1064,39 @@ whole reachable component and ends with a `<t> not found` frame.
 
 #align(center, starling.stacked((g-tour.bfs-display)("A", target: "D")))
 
+== Node shapes and sizing
+
+The default circular node is sized for short ids. Longer labels — names,
+words, multi-character keys — overflow it. Pass a `node-style:` dict to
+any display to restyle *every* node at once; it sits beneath the
+per-frame algorithm styling, so shape and size persist while fills and
+strokes animate on top.
+
+- `shape` accepts `"circle"` (default), `"ellipse"`, or
+  `"rectangle"`/`"square"`.
+- `autosize: true` fits the node to its own label (measured at render
+  time), so each node is exactly as wide as it needs to be.
+- For a fixed size, set `rx`/`ry` (ellipse / rectangle half-extents) or
+  `r` (circle radius) in cetz units instead, plus `pad-x`/`pad-y` to
+  loosen or tighten an autosize fit.
+
+Edges trim to whatever boundary the shape defines, so arrowheads and
+edge ends stay flush against a wide ellipse just as they do a circle.
+
+#let g-people = starling.graph(
+  (
+    ("A", 0, 0, [Alice]),
+    ("B", 3, 0, [Bob]),
+    ("C", 1.5, 2.4, [Charlie]),
+    ("D", 4.5, 2.4, [Dan]),
+  ),
+  edges: (("A", "B", 1), ("A", "C", 1), ("B", "C", 1), ("B", "D", 1), ("C", "D", 1)),
+)
+
+#align(center, starling.last((g-people.display)(
+  node-style: (shape: "ellipse", autosize: true),
+)))
+
 == Optional auto-layout with graphviz
 
 For graphs too large to place by hand, `auto-layout` computes positions
@@ -1080,12 +1113,37 @@ to any display via the `positions:` argument:
 #last((g.mst-prim-display)("A", positions: auto-layout(g)))
 ```
 
+Or skip the intermediate map entirely: pass `layout: <engine>` to any
+display and it runs `auto-layout` for you, internally. Because the
+display knows the node labels, it feeds graphviz a per-node size
+estimate so wide labels get spread apart (and sets `overlap=false` so
+the force-directed engines honor those sizes rather than stacking
+nodes). This keeps the graph inline at the call site and removes the
+chance of pairing a positions map with the wrong graph:
+
+```typ
+#last((g.display)(
+  node-style: (shape: "ellipse", autosize: true),
+  layout: "neato",          // the display calls auto-layout itself
+))
+```
+
+That size estimate is a cheap label-length heuristic computed *without*
+`measure`, whereas the drawn node is measured exactly — so the two only
+approximate each other. Graphviz's node margins absorb most of the
+slack; if spacing still looks off, spread the graph with the display's
+`scale:` or tighten/loosen it with `layout-unit:` (the per-unit point
+scale, mirroring `auto-layout`'s `unit:`). `layout:` defaults to `none`,
+in which case the display uses `positions:` and `diagraph-layout` is
+never touched.
+
 Despite being on the `import starling` path, `diagraph-layout` stays an
 *optional* dependency: `auto-layout` carries its `diagraph-layout`
 import inside its own body, which Typst resolves lazily — only when the
-function is actually called. Projects that only hand-place graphs never
-pull it in. (Typst has no subpath package import, so re-exporting from
-the entrypoint is the only way to reach `auto-layout`; the older
+function is actually called (whether directly or through a display's
+`layout:` argument). Projects that only hand-place graphs never pull it
+in. (Typst has no subpath package import, so re-exporting from the
+entrypoint is the only way to reach `auto-layout`; the older
 `@preview/starling:<ver>/src/graph-layout.typ` form never worked.)
 
 = Theming <theming>

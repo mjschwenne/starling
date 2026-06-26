@@ -100,6 +100,59 @@
   if len == 0 { (0, 0) } else { (-dy / len * amount, dx / len * amount) }
 }
 
+// Half-extents `(hw, hh)` of a node in cetz units, given its resolved
+// style and (already-resolved) label. The shapes:
+//   * "circle"             — `r` (default 0.6), hw == hh
+//   * "ellipse"            — `rx`/`ry` (default 0.95 / 0.6)
+//   * "rectangle"/"square" — `rx`/`ry` (default 0.6 / 0.6, the historical
+//                            1.2×1.2 box)
+// `autosize: true` overrides the fixed extents by measuring the label
+// and padding it (`pad-x`/`pad-y`). For circle/ellipse the padded box is
+// scaled by ~1.3 so the rectangular text bounds (near-)inscribe in the
+// ellipse; a rectangle just takes the padded box. Autosize REQUIRES a layout
+// context (it calls `measure`); the standard render path always supplies
+// one (the lib helpers wrap each frame in `context { }`). The cetz
+// canvas default length is 1cm per unit, so pt → unit is `/ 1cm`.
+#let _node-extents(shape, s, label) = {
+  if s.at("autosize", default: false) {
+    let m = measure(text(weight: "bold", label))
+    let mw = m.width / 1cm / 2
+    let mh = m.height / 1cm / 2
+    let px = s.at("pad-x", default: 0.22)
+    let py = s.at("pad-y", default: 0.16)
+    if shape == "circle" or shape == "ellipse" {
+      // Enlarge the padded text box so it inscribes in the ellipse.
+      // A full √2 fits the box corners exactly, but glyphs don't reach
+      // the corners, so 1.3 looks tight without cropping descenders.
+      ((mw + px) * 1.3, (mh + py) * 1.3)
+    } else {
+      (mw + px, mh + py)
+    }
+  } else if shape == "circle" {
+    let r = s.at("r", default: 0.6)
+    (r, r)
+  } else if shape == "ellipse" {
+    (s.at("rx", default: 0.95), s.at("ry", default: 0.6))
+  } else {
+    (s.at("rx", default: 0.6), s.at("ry", default: 0.6))
+  }
+}
+
+// Distance from a node's center to its boundary along the unit
+// direction `(ux, uy)`, used to trim an edge so its endpoint/arrowhead
+// lands flush on the node outline. Ellipse (and circle, where
+// `hw == hh`) uses the closed-form ray–ellipse intersection; rectangle
+// uses the ray–box intersection. `(ux, uy)` must be unit length.
+#let _boundary-dist(shape, hw, hh, ux, uy) = {
+  if shape == "rectangle" or shape == "square" {
+    let tx = if calc.abs(ux) < 1e-6 { none } else { hw / calc.abs(ux) }
+    let ty = if calc.abs(uy) < 1e-6 { none } else { hh / calc.abs(uy) }
+    if tx == none { ty } else if ty == none { tx } else { calc.min(tx, ty) }
+  } else {
+    1 / calc.sqrt(calc.pow(ux / hw, 2) + calc.pow(uy / hh, 2))
+  }
+}
+
 /// Emit the cetz draw commands for one styled snapshot of a positioned
 /// graph, _without_ wrapping them in a #raw("cetz.canvas"). The caller
 /// wraps the canvas — use this to add your own cetz annotations
@@ -140,6 +193,22 @@
   let nodes = pg.nodes
   let directed = pg.at("directed", default: false)
 
+  // Resolve every node's style, label, shape, and half-extents up front
+  // so the edge pass can trim to each endpoint's true boundary (not a
+  // fixed radius) and the node pass can draw at the right size. Sharing
+  // one resolution keeps the two passes consistent and measures each
+  // autosize label once (Typst's result cache covers the rest).
+  let resolved = (:)
+  for (id, n) in nodes {
+    let s = _merge-into(default-node-style, snapshot.nodes.at(id, default: (:)))
+    let raw-label = n.at("label", default: auto)
+    let default-label = if raw-label == auto { id } else { raw-label }
+    let label = s.at("label", default: default-label)
+    let shape = s.at("shape", default: "circle")
+    let (hw, hh) = _node-extents(shape, s, label)
+    resolved.insert(id, (style: s, label: label, shape: shape, hw: hw, hh: hh))
+  }
+
   // --- edges first (occluded by nodes drawn afterwards) ---
   for e in pg.edges {
     let s = _merge-into(
@@ -153,18 +222,23 @@
     let mark = if "mark" in s {
       s.mark
     } else if directed { (end: ">") } else { none }
-    // Trim both ends to the node boundary (radius 0.6) so a directed
-    // edge's arrowhead lands just outside the target circle instead of
-    // at its occluded center. Degenerate (coincident) nodes draw nothing.
+    // Trim both ends to each endpoint's node boundary so a directed
+    // edge's arrowhead lands just outside the target shape instead of
+    // at its occluded center. Shape-aware: a wide ellipse or rectangle
+    // is trimmed by more along its long axis than a circle would be.
+    // Degenerate (coincident) nodes draw nothing.
     let dx = q.at(0) - p.at(0)
     let dy = q.at(1) - p.at(1)
     let len = calc.sqrt(dx * dx + dy * dy)
     if len == 0 { continue }
     let ux = dx / len
     let uy = dy / len
-    let r = 0.6
-    let p2 = (p.at(0) + ux * r, p.at(1) + uy * r)
-    let q2 = (q.at(0) - ux * r, q.at(1) - uy * r)
+    let gu = resolved.at(e.u)
+    let gv = resolved.at(e.v)
+    let tp = _boundary-dist(gu.shape, gu.hw, gu.hh, ux, uy)
+    let tq = _boundary-dist(gv.shape, gv.hw, gv.hh, ux, uy)
+    let p2 = (p.at(0) + ux * tp, p.at(1) + uy * tp)
+    let q2 = (q.at(0) - ux * tq, q.at(1) - uy * tq)
     draw.line(
       p2,
       q2,
@@ -198,23 +272,26 @@
 
   // --- nodes on top ---
   for (id, n) in nodes {
-    let s = _merge-into(
-      default-node-style,
-      snapshot.nodes.at(id, default: (:)),
-    )
+    let info = resolved.at(id)
+    let s = info.style
     if s.at("hide", default: false) { continue }
     let pos = n.pos
     let (x, y) = pos
-    let shape = s.at("shape", default: "circle")
+    let shape = info.shape
+    let hw = info.hw
+    let hh = info.hh
     let fill-c = s.at("fill", default: render-theme.node-fill)
     let stroke-c = s.at("stroke", default: render-theme.node-stroke)
     let nm = node-prefix + id
     if shape == "circle" {
-      draw.circle(pos, radius: 0.6, fill: fill-c, stroke: stroke-c, name: nm)
+      draw.circle(pos, radius: hw, fill: fill-c, stroke: stroke-c, name: nm)
+    } else if shape == "ellipse" {
+      // cetz draws an ellipse when `radius` is a `(rx, ry)` pair.
+      draw.circle(pos, radius: (hw, hh), fill: fill-c, stroke: stroke-c, name: nm)
     } else if shape == "rectangle" or shape == "square" {
       draw.rect(
-        (x - 0.6, y - 0.6),
-        (x + 0.6, y + 0.6),
+        (x - hw, y - hh),
+        (x + hw, y + hh),
         fill: fill-c,
         stroke: stroke-c,
         name: nm,
@@ -223,25 +300,24 @@
       panic(
         "draw-graph: unknown node shape "
           + repr(shape)
-          + "; supported: \"circle\", \"rectangle\"/\"square\".",
+          + "; supported: \"circle\", \"ellipse\", \"rectangle\"/\"square\".",
       )
     }
-    let raw-label = n.at("label", default: auto)
-    let default-label = if raw-label == auto { id } else { raw-label }
-    let label = s.at("label", default: default-label)
+    let label = info.label
     let tf = s.at("text-fill", default: render-theme.node-text-fill)
     // Bold via `weight:` rather than `*..*` so an ambient
     // `show strong` rule can't override the contrast-aware fill.
     draw.content(pos, text(weight: "bold", fill: tf, label))
-    // Note slot (gold) — east of the node. Carries Dijkstra distances.
-    // A filled `note-bg` frame sits behind it so the annotation stays
-    // legible when an edge leaving the node passes underneath — graphs
-    // can't predict edge directions the way trees can.
+    // Note slot (gold) — east of the node, clearing its half-width.
+    // Carries Dijkstra distances. A filled `note-bg` frame sits behind
+    // it so the annotation stays legible when an edge leaving the node
+    // passes underneath — graphs can't predict edge directions the way
+    // trees can.
     let note = s.at("note", default: none)
     if note != none {
       let nf = s.at("note-fill", default: render-theme.note-fill)
       draw.content(
-        (x + 0.75, y),
+        (x + hw + 0.15, y),
         anchor: "west",
         frame: "rect",
         fill: render-theme.note-bg,
@@ -255,7 +331,7 @@
     let tag = s.at("tag", default: none)
     if tag != none {
       draw.content(
-        (x - 0.65, y),
+        (x - hw - 0.05, y),
         anchor: "east",
         frame: "rect",
         fill: render-theme.note-bg,
