@@ -27,6 +27,12 @@
 #import "./avl.typ": AVL, avl
 #import "./b24.typ": B24, b24
 #import "./graph.typ": Graph, graph
+// `auto-layout` carries its `diagraph-layout` import inside its own body
+// (see graph-layout.typ), so re-exporting it here does NOT make
+// `import starling` pull that dependency — it resolves only when the
+// function is called. This is the only way external users can reach
+// `auto-layout`, since Typst has no subpath package import.
+#import "./graph-layout.typ": auto-layout
 #import "./graph-draw.typ": (
   draw-graph,
   node-anchor,

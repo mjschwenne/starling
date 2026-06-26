@@ -814,11 +814,19 @@
 ///
 /// -> Graph
 #let graph(
-  /// Positional array of nodes — a bare id, an #raw("(id, x, y)")
-  /// tuple, or an #raw("(id, x, y, label)") tuple.
+  /// Positional array of nodes. Each is a bare id, an
+  /// #raw("(id, label)") 2-tuple (a custom display label, no manual
+  /// position — handy with #raw("auto-layout")), an #raw("(id, x, y)")
+  /// tuple (manual position, label defaults to the id), or an
+  /// #raw("(id, x, y, label)") tuple (both).
   /// -> array
   nodes,
-  /// Edges — array of #raw("(u, v)") or #raw("(u, v, weight)").
+  /// Edges — each an #raw("(u, v)") pair optionally followed by a
+  /// weight and/or label. The third slot dispatches by type: a number
+  /// is the edge #raw("weight"), a string/content is a display
+  /// #raw("label") drawn in place of the weight. An
+  /// #raw("(u, v, weight, label)") 4-tuple sets both — the numeric
+  /// weight still drives Dijkstra/MST while the label is what's shown.
   /// -> array
   edges: (),
   /// Whether the graph is directed (arrowheads + ordered edge keys).

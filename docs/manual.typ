@@ -97,8 +97,9 @@ responsibility:
    from `draw-tree`.],
   [`src/graph-layout.typ`],
   [Optional graphviz auto-layout (`auto-layout`) via `diagraph-layout`.
-   The only file importing that dependency, and nothing on the
-   `lib.typ` path imports it — so it stays optional.],
+   The only file referencing that dependency, and it does so with a
+   lazy import inside `auto-layout`'s body — so the dependency stays
+   optional even though `lib.typ` re-exports the function.],
   [`src/lib.typ`],
   [The public surface — re-exports everything users need, plus the
    render helpers (`last`, `stacked`, `figures`, `canvases-only`).],
@@ -1028,21 +1029,27 @@ whole reachable component and ends with a `<t> not found` frame.
 
 == Optional auto-layout with graphviz
 
-For graphs too large to place by hand, `auto-layout` (in the separate
-`graph-layout.typ` module) computes positions with graphviz via the
-`diagraph-layout` package — a WASM build, so no external binary is
-needed. It is an *optional* dependency: nothing on the
-`import starling` path imports it, so projects that only hand-place
-graphs never pull it in. Import it explicitly and feed the result to
-any display via the `positions:` argument:
+For graphs too large to place by hand, `auto-layout` computes positions
+with graphviz via the `diagraph-layout` package — a WASM build, so no
+external binary is needed. It is re-exported from the package entrypoint
+alongside everything else, so import it the same way and feed its result
+to any display via the `positions:` argument:
 
 ```typ
-#import "@preview/starling:0.3.0/src/graph-layout.typ": auto-layout
+#import "@preview/starling:0.3.0": graph, auto-layout, last
 
 // Position-less graph — bare ids, no coordinates.
 #let g = graph(("A", "B", "C"), edges: (("A", "B", 7), ("B", "C", 2)))
 #last((g.mst-prim-display)("A", positions: auto-layout(g)))
 ```
+
+Despite being on the `import starling` path, `diagraph-layout` stays an
+*optional* dependency: `auto-layout` carries its `diagraph-layout`
+import inside its own body, which Typst resolves lazily — only when the
+function is actually called. Projects that only hand-place graphs never
+pull it in. (Typst has no subpath package import, so re-exporting from
+the entrypoint is the only way to reach `auto-layout`; the older
+`@preview/starling:<ver>/src/graph-layout.typ` form never worked.)
 
 = Theming <theming>
 

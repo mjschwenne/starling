@@ -1,11 +1,14 @@
 // Optional auto-layout for graphs via diagraph-layout (a WASM-graphviz
-// Typst package — no external graphviz binary). This is the ONE file in
-// starling that imports diagraph-layout, and NOTHING on the `lib.typ`
-// path imports this file, so `import starling` never pulls the
-// dependency. Users who want automatic layout import this module
-// explicitly:
+// Typst package — no external graphviz binary). The `diagraph-layout`
+// import lives INSIDE `auto-layout` (not at module scope), so it is
+// only resolved when `auto-layout` is actually called — Typst evaluates
+// an `import` lazily when it sits in a function body. That keeps the
+// dependency optional even though `lib.typ` re-exports `auto-layout`:
+// `import starling` loads this module but never touches the import
+// until you call the function. Users reach it through the package
+// entrypoint like everything else:
 //
-//   #import "@preview/starling:<ver>/src/graph-layout.typ": auto-layout
+//   #import "@preview/starling:<ver>": auto-layout
 //   // or, working in-tree:
 //   #import "/src/graph-layout.typ": auto-layout
 //
@@ -16,8 +19,11 @@
 //
 // Manual positions remain the first-class path; this is a convenience
 // for larger graphs where hand-placement is tedious.
-
-#import "@preview/diagraph-layout:0.0.1" as dl
+//
+// NOTE: Typst has no subpath package import — `@preview/starling:<ver>`
+// resolves to the entrypoint only, never `.../src/graph-layout.typ`.
+// That is why `auto-layout` must be re-exported from `lib.typ` rather
+// than imported from this file's path by external users.
 
 /// Compute node positions for #raw("g") with graphviz and return a
 /// #raw("(id: (x, y))") map in cetz units, suitable for the
@@ -46,6 +52,10 @@
   /// -> length
   unit: 36pt,
 ) = {
+  // Lazy import: resolved only when this function runs, so merely
+  // importing starling (which re-exports `auto-layout`) never pulls
+  // the `diagraph-layout` dependency. See the file header.
+  import "@preview/diagraph-layout:0.0.1" as dl
   let node-specs = g.nodes.keys().map(id => dl.node(id))
   // edge(tail, head): the first argument is the tail, second the head,
   // so an arrow points u -> v for a directed graph.
