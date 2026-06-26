@@ -162,6 +162,21 @@
   }
 }
 
+// Move `from` toward `to` by the node's boundary distance along that
+// direction, landing an edge endpoint on the node outline. Returns
+// `from` unchanged for a degenerate (zero-length) direction. Trimming
+// toward an arbitrary point (not just the other endpoint) lets a bent
+// edge meet the boundary along its curve tangent.
+#let _trim-toward(shape, hw, hh, from, to) = {
+  let vx = to.at(0) - from.at(0)
+  let vy = to.at(1) - from.at(1)
+  let l = calc.sqrt(vx * vx + vy * vy)
+  if l == 0 { return from }
+  let (nx, ny) = (vx / l, vy / l)
+  let d = _boundary-dist(shape, hw, hh, nx, ny)
+  (from.at(0) + nx * d, from.at(1) + ny * d)
+}
+
 /// Emit the cetz draw commands for one styled snapshot of a positioned
 /// graph, _without_ wrapping them in a #raw("cetz.canvas"). The caller
 /// wraps the canvas — use this to add your own cetz annotations
@@ -177,7 +192,10 @@
 /// an edge sets its own #raw("mark"); the fill keeps a pair of opposite
 /// edges from showing the line through each other's arrowhead. A
 /// self-edge (#raw("u == v")) is drawn as a teardrop loop above the
-/// node rather than a zero-length line.
+/// node rather than a zero-length line. An edge-style #raw("bend")
+/// (cetz units, positive = left of the u→v direction) curves the edge
+/// into an arc; giving a mutual directed pair the same bend fans the two
+/// arcs to opposite sides so they no longer overlap into one line.
 ///
 /// -> content
 #let draw-graph(
@@ -295,40 +313,77 @@
     }
 
     let gv = resolved.at(e.v)
-    // Trim both ends to each endpoint's node boundary so a directed
-    // edge's arrowhead lands just outside the target shape instead of
-    // at its occluded center. Shape-aware: a wide ellipse or rectangle
-    // is trimmed by more along its long axis than a circle would be.
-    // Degenerate (coincident) nodes draw nothing.
     let dx = q.at(0) - p.at(0)
     let dy = q.at(1) - p.at(1)
-    let len = calc.sqrt(dx * dx + dy * dy)
-    if len == 0 { continue }
-    let ux = dx / len
-    let uy = dy / len
-    let tp = _boundary-dist(gu.shape, gu.hw, gu.hh, ux, uy)
-    let tq = _boundary-dist(gv.shape, gv.hw, gv.hh, ux, uy)
-    let p2 = (p.at(0) + ux * tp, p.at(1) + uy * tp)
-    let q2 = (q.at(0) - ux * tq, q.at(1) - uy * tq)
-    draw.line(
-      p2,
-      q2,
-      stroke: stroke-c,
-      ..if mark != none { (mark: mark) },
-    )
+    if dx == 0 and dy == 0 { continue } // coincident distinct nodes
     let mid = ((p.at(0) + q.at(0)) / 2, (p.at(1) + q.at(1)) / 2)
-    // Intrinsic weight/label, off the line; snapshot `tag` overrides.
-    if tag != none {
-      let (ox, oy) = _perp-offset(q.at(0) - p.at(0), q.at(1) - p.at(1), 0.32)
-      draw.content(
-        (mid.at(0) + ox, mid.at(1) + oy),
-        text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
+    // `bend` (cetz units) curves the edge: the control point is the
+    // straight midpoint pushed perpendicular by this much, positive =
+    // left of the u->v travel direction. A mutual directed pair (A->B
+    // and B->A) given one shared bend value bows to opposite sides, so
+    // the two arcs read as distinct edges instead of overlapping into a
+    // single line. 0 (default) draws the straight edge.
+    let bend = s.at("bend", default: 0)
+
+    if bend == 0 {
+      // Trim both ends to each endpoint's node boundary so a directed
+      // edge's arrowhead lands just outside the target shape instead of
+      // at its occluded center. Shape-aware: a wide ellipse or rectangle
+      // is trimmed by more along its long axis than a circle would be.
+      let p2 = _trim-toward(gu.shape, gu.hw, gu.hh, p, q)
+      let q2 = _trim-toward(gv.shape, gv.hw, gv.hh, q, p)
+      draw.line(
+        p2,
+        q2,
+        stroke: stroke-c,
+        ..if mark != none { (mark: mark) },
       )
-    }
-    // Operation note (gold) on the edge midpoint.
-    if note != none {
-      let nf = s.at("note-fill", default: render-theme.note-fill)
-      draw.content(mid, text(fill: nf, size: 0.8em, note))
+      // Intrinsic weight/label, off the line; snapshot `tag` overrides.
+      if tag != none {
+        let (ox, oy) = _perp-offset(dx, dy, 0.32)
+        draw.content(
+          (mid.at(0) + ox, mid.at(1) + oy),
+          text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
+        )
+      }
+      // Operation note (gold) on the edge midpoint.
+      if note != none {
+        let nf = s.at("note-fill", default: render-theme.note-fill)
+        draw.content(mid, text(fill: nf, size: 0.8em, note))
+      }
+    } else {
+      // Quadratic bezier; control point is the perpendicular-offset
+      // midpoint. Endpoints trim along the curve's end tangents (toward
+      // the control point) so a directed arrowhead still meets the
+      // boundary cleanly.
+      let (ox, oy) = _perp-offset(dx, dy, bend)
+      let ctrl = (mid.at(0) + ox, mid.at(1) + oy)
+      let p2 = _trim-toward(gu.shape, gu.hw, gu.hh, p, ctrl)
+      let q2 = _trim-toward(gv.shape, gv.hw, gv.hh, q, ctrl)
+      draw.bezier(
+        p2,
+        q2,
+        ctrl,
+        stroke: stroke-c,
+        ..if mark != none { (mark: mark) },
+      )
+      // Labels at the arc's apex (quadratic t = 0.5), nudged further out
+      // on the convex side so they clear the curve.
+      let apex = (
+        0.25 * p.at(0) + 0.5 * ctrl.at(0) + 0.25 * q.at(0),
+        0.25 * p.at(1) + 0.5 * ctrl.at(1) + 0.25 * q.at(1),
+      )
+      if tag != none {
+        let (tx, ty) = _perp-offset(dx, dy, if bend > 0 { 0.3 } else { -0.3 })
+        draw.content(
+          (apex.at(0) + tx, apex.at(1) + ty),
+          text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
+        )
+      }
+      if note != none {
+        let nf = s.at("note-fill", default: render-theme.note-fill)
+        draw.content(apex, text(fill: nf, size: 0.8em, note))
+      }
     }
   }
 
