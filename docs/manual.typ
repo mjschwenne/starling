@@ -935,6 +935,27 @@ Layout is decoupled from rendering: the `Graph` carries node positions
 )
 ```
 
+Both nodes and edges accept optional custom *labels* — text drawn in
+place of the id (for a node) or the weight (for an edge). A node spec
+is a bare id, an #raw("(id, label)") 2-tuple (label, no manual
+position — pairs with `auto-layout`), an #raw("(id, x, y)") tuple, or
+an #raw("(id, x, y, label)") tuple. An edge's third slot dispatches by
+type: a *number* is the weight, a *string or content* is a label drawn
+in its place; an #raw("(u, v, weight, label)") 4-tuple sets both — the
+numeric weight still drives Dijkstra and the MSTs while the label is
+what's shown.
+
+```typ
+#let g = graph(
+  ("A", ("B", [Server]), ("C", 1.5, 2.4)),  // B is auto-laid-out
+  edges: (
+    ("A", "B", 7),          // weight 7
+    ("B", "C", [TLS]),       // label "TLS", no weight shown
+    ("A", "C", 4, [4 ms]),   // weight 4 for algorithms, shown as "4 ms"
+  ),
+)
+```
+
 #let g-tour = starling.graph(
   (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2)),
   edges: (
@@ -949,6 +970,22 @@ Layout is decoupled from rendering: the `Graph` carries node positions
 Hand-placement is the first-class path — small teaching graphs read
 best when you control the layout. For larger graphs, the optional
 `auto-layout` helper (below) computes positions with graphviz.
+
+Every display method takes a `scale:` factor (default `1`) that
+multiplies all node coordinates about the origin, spreading the nodes
+apart while their drawn size — circles, labels, edge weights — stays
+fixed. It's the manual-layout analog of `auto-layout`'s `unit:`: reach
+for it when a hand-placed graph is too cramped (e.g. on a wide slide)
+without wanting to rescale the whole figure or edit every coordinate.
+
+```typ
+#last((g.display)(scale: 1.6))           // 1.6× the gaps, same node size
+#last((g.dijkstra-display)("A", scale: 1.4))
+```
+
+To instead resize the *whole* figure — nodes, spacing, and text
+together — wrap the result in Typst's `scale`:
+#raw("#scale(140%, reflow: true, last((g.display)()))").
 
 == Static display
 

@@ -265,8 +265,10 @@
     },
     // Build the positioned-graph dict the renderer consumes. Uses the
     // stored positions unless an explicit map is passed. Panics if any
-    // node lacks a position.
-    positioned: (self, positions: auto) => {
+    // node lacks a position. `scale` multiplies every coordinate (about
+    // the origin), spreading nodes apart while their drawn size stays
+    // fixed — the manual-layout analog of `auto-layout`'s `unit:`.
+    positioned: (self, positions: auto, scale: 1) => {
       let pos-map = if positions == auto { self.positions } else { positions }
       let nodes = (:)
       for (id, data) in self.nodes {
@@ -276,7 +278,9 @@
             + id
             + "' has no position; pass manual positions or use auto-layout.",
         )
-        nodes.insert(id, (label: data.at("label", default: auto), pos: pos-map.at(id)))
+        let p = pos-map.at(id)
+        let pos = (p.at(0) * scale, p.at(1) * scale)
+        nodes.insert(id, (label: data.at("label", default: auto), pos: pos))
       }
       let edges = self.edges.map(e => (
         key: graph-draw.edge-key(e.u, e.v, directed: self.directed),
@@ -288,8 +292,8 @@
       (directed: self.directed, nodes: nodes, edges: edges)
     },
     // Returns a one-element Frame array — the static graph, no styling.
-    display: (self, positions: auto, theme: auto, render-theme: auto) => {
-      let pg = (self.positioned)(positions: positions)
+    display: (self, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+      let pg = (self.positioned)(positions: positions, scale: scale)
       let captions = (none,)
       let steps-meta = (none,)
       let alts = ("Graph: " + (self.describe)() + ".",)
@@ -313,8 +317,8 @@
     // Visited nodes / tree edges accumulate; the closure recomputes the
     // full styling per frame (sticky: false) so transient frontier
     // highlights clear cleanly.
-    mst-prim-display: (self, start, positions: auto, theme: auto, render-theme: auto) => {
-      let pg = (self.positioned)(positions: positions)
+    mst-prim-display: (self, start, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+      let pg = (self.positioned)(positions: positions, scale: scale)
       let all-ids = self.nodes.keys()
       assert(
         start in self.nodes,
@@ -453,8 +457,8 @@
     // set. Three frames per edge: "consider" (attention), then "add"
     // (success-stroke, components merge → recolor) or "reject"
     // (danger-stroke).
-    mst-kruskal-display: (self, positions: auto, theme: auto, render-theme: auto) => {
-      let pg = (self.positioned)(positions: positions)
+    mst-kruskal-display: (self, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+      let pg = (self.positioned)(positions: positions, scale: scale)
       let all-ids = self.nodes.keys()
       let n = all-ids.len()
       let id-index = (:)
@@ -568,8 +572,8 @@
     // tree (predecessor edges) accumulates in success-stroke. With a
     // `target`, the search stops early and the path is highlighted in
     // settled-stroke.
-    dijkstra-display: (self, source, target: none, positions: auto, theme: auto, render-theme: auto) => {
-      let pg = (self.positioned)(positions: positions)
+    dijkstra-display: (self, source, target: none, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+      let pg = (self.positioned)(positions: positions, scale: scale)
       let all-ids = self.nodes.keys()
       assert(
         source in self.nodes,
@@ -719,8 +723,8 @@
     // stops the moment the target is dequeued (or runs to completion if
     // the target is unreachable); `_render-graph-traversal` then appends
     // a terminal "found" / "not-found" frame.
-    bfs-display: (self, start, target: none, positions: auto, theme: auto, render-theme: auto) => {
-      let pg = (self.positioned)(positions: positions)
+    bfs-display: (self, start, target: none, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+      let pg = (self.positioned)(positions: positions, scale: scale)
       assert(start in self.nodes, message: "bfs-display: start node '" + start + "' not in graph.")
       assert(
         target == none or target in self.nodes,
@@ -754,8 +758,8 @@
     // ---- Depth-first traversal / search (iterative pre-order) ----
     // As with `bfs-display`, a non-`none` `target` turns the traversal
     // into a search that stops the moment the target is visited.
-    dfs-display: (self, start, target: none, positions: auto, theme: auto, render-theme: auto) => {
-      let pg = (self.positioned)(positions: positions)
+    dfs-display: (self, start, target: none, positions: auto, scale: 1, theme: auto, render-theme: auto) => {
+      let pg = (self.positioned)(positions: positions, scale: scale)
       assert(start in self.nodes, message: "dfs-display: start node '" + start + "' not in graph.")
       assert(
         target == none or target in self.nodes,
@@ -838,15 +842,45 @@
     if type(nd) == str {
       g = (g.add-node)(nd)
     } else {
+      assert(
+        type(nd) == array and nd.len() >= 2 and nd.len() <= 4,
+        message: "graph: node must be an id, (id, label), (id, x, y), "
+          + "or (id, x, y, label); got "
+          + repr(nd),
+      )
       let id = nd.at(0)
-      let pos = (nd.at(1), nd.at(2))
-      let label = if nd.len() > 3 { nd.at(3) } else { auto }
-      g = (g.add-node)(id, label: label, pos: pos)
+      if nd.len() == 2 {
+        // (id, label) — custom label, no manual position.
+        g = (g.add-node)(id, label: nd.at(1))
+      } else {
+        // (id, x, y) or (id, x, y, label).
+        let pos = (nd.at(1), nd.at(2))
+        let label = if nd.len() > 3 { nd.at(3) } else { auto }
+        g = (g.add-node)(id, label: label, pos: pos)
+      }
     }
   }
   for e in edges {
-    let w = if e.len() > 2 { e.at(2) } else { 1 }
-    g = (g.add-edge)(e.at(0), e.at(1), weight: w)
+    assert(
+      type(e) == array and e.len() >= 2,
+      message: "graph: edge needs at least (u, v); got " + repr(e),
+    )
+    let weight = 1
+    let label = auto
+    if e.len() == 3 {
+      // Third slot dispatches by type: a number is the weight,
+      // anything else (str/content) is a display label.
+      let third = e.at(2)
+      if type(third) == int or type(third) == float {
+        weight = third
+      } else {
+        label = third
+      }
+    } else if e.len() >= 4 {
+      weight = e.at(2)
+      label = e.at(3)
+    }
+    g = (g.add-edge)(e.at(0), e.at(1), weight: weight, label: label)
   }
   g
 }
