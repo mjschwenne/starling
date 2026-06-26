@@ -100,6 +100,15 @@
   if len == 0 { (0, 0) } else { (-dy / len * amount, dx / len * amount) }
 }
 
+// The paint (color) of a stroke spec, for filling a directed edge's
+// arrowhead to match its line. Accepts a color, dict, or stroke; falls
+// back to black for `auto`/`none` or a stroke with no explicit paint.
+#let _stroke-paint(s) = {
+  if s == auto or s == none { return black }
+  let st = stroke(s)
+  if st.paint == auto { black } else { st.paint }
+}
+
 // Half-extents `(hw, hh)` of a node in cetz units, given its resolved
 // style and (already-resolved) label. The shapes:
 //   * "circle"             — `r` (default 0.6), hw == hh
@@ -164,7 +173,11 @@
 /// midpoint in the render theme's #raw("edge-tag-fill"); a snapshot
 /// edge #raw("tag") overrides that text, and a snapshot #raw("note")
 /// (gold) draws an operation annotation on the edge. Directed graphs
-/// get arrowheads unless an edge sets its own #raw("mark").
+/// get filled arrowheads (the mark fill follows the edge stroke) unless
+/// an edge sets its own #raw("mark"); the fill keeps a pair of opposite
+/// edges from showing the line through each other's arrowhead. A
+/// self-edge (#raw("u == v")) is drawn as a teardrop loop above the
+/// node rather than a zero-length line.
 ///
 /// -> content
 #let draw-graph(
@@ -219,9 +232,69 @@
     let p = nodes.at(e.u).pos
     let q = nodes.at(e.v).pos
     let stroke-c = s.at("stroke", default: render-theme.edge-stroke)
+    // Default directed arrowheads are *filled* (mark fill follows the
+    // edge stroke's paint). A hollow `>` lets the line show through the
+    // tip — for a pair of opposite directed edges the two lines visibly
+    // cross each arrowhead; a solid triangle occludes them cleanly.
     let mark = if "mark" in s {
       s.mark
-    } else if directed { (end: ">") } else { none }
+    } else if directed { (end: ">", fill: _stroke-paint(stroke-c)) } else { none }
+
+    // Intrinsic weight/label drawn near the edge; snapshot `tag`
+    // overrides it, snapshot `note` is the gold operation annotation.
+    let intrinsic = {
+      let lbl = e.at("label", default: auto)
+      if lbl == auto {
+        let w = e.at("weight", default: none)
+        if w == none { none } else { str(w) }
+      } else { lbl }
+    }
+    let tag = s.at("tag", default: intrinsic)
+    let note = s.at("note", default: none)
+    let gu = resolved.at(e.u)
+
+    if e.u == e.v {
+      // Self-loop: a teardrop bezier bulging out of the node's top face,
+      // since a center-to-center line would collapse to a point. The
+      // arrowhead (when directed) lands back on the node at the right
+      // attach point; weight/note sit above the loop's apex.
+      let (x, y) = p
+      let r = calc.max(gu.hw, gu.hh)
+      let attach(a) = {
+        let (ux, uy) = (calc.cos(a), calc.sin(a))
+        let d = _boundary-dist(gu.shape, gu.hw, gu.hh, ux, uy)
+        (x + ux * d, y + uy * d)
+      }
+      let start = attach(110deg)
+      let end = attach(70deg)
+      let c1 = (x - r * 1.7, y + r * 3.2)
+      let c2 = (x + r * 1.7, y + r * 3.2)
+      draw.bezier(
+        start,
+        end,
+        c1,
+        c2,
+        stroke: stroke-c,
+        ..if mark != none { (mark: mark) },
+      )
+      // Apex of the cubic (t = 0.5); anchor labels above it.
+      let apex-y = (
+        0.125 * start.at(1) + 0.375 * c1.at(1) + 0.375 * c2.at(1) + 0.125 * end.at(1)
+      )
+      if tag != none {
+        draw.content(
+          (x, apex-y + 0.35),
+          text(fill: render-theme.edge-tag-fill, size: 0.8em, tag),
+        )
+      }
+      if note != none {
+        let nf = s.at("note-fill", default: render-theme.note-fill)
+        draw.content((x, apex-y), text(fill: nf, size: 0.8em, note))
+      }
+      continue
+    }
+
+    let gv = resolved.at(e.v)
     // Trim both ends to each endpoint's node boundary so a directed
     // edge's arrowhead lands just outside the target shape instead of
     // at its occluded center. Shape-aware: a wide ellipse or rectangle
@@ -233,8 +306,6 @@
     if len == 0 { continue }
     let ux = dx / len
     let uy = dy / len
-    let gu = resolved.at(e.u)
-    let gv = resolved.at(e.v)
     let tp = _boundary-dist(gu.shape, gu.hw, gu.hh, ux, uy)
     let tq = _boundary-dist(gv.shape, gv.hw, gv.hh, ux, uy)
     let p2 = (p.at(0) + ux * tp, p.at(1) + uy * tp)
@@ -247,14 +318,6 @@
     )
     let mid = ((p.at(0) + q.at(0)) / 2, (p.at(1) + q.at(1)) / 2)
     // Intrinsic weight/label, off the line; snapshot `tag` overrides.
-    let intrinsic = {
-      let lbl = e.at("label", default: auto)
-      if lbl == auto {
-        let w = e.at("weight", default: none)
-        if w == none { none } else { str(w) }
-      } else { lbl }
-    }
-    let tag = s.at("tag", default: intrinsic)
     if tag != none {
       let (ox, oy) = _perp-offset(q.at(0) - p.at(0), q.at(1) - p.at(1), 0.32)
       draw.content(
@@ -263,7 +326,6 @@
       )
     }
     // Operation note (gold) on the edge midpoint.
-    let note = s.at("note", default: none)
     if note != none {
       let nf = s.at("note-fill", default: render-theme.note-fill)
       draw.content(mid, text(fill: nf, size: 0.8em, note))
