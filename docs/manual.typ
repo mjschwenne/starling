@@ -994,6 +994,37 @@ each edge midpoint; a directed graph gets arrowheads.
 
 #align(center, starling.last((g-tour.display)()))
 
+== Tabular representations
+
+Besides the drawn graph, `(g.adjacency-matrix)()` and
+`(g.adjacency-list)()` render the structure as plain Typst tables — no
+cetz, no animation. Unlike the `*-display` methods they return
+*placeable content directly* (not an `Array(Frame)`), so drop them
+straight into the document; wrap them in a `figure` yourself if you want
+a caption or alt text. Both still honor the render theme — header cells
+take the node fill and a bold node-text-fill, the rules the node stroke.
+
+By default the matrix shows 1/0 *presence* and the list shows bare
+neighbor ids. Pass `weights: true` to show each edge's display label
+instead (its label if set, else its numeric weight); the matrix then
+marks non-edges with `none-marker` (`·`) and the list appends the weight
+in parentheses:
+
+#grid(
+  columns: (1fr, 1fr),
+  align: horizon + center,
+  (g-tour.adjacency-matrix)(weights: true),
+  (g-tour.adjacency-list)(weights: true),
+)
+
+For a *directed* graph the matrix is asymmetric — row = source, column =
+target — and the list gives each node's out-neighbors (a sink shows the
+`empty-marker`, `—`). An undirected graph gives a symmetric matrix and
+lists every incident neighbor. A self-loop lands on the matrix diagonal
+and appears once in the list. Absent matrix cells (the `0`s or
+`none-marker`) and empty rows are drawn muted so the populated entries
+read first.
+
 == Prim's minimum spanning tree
 
 `(g.mst-prim-display)(start)` grows the tree from `start`. Each

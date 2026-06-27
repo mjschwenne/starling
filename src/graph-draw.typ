@@ -100,17 +100,34 @@
   if len == 0 { (0, 0) } else { (-dy / len * amount, dx / len * amount) }
 }
 
+// Compass anchor (vertical-first, e.g. "south-east") naming the side of a
+// label box that faces the edge, given the perpendicular offset `(ox, oy)`
+// that seats the box off the line. Anchoring that side at the offset point
+// makes the box grow *away* from the line, so a wide multi-digit weight
+// clears it by its own measured width rather than crossing back over a
+// fixed center gap. Near-axis offsets (one component ~0) drop that axis so
+// the box stays centered along it (e.g. a horizontal edge gets "south").
+#let _tag-anchor(ox, oy) = {
+  let h = if ox > 1e-6 { "west" } else if ox < -1e-6 { "east" } else { none }
+  let v = if oy > 1e-6 { "south" } else if oy < -1e-6 { "north" } else { none }
+  if h == none and v == none { "center" } else if h == none { v } else if (
+    v == none
+  ) { h } else { v + "-" + h }
+}
+
 // Place an edge's intrinsic weight/label (`tag`) at `pos` with a filled
-// `note-bg` halo behind it, mirroring the node note/tag slots. The fixed
-// perpendicular offset that seats the label off the line is in cetz
-// units (absolute), but the label text is sized in `em`, so under a
-// larger ambient font (touying) it grows past that offset and a bare
-// label would clip the edge. The opaque halo — sized to the em-scaled
-// text, so it scales too — masks the sliver of edge beneath the label
-// instead, keeping it legible at any font size without needing a layout
-// `context` for `measure` (so direct `cetz.canvas` use still works).
-#let _edge-tag(draw, pos, tag, render-theme) = draw.content(
+// `note-bg` halo behind it, mirroring the node note/tag slots. `anchor`
+// names which side of the label box sits at `pos`: a straight edge passes
+// the near-side anchor (via `_tag-anchor`) with a small perpendicular gap,
+// so the em-scaled box extends away from the line and never overlaps it no
+// matter how many digits the weight has — cetz measures the real box, so
+// this stays font-size aware without a layout `context` for `measure` (and
+// direct `cetz.canvas` use still works). Apex-placed tags (self/bezier
+// edges) pass the default `"center"`. The opaque halo still masks any other
+// edge that happens to pass beneath the label.
+#let _edge-tag(draw, pos, tag, render-theme, anchor: "center") = draw.content(
   pos,
+  anchor: anchor,
   frame: "rect",
   fill: render-theme.note-bg,
   stroke: none,
@@ -354,9 +371,17 @@
         ..if mark != none { (mark: mark) },
       )
       // Intrinsic weight/label, off the line; snapshot `tag` overrides.
+      // Push by a small gap, not to the box center, and anchor the box's
+      // near side so a wide multi-digit weight grows away from the edge.
       if tag != none {
-        let (ox, oy) = _perp-offset(dx, dy, 0.32)
-        _edge-tag(draw, (mid.at(0) + ox, mid.at(1) + oy), tag, render-theme)
+        let (ox, oy) = _perp-offset(dx, dy, 0.12)
+        _edge-tag(
+          draw,
+          (mid.at(0) + ox, mid.at(1) + oy),
+          tag,
+          render-theme,
+          anchor: _tag-anchor(ox, oy),
+        )
       }
       // Operation note (gold) on the edge midpoint.
       if note != none {

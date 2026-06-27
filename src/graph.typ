@@ -161,6 +161,85 @@
   )
 }
 
+// ===================================================================
+// Tabular (non-cetz) representations
+// ===================================================================
+//
+// The adjacency matrix / list are plain Typst tables — no cetz, no
+// Frame machinery — so the Graph methods below return directly-placeable
+// content rather than an `Array(Frame)`. They still honor the render
+// theme: when `render-theme` is `auto` the method wraps the table build
+// in a `context` block that reads the active theme state (so a
+// doc-wide `set-render-theme` propagates); an explicit dict skips state.
+
+// Run `build(render-theme)` with a resolved render-theme dict, deferring
+// to theme state (inside `context`) only when the argument is `auto`.
+// Returns placeable content either way.
+#let _with-render-theme(arg, build) = if arg == auto {
+  context { build(core._render-theme-state.get()) }
+} else {
+  build(core._merge-render-theme(arg))
+}
+
+// A muted version of a theme color, for de-emphasizing absent matrix
+// cells (the 0 / none-marker entries) and empty adjacency rows so the
+// populated entries read first.
+#let _muted(c) = c.transparentize(55%)
+
+// Render an adjacency matrix as a styled Typst table. `headers` is the
+// array of per-node header labels (row i and column i share one);
+// `cells` is the n×n grid of `(present: bool, value: <content>)` entries
+// already resolved by the caller (1/0 presence, or weight/label).
+// Header cells take the render theme's node fill + bold node-text-fill;
+// absent cells are muted. The empty top-left corner squares the grid.
+#let _adjacency-matrix-content(headers, cells, rt) = {
+  let n = headers.len()
+  let hdr = c => text(weight: "bold", fill: rt.node-text-fill, c)
+  let head = (table.cell(fill: rt.node-fill)[],)
+  for h in headers { head.push(table.cell(fill: rt.node-fill, hdr(h))) }
+  let body = ()
+  for (i, row) in cells.enumerate() {
+    body.push(table.cell(fill: rt.node-fill, hdr(headers.at(i))))
+    for cell in row {
+      let col = if cell.present { rt.node-text-fill } else { _muted(rt.node-text-fill) }
+      body.push(text(fill: col, cell.value))
+    }
+  }
+  table(
+    columns: n + 1,
+    align: center + horizon,
+    stroke: 0.5pt + rt.node-stroke,
+    inset: (x: 0.6em, y: 0.45em),
+    ..head,
+    ..body,
+  )
+}
+
+// Render an adjacency list as a two-column styled table. Each `rows`
+// entry is `(header: <label>, items: (array of <content>))`; an empty
+// `items` shows `empty-marker` muted. The left column is node-styled
+// like the matrix headers; the right column is the comma-joined list.
+#let _adjacency-list-content(rows, empty-marker, rt) = {
+  let hdr = c => text(weight: "bold", fill: rt.node-text-fill, c)
+  let body = ()
+  for r in rows {
+    body.push(table.cell(fill: rt.node-fill, hdr(r.header)))
+    let listing = if r.items.len() == 0 {
+      text(fill: _muted(rt.node-text-fill), empty-marker)
+    } else {
+      text(fill: rt.node-text-fill, r.items.join([, ]))
+    }
+    body.push(table.cell(align: left + horizon, listing))
+  }
+  table(
+    columns: (auto, auto),
+    align: (center + horizon, left + horizon),
+    stroke: 0.5pt + rt.node-stroke,
+    inset: (x: 0.6em, y: 0.45em),
+    ..body,
+  )
+}
+
 #let Graph = class(
   name: "Graph",
   fields: (
@@ -334,6 +413,81 @@
         _resolve-render-theme-arg(render-theme),
         default-node-style: node-style,
       )
+    },
+    // ---- Adjacency matrix (static, non-cetz) ----
+    // A Typst table indexed by node. Cells default to 1/0 presence;
+    // `weights: true` shows each edge's display label (its label if set,
+    // else its weight) and `none-marker` for non-edges. Undirected
+    // graphs give a symmetric matrix; directed graphs read row = source,
+    // column = target (a self-loop lands on the diagonal). Returns
+    // placeable content (not a Frame) — wrap it in a figure yourself for
+    // a caption or alt text. Honors the render theme (node fill/stroke/
+    // text-fill); `render-theme: auto` reads theme state, a dict bakes
+    // it in.
+    adjacency-matrix: (self, weights: false, none-marker: "·", render-theme: auto) => {
+      let ids = self.nodes.keys()
+      let emap = (:)
+      for e in self.edges {
+        emap.insert(graph-draw.edge-key(e.u, e.v, directed: self.directed), e)
+      }
+      let label-of(id) = {
+        let l = self.nodes.at(id).at("label", default: auto)
+        if l == auto { id } else { l }
+      }
+      let headers = ids.map(label-of)
+      let cells = ids.map(u => ids.map(v => {
+        let k = graph-draw.edge-key(u, v, directed: self.directed)
+        if k in emap {
+          if weights {
+            let e = emap.at(k)
+            let lbl = e.at("label", default: auto)
+            let val = if lbl == auto { str(e.at("weight", default: 1)) } else { lbl }
+            (present: true, value: val)
+          } else {
+            (present: true, value: "1")
+          }
+        } else {
+          (present: false, value: if weights { none-marker } else { "0" })
+        }
+      }))
+      _with-render-theme(render-theme, rt => _adjacency-matrix-content(headers, cells, rt))
+    },
+    // ---- Adjacency list (static, non-cetz) ----
+    // A two-column Typst table pairing each node with its adjacency. A
+    // directed graph lists out-neighbors (successors); an undirected
+    // graph lists every incident neighbor (a self-loop appears once).
+    // `weights: false` (default) lists bare neighbor labels; `weights:
+    // true` appends each edge's display label in parentheses. Isolated
+    // nodes show `empty-marker`. Returns placeable content (not a Frame);
+    // honors the render theme like `adjacency-matrix`.
+    adjacency-list: (self, weights: false, empty-marker: "—", render-theme: auto) => {
+      let label-of(id) = {
+        let l = self.nodes.at(id).at("label", default: auto)
+        if l == auto { id } else { l }
+      }
+      let rows = self.nodes.keys().map(u => {
+        let items = ()
+        for e in self.edges {
+          let other = if e.u == u {
+            e.v
+          } else if (not self.directed) and e.v == u {
+            e.u
+          } else {
+            none
+          }
+          if other != none {
+            if weights {
+              let lbl = e.at("label", default: auto)
+              let val = if lbl == auto { str(e.at("weight", default: 1)) } else { lbl }
+              items.push([#label-of(other) (#val)])
+            } else {
+              items.push(label-of(other))
+            }
+          }
+        }
+        (header: label-of(u), items: items)
+      })
+      _with-render-theme(render-theme, rt => _adjacency-list-content(rows, empty-marker, rt))
     },
     // ---- Prim's minimum spanning tree ----
     // Grows the tree from `start`, repeatedly adding the lightest edge
