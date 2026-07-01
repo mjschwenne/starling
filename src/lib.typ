@@ -26,7 +26,7 @@
 )
 #import "./avl.typ": AVL, avl
 #import "./b24.typ": B24, b24
-#import "./graph.typ": Graph, graph
+#import "./graph.typ": Graph, graph, aux-strip
 // `auto-layout` carries its `diagraph-layout` import inside its own body
 // (see graph-layout.typ), so re-exporting it here does NOT make
 // `import starling` pull that dependency — it resolves only when the

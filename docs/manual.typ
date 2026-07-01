@@ -1095,6 +1095,51 @@ whole reachable component and ends with a `<t> not found` frame.
 
 #align(center, starling.stacked((g-tour.bfs-display)("A", target: "D")))
 
+=== Tracking the queue / stack
+
+BFS and DFS are driven by a helper structure — a FIFO queue and a LIFO
+stack respectively — and a common sticking point for students is
+tracking its contents step by step. Every `bfs-display` / `dfs-display`
+frame records that structure's state in its `step` metadata, and
+`aux-strip(frame.step)` renders it as a placeable strip of boxes (the
+front and rear ends marked on a queue, the `top` push/pop end on a
+stack). It returns
+ordinary content, not a `Frame`, so you lay it out wherever you want —
+this is deliberately decoupled from the graph canvas so a touying slide
+can put the graph on one side and the strip on the other:
+
+```typ
+#let frames = (g.bfs-display)("A")
+#grid(
+  columns: (2fr, 1fr),
+  alternatives(..starling.canvases-only(frames)),
+  alternatives(..frames.map(f => aux-strip(f.step))),
+)
+```
+
+Statically, pairing each canvas with its strip shows the queue draining
+and refilling across the traversal:
+
+#let aux-row(frames) = grid(
+  columns: frames.len(),
+  column-gutter: 1em,
+  align: center + top,
+  ..frames.map(f => stack(
+    dir: ttb,
+    spacing: 0.5em,
+    starling.canvases-only((f,)).first(),
+    starling.aux-strip(f.step),
+  )),
+)
+
+#align(center, aux-row((g-tour.bfs-display)("A")))
+
+The DFS stack is shown *faithfully*: because the iterative algorithm can
+push a node before an earlier copy is popped, the same id may appear
+twice in the strip — exactly the state a hand-trace would produce. Pass
+a `labels:` `(id -> content)` map to `aux-strip` when your nodes carry
+custom display labels.
+
 == Node shapes and sizing
 
 The default circular node is sized for short ids. Longer labels — names,
@@ -1307,6 +1352,33 @@ elsewhere on the slide, pull the captions out separately:
 
 Both `alternatives` calls produce the same number of subslides, so
 they step in lockstep.
+
+== A live queue / stack beside the graph
+
+For BFS and DFS, `aux-strip` turns each frame's helper structure into a
+strip you can place anywhere on the slide. Drive three `alternatives`
+off the same frame array — the graph canvas, the queue strip, and the
+caption — and they share one subslide count, so the whole slide advances
+together as you step through it:
+
+```typ
+== Breadth-first search
+#let frames = (g.bfs-display)("A")
+#grid(columns: (2fr, 1fr), column-gutter: 2em, align: horizon,
+  alternatives(..starling.canvases-only(frames)),
+  stack(dir: ttb, spacing: 1.2em,
+    alternatives(..frames.map(f => starling.aux-strip(f.step))),
+    alternatives(..frames.map(f => f.caption)),
+  ),
+)
+```
+
+Each `alternatives` child here is independent content (the strip and the
+canvas resolve their own theme state), which is exactly what touying
+wants — the layout-time `alternatives` mark sits *outside* every
+`context` block, never inside one. Swap `bfs-display` for `dfs-display`
+to watch the stack instead; the duplicate entries it shows are faithful
+to the iterative algorithm.
 
 == Driving layout from step metadata
 

@@ -82,24 +82,46 @@
 // step.kind values: "init" (initial frame), "visit" (per node, with
 // node id and 1-indexed position), and — in search mode — a terminal
 // "found" (node, visits) or "not-found" (target, visits).
-#let _render-graph-traversal(self, pg, order, name, theme, render-theme, target: none, node-style: (:)) = {
+#let _render-graph-traversal(
+  self,
+  pg,
+  order,
+  name,
+  theme,
+  render-theme,
+  target: none,
+  node-style: (:),
+  // `aux` is a per-frame snapshot of the traversal's helper structure
+  // (queue for BFS, stack for DFS), parallel to the frame sequence:
+  // index 0 is the init frame, index i the state after visiting
+  // order[i-1]. `aux-kind` is "queue" / "stack" (or none to opt out).
+  // Each is threaded onto the `step` metadata for `aux-strip`.
+  aux: (),
+  aux-kind: none,
+) = {
   let n = order.len()
   let searching = target != none
   let found = searching and order.contains(target)
+  // Format an aux snapshot (array of ids) for the alt-text track.
+  let aux-label = if aux-kind == "queue" { "Queue" } else if aux-kind == "stack" { "Stack" } else { "Structure" }
+  let aux-str = a => if a.len() == 0 { "(empty)" } else { "[" + a.join(", ") + "]" }
+  let aux-note = a => if aux-kind == none { "" } else { " " + aux-label + " now: " + aux-str(a) + "." }
   let captions = (none,)
-  let steps-meta = ((kind: "init"),)
+  let steps-meta = ((kind: "init", aux: aux.at(0, default: ()), aux-kind: aux-kind),)
   let start = if n > 0 { order.first() } else { "" }
   let intro = if searching {
     "About to search " + name + " from " + start + " for " + target + "."
   } else {
     "About to traverse " + name + " from " + start + "."
   }
-  let alts = ("Graph: " + (self.describe)() + ". " + intro,)
+  let init-aux = if aux-kind == none { "" } else { " " + aux-label + " starts: " + aux-str(aux.at(0, default: ())) + "." }
+  let alts = ("Graph: " + (self.describe)() + ". " + intro + init-aux,)
   let output = ()
   for (i, id) in order.enumerate() {
     output.push(id)
     captions.push([Visited: #raw("[" + output.join(", ") + "]")])
-    steps-meta.push((kind: "visit", node: id, index: i + 1))
+    let a = aux.at(i + 1, default: ())
+    steps-meta.push((kind: "visit", node: id, index: i + 1, aux: a, aux-kind: aux-kind))
     let suffix = if searching and id == target { " — this is the target." } else { "." }
     alts.push(
       "Visited "
@@ -109,19 +131,21 @@
         + " of "
         + str(n)
         + ")"
-        + suffix,
+        + suffix
+        + aux-note(a),
     )
   }
   if searching {
+    let a = aux.at(-1, default: ())
     if found {
       captions.push([Found #target])
-      steps-meta.push((kind: "found", node: target, visits: n))
+      steps-meta.push((kind: "found", node: target, visits: n, aux: a, aux-kind: aux-kind))
       alts.push(
         "Found " + target + " after visiting " + str(n) + " node(s); the search stops here.",
       )
     } else {
       captions.push([#target not found])
-      steps-meta.push((kind: "not-found", target: target, visits: n))
+      steps-meta.push((kind: "not-found", target: target, visits: n, aux: a, aux-kind: aux-kind))
       alts.push(
         "Visited all " + str(n) + " reachable node(s); " + target + " was not found.",
       )
@@ -238,6 +262,97 @@
     inset: (x: 0.6em, y: 0.45em),
     ..body,
   )
+}
+
+// Render one auxiliary-structure snapshot as a horizontal strip of
+// node-styled boxes. `ids` is the array of element ids in structure
+// order (front-first for a queue, bottom-first for a stack); `kind` is
+// "queue" or "stack"; `labels` maps id -> display content (identity
+// fallback). End annotations mark the live ends: front/rear for a
+// queue, top (the push/pop end, drawn rightmost) for a stack.
+#let _aux-strip-content(ids, kind, labels, rt) = {
+  let end-label = t => text(size: 0.75em, fill: _muted(rt.node-text-fill), t)
+  let cell = body => box(
+    fill: rt.node-fill,
+    stroke: 0.5pt + rt.node-stroke,
+    inset: (x: 0.6em, y: 0.45em),
+    radius: 2pt,
+    text(fill: rt.node-text-fill, body),
+  )
+  if ids.len() == 0 {
+    return stack(
+      dir: ttb,
+      spacing: 0.3em,
+      box(
+        fill: rt.node-fill,
+        stroke: 0.5pt + rt.node-stroke,
+        inset: (x: 0.6em, y: 0.45em),
+        radius: 2pt,
+        text(fill: _muted(rt.node-text-fill), "(empty)"),
+      ),
+      end-label(if kind == "stack" { "top" } else { "front" }),
+    )
+  }
+  let boxes = ids.map(id => cell(labels.at(id, default: id)))
+  let last = ids.len() - 1
+  let labels-row = range(ids.len()).map(i => if kind == "stack" {
+    // Stack top is the right end (where we push and pop).
+    if i == last { end-label("top") } else { [] }
+  } else if ids.len() == 1 {
+    end-label("front / rear")
+  } else if i == 0 {
+    end-label("front")
+  } else if i == last {
+    end-label("rear")
+  } else { [] })
+  grid(
+    columns: ids.len(),
+    column-gutter: 0.4em,
+    row-gutter: 0.3em,
+    align: center,
+    ..boxes,
+    ..labels-row,
+  )
+}
+
+/// Render the auxiliary helper structure (BFS queue / DFS stack)
+/// captured for one animation frame as a placeable horizontal strip of
+/// boxes — a teaching aid so students can track the contents alongside
+/// the graph canvas. Pass a frame's #raw("step") metadata (from
+/// #raw("bfs-display") / #raw("dfs-display")); the strip reads the
+/// #raw("aux") array and #raw("aux-kind") it carries. Returns plain
+/// Typst content (not a #raw("Frame")), so it drops anywhere — e.g.
+/// beside #raw("canvases-only(frames)") in a touying layout.
+///
+/// The DFS stack is shown faithfully, duplicates and all: a node may
+/// appear more than once (pushed before an earlier copy is popped).
+///
+/// -> content
+#let aux-strip(
+  /// One frame's #raw("step") metadata dict (carrying #raw("aux") /
+  /// #raw("aux-kind")), as produced by #raw("bfs-display") /
+  /// #raw("dfs-display").
+  /// -> dictionary
+  step,
+  /// Optional #raw("id -> content") map giving each element a display
+  /// label (e.g. to match custom node labels). Ids not present fall
+  /// back to the id string itself.
+  /// -> dictionary
+  labels: (:),
+  /// Render-theme override. #raw("auto") reads the active
+  /// #raw("set-render-theme") state; a dict bakes it in.
+  /// -> auto | dictionary
+  render-theme: auto,
+) = {
+  assert(
+    type(step) == dictionary and step.at("aux-kind", default: none) != none,
+    message: "aux-strip: expected a `step` dict from `bfs-display` / `dfs-display` "
+      + "carrying `aux` / `aux-kind`; got "
+      + repr(step),
+  )
+  let ids = step.at("aux", default: ())
+  let kind = step.aux-kind
+  _with-render-theme(render-theme, rt => _aux-strip-content(ids, kind, labels, rt))
 }
 
 #let Graph = class(
@@ -918,19 +1033,27 @@
         message: "bfs-display: target node " + repr(target) + " not in graph.",
       )
       let order = ()
+      // Parallel to the frame sequence: index 0 is the initial queue,
+      // index i the queue state after visiting order[i-1] (the frontier
+      // heading into the next dequeue). Drives `aux-strip`.
+      let aux-states = ((start,),)
       let seen = (start,)
       let queue = (start,)
       while queue.len() > 0 {
         let u = queue.first()
         queue = queue.slice(1)
         order.push(u)
-        if u == target { break }
+        if u == target {
+          aux-states.push(queue)
+          break
+        }
         for nb in (self.neighbors)(u) {
           if not seen.contains(nb.id) {
             seen.push(nb.id)
             queue.push(nb.id)
           }
         }
+        aux-states.push(queue)
       }
       _render-graph-traversal(
         self,
@@ -941,6 +1064,8 @@
         _resolve-render-theme-arg(render-theme),
         target: target,
         node-style: node-style,
+        aux: aux-states,
+        aux-kind: "queue",
       )
     },
     // ---- Depth-first traversal / search (iterative pre-order) ----
@@ -955,6 +1080,12 @@
         message: "dfs-display: target node " + repr(target) + " not in graph.",
       )
       let order = ()
+      // Parallel to the frame sequence: index 0 is the initial stack,
+      // index i the stack state after visiting order[i-1]. Faithful to
+      // the iterative algorithm: a node can sit in the stack more than
+      // once and be popped-and-skipped later, so duplicates are kept.
+      // Drives `aux-strip`.
+      let aux-states = ((start,),)
       let seen = ()
       let stack = (start,)
       while stack.len() > 0 {
@@ -963,11 +1094,15 @@
         if not seen.contains(u) {
           seen.push(u)
           order.push(u)
-          if u == target { break }
+          if u == target {
+            aux-states.push(stack)
+            break
+          }
           // Push unseen neighbours reversed so the first neighbour is
           // explored first (pre-order).
           let nbs = (self.neighbors)(u).map(nb => nb.id).filter(id => not seen.contains(id))
           for id in nbs.rev() { stack.push(id) }
+          aux-states.push(stack)
         }
       }
       _render-graph-traversal(
@@ -979,6 +1114,8 @@
         _resolve-render-theme-arg(render-theme),
         target: target,
         node-style: node-style,
+        aux: aux-states,
+        aux-kind: "stack",
       )
     },
   ),
