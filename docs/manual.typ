@@ -1025,15 +1025,42 @@ and appears once in the list. Absent matrix cells (the `0`s or
 `none-marker`) and empty rows are drawn muted so the populated entries
 read first.
 
+// Lay each frame out as its canvas beside its aux strip, one row per
+// frame stacked down the page (so a long MST animation doesn't overflow
+// horizontally the way the BFS `aux-row` would).
+#let aux-rows(frames) = stack(
+  dir: ttb,
+  spacing: 0.8em,
+  ..frames.map(f => grid(
+    columns: (auto, auto),
+    column-gutter: 1.5em,
+    align: horizon,
+    starling.canvases-only((f,)).first(),
+    starling.aux-strip(f.step),
+  )),
+)
+
 == Prim's minimum spanning tree
 
 `(g.mst-prim-display)(start)` grows the tree from `start`. Each
 selection shows the frontier (crossing edges in the search stroke) with
 the lightest edge picked out in the attention stroke, then commits it
 to the tree (success stroke) and settles the newly reached node. The
-caption tracks the running tree weight.
+caption tracks the running tree weight. A terminal *prune* frame then
+hides every non-tree edge, so the animation ends on the spanning tree
+alone (the same close as BFS/DFS `spanning-tree` mode).
 
 #align(center, starling.stacked((g-tour.mst-prim-display)("A")))
+
+Prim's bookkeeping is a *priority queue* of the crossing edges, and
+`aux-strip(frame.step)` renders it beside the canvas — the candidate
+edges stacked vertically (a queue's natural orientation, and it stays
+narrow when the frontier is wide), sorted by weight with the `min` on
+top and the chosen edge ringed in the attention stroke, so the pop is
+legible step by step. Here are the two selection rounds where the
+frontier reorders:
+
+#align(center, aux-rows((g-tour.mst-prim-display)("A").slice(1, 4)))
 
 == Kruskal's minimum spanning tree
 
@@ -1041,9 +1068,26 @@ caption tracks the running tree weight.
 each unless it would join two nodes already in the same component (a
 cycle, drawn in the danger stroke). The union-find forest is shown by
 *node color*: same color means same set, and colors merge as the
-components do — no extra dependency, and robust to any layout.
+components do — no extra dependency, and robust to any layout. As with
+Prim, a terminal *prune* frame hides the non-tree edges to finish on the
+spanning tree.
 
 #align(center, starling.stacked((g-tour.mst-kruskal-display)()))
+
+Kruskal carries *two* auxiliary structures, and `aux-strip(frame.step)`
+stacks both: the sorted edge list — every edge in weight order, a cursor
+(▲) under the one being considered, each tagged added / rejected /
+pending — and the disjoint-set partition (one bordered group per
+component, merging as edges are added). The edge labels are stacked
+vertically (endpoints over the weight) so the list stays compact even
+with many edges. A committed edge (three components remain) and a later
+cycle-rejected edge (all merged):
+
+#let kruskal-frames = (g-tour.mst-kruskal-display)()
+#align(center, aux-rows((kruskal-frames.at(2), kruskal-frames.at(8))))
+
+Pass `view:` to render just one of them for separate placement — e.g.
+`aux-strip(frame.step, view: "partition")` for the components alone.
 
 == Dijkstra's shortest paths
 
@@ -1095,6 +1139,36 @@ whole reachable component and ends with a `<t> not found` frame.
 
 #align(center, starling.stacked((g-tour.bfs-display)("A", target: "D")))
 
+By default each node's neighbours enter the queue / stack in
+edge-declaration order. Pass `sort-frontier: true` to instead visit them
+in ascending node-id order — a lexicographic string sort, so `"A"`
+before `"B"` and `"0"` before `"1"` — giving a deterministic traversal
+that doesn't depend on the order edges were added. (Being lexicographic,
+`"10"` sorts before `"2"`; single-character ids sort as expected.)
+
+=== Spanning trees
+
+Pass `spanning-tree: true` to either method to render the *traversal
+tree* rather than the palette walk. Instead of shading nodes across the
+`traversal-palette`, each node joins the tree with a uniform commit style
+(`success-fill` + `settled-stroke`) and its *discovery edge* — the edge
+from the node that first reached it — lights up in `success-stroke`. The
+highlighted edges accumulate into the BFS / DFS spanning tree of the
+reachable component (the same visual vocabulary as `mst-prim-display`,
+just committing edges in traversal order rather than by weight). Combine
+with `sort-frontier: true` to pin the tree's shape deterministically. The
+mode spans the whole reachable component, so it doesn't take a `target:`.
+A final frame then prunes every non-tree edge — hiding the cross edges
+and their weights — so the animation ends on the spanning tree by itself
+(that terminal frame is what `last` shows below).
+
+#grid(
+  columns: (1fr, 1fr),
+  align: center,
+  starling.last((g-tour.bfs-display)("A", spanning-tree: true)),
+  starling.last((g-tour.dfs-display)("A", spanning-tree: true)),
+)
+
 === Tracking the queue / stack
 
 BFS and DFS are driven by a helper structure — a FIFO queue and a LIFO
@@ -1103,7 +1177,9 @@ tracking its contents step by step. Every `bfs-display` / `dfs-display`
 frame records that structure's state in its `step` metadata, and
 `aux-strip(frame.step)` renders it as a placeable strip of boxes (the
 front and rear ends marked on a queue, the `top` push/pop end on a
-stack). It returns
+stack). The same `aux-strip` helper also serves the MST displays (the
+Prim frontier and the two Kruskal views, above); it dispatches on the
+kind of auxiliary state each `step` carries. It returns
 ordinary content, not a `Frame`, so you lay it out wherever you want —
 this is deliberately decoupled from the graph canvas so a touying slide
 can put the graph on one side and the strip on the other:

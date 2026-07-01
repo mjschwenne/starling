@@ -2,7 +2,7 @@
 #import "./anim-core.typ" as core
 #import "./graph-draw.typ" as graph-draw
 #import "./graph-layout.typ" as graph-layout
-#import "./op-theme.typ": _resolve-op-theme-arg
+#import "./op-theme.typ": _resolve-op-theme-arg, _op-theme-state, _merge-op-theme
 
 // The Graph class — an undirected-or-directed weighted graph for
 // teaching MST (Prim / Kruskal), Dijkstra's shortest paths, and BFS /
@@ -98,6 +98,12 @@
   // Each is threaded onto the `step` metadata for `aux-strip`.
   aux: (),
   aux-kind: none,
+  // When non-`none`, render the spanning tree instead of the palette
+  // traversal: parallel to `order`, entry i is the edge-key of node
+  // order[i]'s discovery edge (`none` for the root). Each node then
+  // joins the tree with a uniform commit style and its discovery edge
+  // is highlighted, accumulating into the BFS/DFS tree.
+  tree-edges: none,
 ) = {
   let n = order.len()
   let searching = target != none
@@ -151,23 +157,77 @@
       )
     }
   }
+  // Spanning-tree mode closes with a prune frame: every non-tree edge is
+  // dropped so only the accumulated tree remains. (Mutually exclusive
+  // with `searching` — spanning-tree asserts `target == none`.)
+  if tree-edges != none {
+    let n-tree = tree-edges.filter(e => e != none).len()
+    captions.push([Spanning tree])
+    // Carry the final (post-traversal, empty) aux state and its kind so
+    // `aux-strip` can render this frame like any other in the sequence.
+    steps-meta.push((
+      kind: "spanning-tree",
+      edges: n-tree,
+      nodes: n,
+      aux: aux.at(-1, default: ()),
+      aux-kind: aux-kind,
+    ))
+    alts.push(
+      "Removed the non-tree edges; the "
+        + name
+        + " spanning tree ("
+        + str(n-tree)
+        + " edge(s) over "
+        + str(n)
+        + " node(s)) remains.",
+    )
+  }
   let build-snapshots = (op, _rt) => {
     let g = gradient.linear(..op.traversal-palette)
     let r = graph-draw.make-graph-renderer(pg, sticky: true)
     for (i, id) in order.enumerate() {
-      let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
-      let fill = g.sample(t)
-      r = (r.push-with-node)(
-        id,
-        fill: fill,
-        text-fill: _text-fill-for(fill),
-        note: str(i + 1),
-      )
+      if tree-edges == none {
+        // Traversal: sample the palette across the visit order.
+        let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
+        let fill = g.sample(t)
+        r = (r.push-with-node)(
+          id,
+          fill: fill,
+          text-fill: _text-fill-for(fill),
+          note: str(i + 1),
+        )
+      } else {
+        // Spanning tree: the node joins the tree with a uniform commit
+        // style and its discovery edge lights up (sticky, so the tree
+        // accumulates). The root's `tree-edges` entry is `none`.
+        r = (r.push-with-node)(
+          id,
+          fill: op.success-fill,
+          text-fill: _text-fill-for(op.success-fill),
+          stroke: op.settled-stroke,
+        )
+        let ek = tree-edges.at(i)
+        if ek != none {
+          r = (r.patch)(f => (f.style-edge)(ek, stroke: op.success-stroke))
+        }
+      }
     }
     if searching {
       r = (r.push-frame)()
       if found {
         r = (r.patch)(f => (f.style-node)(target, stroke: op.settled-stroke))
+      }
+    }
+    if tree-edges != none {
+      // Prune frame: hide every edge that isn't a discovery (tree) edge.
+      // The tree styling is sticky, so this frame inherits the fully
+      // built tree and just removes the remaining graph edges.
+      let tree-keys = tree-edges.filter(e => e != none)
+      r = (r.push-frame)()
+      for e in pg.edges {
+        if not tree-keys.contains(e.key) {
+          r = (r.patch)(f => (f.style-edge)(e.key, hide: true))
+        }
       }
     }
     r.snapshots
@@ -203,6 +263,24 @@
   context { build(core._render-theme-state.get()) }
 } else {
   build(core._merge-render-theme(arg))
+}
+
+// Run `build(op-theme, render-theme)` with both themes resolved. Used by
+// `aux-strip`, whose MST kinds (`pq` / `edge-list` / `partition`) color
+// elements by operation status (attention / success / danger) and so
+// need the op-theme, unlike the purely structural queue/stack kinds.
+// Each `auto` argument defers to its state inside one shared `context`;
+// an explicit dict bakes that theme in. (`context` is harmless when
+// neither argument is `auto`, so we always take that branch when either
+// is — it keeps both reads in a single layout pass.)
+#let _with-strip-themes(op-arg, rt-arg, build) = {
+  let both = op-arg == auto or rt-arg == auto
+  let resolve = () => {
+    let op = if op-arg == auto { _op-theme-state.get() } else { _merge-op-theme(op-arg) }
+    let rt = if rt-arg == auto { core._render-theme-state.get() } else { core._merge-render-theme(rt-arg) }
+    build(op, rt)
+  }
+  if both { context resolve() } else { resolve() }
 }
 
 // A muted version of a theme color, for de-emphasizing absent matrix
@@ -264,46 +342,109 @@
   )
 }
 
-// Render one auxiliary-structure snapshot as a horizontal strip of
-// node-styled boxes. `ids` is the array of element ids in structure
-// order (front-first for a queue, bottom-first for a stack); `kind` is
-// "queue" or "stack"; `labels` maps id -> display content (identity
-// fallback). End annotations mark the live ends: front/rear for a
-// queue, top (the push/pop end, drawn rightmost) for a stack.
-#let _aux-strip-content(ids, kind, labels, rt) = {
-  let end-label = t => text(size: 0.75em, fill: _muted(rt.node-text-fill), t)
-  let cell = body => box(
-    fill: rt.node-fill,
-    stroke: 0.5pt + rt.node-stroke,
-    inset: (x: 0.6em, y: 0.45em),
-    radius: 2pt,
-    text(fill: rt.node-text-fill, body),
-  )
+// A single strip cell: a node-styled box carrying `body`. `fill`,
+// `stroke` (a ready stroke value — the caller decides thickness), and
+// `text-fill` are passed in so the MST kinds can recolor cells by
+// operation status while the queue/stack kinds keep render-theme styling.
+// `inset` defaults to the horizontal-strip padding; the vertical
+// edge-list cells tighten it.
+#let _strip-box(body, fill, stroke, text-fill, inset: (x: 0.6em, y: 0.45em)) = box(
+  fill: fill,
+  stroke: stroke,
+  inset: inset,
+  radius: 2pt,
+  text(fill: text-fill, body),
+)
+
+// A small muted annotation (end labels like front/rear/min, cursors,
+// per-view titles).
+#let _strip-end-label(rt, t) = text(size: 0.75em, fill: _muted(rt.node-text-fill), t)
+
+// Style one MST element box by its operation `status`, pulling colors
+// from the op-theme so the strip matches the canvas:
+//   chosen / current -> attention-stroke ring (about to be popped/examined)
+//   added            -> success fill + stroke (an accepted tree edge)
+//   rejected         -> danger stroke, muted text (a cycle edge, skipped)
+//   candidate / pending / other -> neutral render-theme styling
+#let _status-box(body, status, op, rt, inset: (x: 0.6em, y: 0.45em)) = {
+  let stroke = if status == "chosen" or status == "current" {
+    op.attention-stroke
+  } else if status == "added" {
+    op.success-stroke
+  } else if status == "rejected" {
+    op.danger-stroke
+  } else {
+    0.5pt + rt.node-stroke
+  }
+  let fill = if status == "added" { op.success-fill } else { rt.node-fill }
+  let text-fill = if status == "added" {
+    _text-fill-for(op.success-fill)
+  } else if status == "rejected" {
+    _muted(rt.node-text-fill)
+  } else {
+    rt.node-text-fill
+  }
+  _strip-box(body, fill, stroke, text-fill, inset: inset)
+}
+
+// Format an edge element `(u, v, weight)` as `u–v (w)` content, honoring
+// the `labels` id -> content map for the endpoints.
+#let _edge-body(item, labels) = {
+  let lu = labels.at(item.u, default: item.u)
+  let lv = labels.at(item.v, default: item.v)
+  [#lu–#lv (#item.weight)]
+}
+
+// A tall, narrow variant of `_edge-body`: the endpoints stacked over a
+// short connector with the weight beneath, so a long horizontal edge
+// list stays compact.
+//
+//   u
+//   |
+//   v
+//  (w)
+//
+// The connector inherits the surrounding text fill (set by `_status-box`)
+// so a rejected edge's label greys out as one piece.
+#let _edge-body-vertical(item, labels) = {
+  let lu = labels.at(item.u, default: item.u)
+  let lv = labels.at(item.v, default: item.v)
+  align(center, stack(
+    dir: ttb,
+    spacing: 0.18em,
+    lu,
+    text(size: 0.9em, "|"),
+    lv,
+    text(size: 0.85em, [(#item.weight)]),
+  ))
+}
+
+// Queue / stack view (BFS / DFS): a horizontal strip of node-styled
+// boxes. `ids` is the element order (front-first for a queue,
+// bottom-first for a stack). End annotations mark the live ends:
+// front/rear for a queue, top (the push/pop end, drawn rightmost) for a
+// stack.
+#let _aux-nodes-content(ids, kind, labels, rt) = {
+  let neutral = body => _strip-box(body, rt.node-fill, 0.5pt + rt.node-stroke, rt.node-text-fill)
   if ids.len() == 0 {
     return stack(
       dir: ttb,
       spacing: 0.3em,
-      box(
-        fill: rt.node-fill,
-        stroke: 0.5pt + rt.node-stroke,
-        inset: (x: 0.6em, y: 0.45em),
-        radius: 2pt,
-        text(fill: _muted(rt.node-text-fill), "(empty)"),
-      ),
-      end-label(if kind == "stack" { "top" } else { "front" }),
+      _strip-box("(empty)", rt.node-fill, 0.5pt + rt.node-stroke, _muted(rt.node-text-fill)),
+      _strip-end-label(rt, if kind == "stack" { "top" } else { "front" }),
     )
   }
-  let boxes = ids.map(id => cell(labels.at(id, default: id)))
+  let boxes = ids.map(id => neutral(labels.at(id, default: id)))
   let last = ids.len() - 1
   let labels-row = range(ids.len()).map(i => if kind == "stack" {
     // Stack top is the right end (where we push and pop).
-    if i == last { end-label("top") } else { [] }
+    if i == last { _strip-end-label(rt, "top") } else { [] }
   } else if ids.len() == 1 {
-    end-label("front / rear")
+    _strip-end-label(rt, "front / rear")
   } else if i == 0 {
-    end-label("front")
+    _strip-end-label(rt, "front")
   } else if i == last {
-    end-label("rear")
+    _strip-end-label(rt, "rear")
   } else { [] })
   grid(
     columns: ids.len(),
@@ -315,44 +456,197 @@
   )
 }
 
-/// Render the auxiliary helper structure (BFS queue / DFS stack)
-/// captured for one animation frame as a placeable horizontal strip of
-/// boxes — a teaching aid so students can track the contents alongside
-/// the graph canvas. Pass a frame's #raw("step") metadata (from
-/// #raw("bfs-display") / #raw("dfs-display")); the strip reads the
-/// #raw("aux") array and #raw("aux-kind") it carries. Returns plain
-/// Typst content (not a #raw("Frame")), so it drops anywhere — e.g.
-/// beside #raw("canvases-only(frames)") in a touying layout.
+// Prim priority-queue view: crossing (candidate) edges sorted ascending
+// by weight, min at the front. Each `items` entry is
+// `(u, v, weight, status)` with status `candidate` or `chosen` (the min
+// about to be popped, drawn with an attention ring). Rendered as a
+// vertical column (a priority queue's natural orientation, and it stays
+// narrow when the frontier is wide) with the `min` marked at the top.
+#let _aux-pq-content(items, labels, op, rt) = {
+  if items.len() == 0 {
+    return grid(
+      columns: (auto, auto),
+      column-gutter: 0.4em,
+      align: (right + horizon, left + horizon),
+      _strip-end-label(rt, "min"),
+      _strip-box("(empty)", rt.node-fill, 0.5pt + rt.node-stroke, _muted(rt.node-text-fill)),
+    )
+  }
+  let cells = ()
+  for (i, it) in items.enumerate() {
+    cells.push(if i == 0 { _strip-end-label(rt, "min") } else { [] })
+    cells.push(_status-box(_edge-body(it, labels), it.status, op, rt))
+  }
+  grid(
+    columns: (auto, auto),
+    column-gutter: 0.4em,
+    row-gutter: 0.35em,
+    align: (right + horizon, left + horizon),
+    ..cells,
+  )
+}
+
+// Kruskal sorted-edge-list view: every edge in weight order, each tagged
+// with a status (`pending` / `current` / `added` / `rejected`). A cursor
+// (▲) sits under the current edge.
+#let _aux-edge-list-content(items, labels, op, rt) = {
+  if items.len() == 0 {
+    return _strip-box("(no edges)", rt.node-fill, 0.5pt + rt.node-stroke, _muted(rt.node-text-fill))
+  }
+  // Vertical (tall, narrow) edge labels keep the strip compact even when
+  // the graph has many edges.
+  let boxes = items.map(it => _status-box(
+    _edge-body-vertical(it, labels),
+    it.status,
+    op,
+    rt,
+    inset: (x: 0.45em, y: 0.4em),
+  ))
+  let cursor-row = items.map(it => if it.status == "current" {
+    _strip-end-label(rt, "▲")
+  } else { [] })
+  grid(
+    columns: items.len(),
+    column-gutter: 0.4em,
+    row-gutter: 0.3em,
+    align: center,
+    ..boxes,
+    ..cursor-row,
+  )
+}
+
+// Kruskal disjoint-set view: one bordered group per component, each
+// holding its members as node boxes. `groups` is an array of id arrays.
+#let _aux-partition-content(groups, labels, rt) = {
+  if groups.len() == 0 {
+    return _strip-box("(empty)", rt.node-fill, 0.5pt + rt.node-stroke, _muted(rt.node-text-fill))
+  }
+  let group-box = ids => box(
+    stroke: 0.75pt + rt.node-stroke,
+    radius: 3pt,
+    inset: 0.35em,
+    grid(
+      columns: ids.len(),
+      column-gutter: 0.3em,
+      ..ids.map(id => _strip-box(
+        labels.at(id, default: id),
+        rt.node-fill,
+        0.5pt + rt.node-stroke,
+        rt.node-text-fill,
+      )),
+    ),
+  )
+  grid(
+    columns: groups.len(),
+    column-gutter: 0.6em,
+    align: horizon,
+    ..groups.map(g => group-box(g)),
+  )
+}
+
+// A short heading shown above each strip when a step carries more than
+// one view (Kruskal's edge-list + partition), so the two are labeled.
+#let _view-title(kind) = if kind == "edge-list" {
+  "Sorted edges"
+} else if kind == "partition" {
+  "Components"
+} else if kind == "pq" {
+  "Frontier"
+} else if kind == "queue" {
+  "Queue"
+} else if kind == "stack" {
+  "Stack"
+} else { "" }
+
+// Dispatch one aux view (a `(kind, items)` pair, `items` being ids /
+// edge dicts / id-group arrays depending on kind) to its content builder.
+#let _aux-view(kind, items, labels, op, rt) = if kind == "queue" or kind == "stack" {
+  _aux-nodes-content(items, kind, labels, rt)
+} else if kind == "pq" {
+  _aux-pq-content(items, labels, op, rt)
+} else if kind == "edge-list" {
+  _aux-edge-list-content(items, labels, op, rt)
+} else if kind == "partition" {
+  _aux-partition-content(items, labels, rt)
+} else {
+  panic("aux-strip: unknown aux-kind '" + repr(kind) + "'.")
+}
+
+/// Render the auxiliary helper structure captured for one animation
+/// frame as a placeable strip of boxes — a teaching aid so students can
+/// track the algorithm's bookkeeping alongside the graph canvas. Pass a
+/// frame's #raw("step") metadata; the strip reads whatever auxiliary
+/// state that display stashed:
 ///
-/// The DFS stack is shown faithfully, duplicates and all: a node may
-/// appear more than once (pushed before an earlier copy is popped).
+/// - #raw("bfs-display") / #raw("dfs-display") — the BFS queue / DFS
+///   stack (a single #raw("aux") array + #raw("aux-kind"); the DFS stack
+///   is shown faithfully, duplicates and all, since a node may be pushed
+///   more than once before an earlier copy is popped).
+/// - #raw("mst-prim-display") — the frontier priority queue of crossing
+///   edges, min first, the chosen edge ringed.
+/// - #raw("mst-kruskal-display") — two stacked views (an #raw("aux-views")
+///   list): the sorted edge list with a cursor and per-edge status, plus
+///   the disjoint-set partition (one group per component).
+///
+/// Returns plain Typst content (not a #raw("Frame")), so it drops
+/// anywhere — e.g. beside #raw("canvases-only(frames)") in a touying
+/// layout. When a step carries several views they stack vertically;
+/// pass #raw("view:") to render just one for separate placement.
 ///
 /// -> content
 #let aux-strip(
-  /// One frame's #raw("step") metadata dict (carrying #raw("aux") /
-  /// #raw("aux-kind")), as produced by #raw("bfs-display") /
-  /// #raw("dfs-display").
+  /// One frame's #raw("step") metadata dict, as produced by
+  /// #raw("bfs-display") / #raw("dfs-display") /
+  /// #raw("mst-prim-display") / #raw("mst-kruskal-display").
   /// -> dictionary
   step,
-  /// Optional #raw("id -> content") map giving each element a display
-  /// label (e.g. to match custom node labels). Ids not present fall
-  /// back to the id string itself.
+  /// Optional #raw("id -> content") map giving each node a display label
+  /// (e.g. to match custom node labels; also used for the endpoints of
+  /// edge elements). Ids not present fall back to the id string itself.
   /// -> dictionary
   labels: (:),
+  /// Select a single view by its #raw("aux-kind") when the step carries
+  /// more than one (e.g. #raw("\"partition\"") for Kruskal's disjoint
+  /// sets). #raw("auto") renders every view the step holds, stacked.
+  /// -> auto | str
+  view: auto,
+  /// Op-theme override, used to color MST elements by status
+  /// (attention / success / danger). #raw("auto") reads the active
+  /// #raw("set-op-theme") state; a dict bakes it in. Unused by the
+  /// queue/stack kinds.
+  /// -> auto | dictionary
+  theme: auto,
   /// Render-theme override. #raw("auto") reads the active
   /// #raw("set-render-theme") state; a dict bakes it in.
   /// -> auto | dictionary
   render-theme: auto,
 ) = {
   assert(
-    type(step) == dictionary and step.at("aux-kind", default: none) != none,
-    message: "aux-strip: expected a `step` dict from `bfs-display` / `dfs-display` "
-      + "carrying `aux` / `aux-kind`; got "
+    type(step) == dictionary
+      and (step.at("aux-views", default: none) != none or step.at("aux-kind", default: none) != none),
+    message: "aux-strip: expected a `step` dict carrying `aux`/`aux-kind` (from "
+      + "`bfs-display` / `dfs-display` / `mst-prim-display`) or `aux-views` "
+      + "(from `mst-kruskal-display`); got "
       + repr(step),
   )
-  let ids = step.at("aux", default: ())
-  let kind = step.aux-kind
-  _with-render-theme(render-theme, rt => _aux-strip-content(ids, kind, labels, rt))
+  // Normalize to a list of `(kind, items)` views: the multi-view
+  // `aux-views` key if present, else the single `(aux-kind, aux)` pair.
+  let views = if step.at("aux-views", default: none) != none {
+    step.aux-views
+  } else {
+    ((kind: step.aux-kind, items: step.at("aux", default: ())),)
+  }
+  if view != auto { views = views.filter(v => v.kind == view) }
+  _with-strip-themes(theme, render-theme, (op, rt) => {
+    let multi = views.len() > 1
+    let rendered = views.map(v => {
+      let body = _aux-view(v.kind, v.items, labels, op, rt)
+      if multi {
+        stack(dir: ttb, spacing: 0.25em, _strip-end-label(rt, _view-title(v.kind)), body)
+      } else { body }
+    })
+    if rendered.len() == 1 { rendered.first() } else { stack(dir: ttb, spacing: 0.7em, ..rendered) }
+  })
 }
 
 #let Graph = class(
@@ -679,36 +973,94 @@
         chosen: none,
         total: total,
       ))
+      // Terminal prune frame: drop every non-tree edge so the animation
+      // ends on the spanning tree alone (mirrors the BFS/DFS
+      // spanning-tree mode).
+      moments.push((
+        kind: "prune",
+        visited: visited,
+        tree-keys: tree-keys,
+        frontier: (),
+        chosen: none,
+        total: total,
+      ))
+
+      // The frontier priority queue for `aux-strip`: crossing edges
+      // relative to `visited`, sorted ascending by weight (min first).
+      // On a "consider" moment the min is the chosen edge (ringed on the
+      // canvas), so tag it accordingly; otherwise all are candidates.
+      let prim-pq(visited, mark-chosen) = self.edges
+        .filter(e => (
+          (visited.contains(e.u) and not visited.contains(e.v))
+            or (visited.contains(e.v) and not visited.contains(e.u))
+        ))
+        .sorted(key: e => e.weight)
+        .enumerate()
+        .map(((i, e)) => (
+          u: e.u,
+          v: e.v,
+          weight: e.weight,
+          status: if mark-chosen and i == 0 { "chosen" } else { "candidate" },
+        ))
+      let pq-note(items) = if items.len() == 0 {
+        " Frontier is empty."
+      } else {
+        let listing = items.map(it => it.u + "–" + it.v + " (" + str(it.weight) + ")").join(", ")
+        " Frontier: " + listing + "."
+      }
 
       let pfx = "Minimum spanning tree (Prim) on " + (self.describe)() + ". "
       let captions = ()
       let steps-meta = ()
       let alts = ()
       for m in moments {
+        let pq = prim-pq(m.visited, m.kind == "consider")
         if m.kind == "init" {
           captions.push([Start at #start])
-          steps-meta.push((kind: "init", start: start))
-          alts.push(pfx + "Starting Prim's algorithm at node " + start + ".")
+          steps-meta.push((kind: "init", start: start, aux: pq, aux-kind: "pq"))
+          alts.push(pfx + "Starting Prim's algorithm at node " + start + "." + pq-note(pq))
         } else if m.kind == "consider" {
           let c = m.chosen
           captions.push([Min crossing edge: #(c.u)–#(c.v) (#(c.weight))])
-          steps-meta.push((kind: "consider", edge: (c.u, c.v), weight: c.weight))
+          steps-meta.push((kind: "consider", edge: (c.u, c.v), weight: c.weight, aux: pq, aux-kind: "pq"))
           alts.push(
             "Examining the frontier; the lightest crossing edge is "
-              + c.u + "–" + c.v + " with weight " + str(c.weight) + ".",
+              + c.u + "–" + c.v + " with weight " + str(c.weight) + "." + pq-note(pq),
           )
         } else if m.kind == "commit" {
           let c = m.chosen
           captions.push([Add #(c.u)–#(c.v); tree weight #(m.total)])
-          steps-meta.push((kind: "commit", edge: (c.u, c.v), node: m.new-node, total: m.total))
+          steps-meta.push((
+            kind: "commit",
+            edge: (c.u, c.v),
+            node: m.new-node,
+            total: m.total,
+            aux: pq,
+            aux-kind: "pq",
+          ))
           alts.push(
             "Adding edge " + c.u + "–" + c.v + " and node " + m.new-node
-              + "; tree weight is now " + str(m.total) + ".",
+              + "; tree weight is now " + str(m.total) + "." + pq-note(pq),
           )
-        } else {
+        } else if m.kind == "done" {
           captions.push([MST weight #(m.total)])
-          steps-meta.push((kind: "done", total: m.total))
-          alts.push("Minimum spanning tree complete; total weight " + str(m.total) + ".")
+          steps-meta.push((kind: "done", total: m.total, aux: pq, aux-kind: "pq"))
+          alts.push("Minimum spanning tree complete; total weight " + str(m.total) + "." + pq-note(pq))
+        } else {
+          captions.push([Spanning tree])
+          steps-meta.push((
+            kind: "spanning-tree",
+            edges: m.tree-keys.len(),
+            nodes: m.visited.len(),
+            total: m.total,
+            aux: pq,
+            aux-kind: "pq",
+          ))
+          alts.push(
+            "Removed the non-tree edges; the minimum spanning tree ("
+              + str(m.tree-keys.len()) + " edge(s) over " + str(m.visited.len())
+              + " node(s), total weight " + str(m.total) + ") remains." + pq-note(pq),
+          )
         }
       }
 
@@ -730,6 +1082,13 @@
               graph-draw.edge-key(m.chosen.u, m.chosen.v, directed: self.directed),
               stroke: op.attention-stroke,
             ))
+          } else if m.kind == "prune" {
+            // Hide every edge that isn't in the spanning tree.
+            for e in pg.edges {
+              if not m.tree-keys.contains(e.key) {
+                r = (r.patch)(f => (f.style-edge)(e.key, hide: true))
+              }
+            }
           }
         }
         r.snapshots
@@ -762,59 +1121,167 @@
       let id-index = (:)
       for (i, id) in all-ids.enumerate() { id-index.insert(id, i) }
       let sorted-edges = self.edges.sorted(key: e => e.weight)
+      let sorted-keys = sorted-edges.map(e => graph-draw.edge-key(e.u, e.v, directed: self.directed))
       let parent = (:)
       for id in all-ids { parent.insert(id, id) }
       let tree-keys = ()
       let total = 0
+      // `processed` counts edges already decided (added or rejected);
+      // `current` is the index of the edge under consideration (or none).
+      // Both drive the sorted-edge-list aux view's status/cursor.
       let moments = (
-        (kind: "init", parent: parent, tree-keys: (), edge: none, total: 0),
+        (kind: "init", parent: parent, tree-keys: (), edge: none, total: 0, processed: 0, current: none),
       )
-      for e in sorted-edges {
+      for (ci, e) in sorted-edges.enumerate() {
         let ru = _uf-find(parent, e.u)
         let rv = _uf-find(parent, e.v)
-        moments.push((kind: "consider", parent: parent, tree-keys: tree-keys, edge: e, total: total))
+        moments.push((
+          kind: "consider",
+          parent: parent,
+          tree-keys: tree-keys,
+          edge: e,
+          total: total,
+          processed: ci,
+          current: ci,
+        ))
         if ru != rv {
           parent.insert(ru, rv)
           tree-keys = tree-keys + (graph-draw.edge-key(e.u, e.v, directed: self.directed),)
           total = total + e.weight
-          moments.push((kind: "add", parent: parent, tree-keys: tree-keys, edge: e, total: total))
+          moments.push((
+            kind: "add",
+            parent: parent,
+            tree-keys: tree-keys,
+            edge: e,
+            total: total,
+            processed: ci + 1,
+            current: none,
+          ))
         } else {
-          moments.push((kind: "reject", parent: parent, tree-keys: tree-keys, edge: e, total: total))
+          moments.push((
+            kind: "reject",
+            parent: parent,
+            tree-keys: tree-keys,
+            edge: e,
+            total: total,
+            processed: ci + 1,
+            current: none,
+          ))
         }
       }
-      moments.push((kind: "done", parent: parent, tree-keys: tree-keys, edge: none, total: total))
+      moments.push((
+        kind: "done",
+        parent: parent,
+        tree-keys: tree-keys,
+        edge: none,
+        total: total,
+        processed: sorted-edges.len(),
+        current: none,
+      ))
+      // Terminal prune frame: drop every non-tree edge so the animation
+      // ends on the spanning tree alone (mirrors the BFS/DFS
+      // spanning-tree mode).
+      moments.push((
+        kind: "prune",
+        parent: parent,
+        tree-keys: tree-keys,
+        edge: none,
+        total: total,
+        processed: sorted-edges.len(),
+        current: none,
+      ))
+
+      // Build a moment's two aux views. The edge-list tags each sorted
+      // edge by status: `added` if it's a tree edge, `current` if it's
+      // the one under consideration, `rejected` if already decided but
+      // not added, else `pending`. The partition groups the node ids by
+      // their union-find root (one group per component).
+      let edge-list-items(m) = range(sorted-edges.len()).map(j => {
+        let e = sorted-edges.at(j)
+        let status = if m.tree-keys.contains(sorted-keys.at(j)) {
+          "added"
+        } else if m.current != none and j == m.current {
+          "current"
+        } else if j < m.processed {
+          "rejected"
+        } else {
+          "pending"
+        }
+        (u: e.u, v: e.v, weight: e.weight, status: status)
+      })
+      let partition(parent) = {
+        let groups = (:)
+        let order = ()
+        for id in all-ids {
+          let r = _uf-find(parent, id)
+          if r in groups { groups.at(r).push(id) } else {
+            groups.insert(r, (id,))
+            order.push(r)
+          }
+        }
+        order.map(r => groups.at(r))
+      }
+      let aux-note(m) = {
+        let listing = partition(m.parent).map(g => "{" + g.join(", ") + "}").join(" ")
+        " Components: " + listing + "."
+      }
+      let aux-views-of(m) = (
+        (kind: "edge-list", items: edge-list-items(m)),
+        (kind: "partition", items: partition(m.parent)),
+      )
 
       let pfx = "Minimum spanning tree (Kruskal) on " + (self.describe)() + ". "
       let captions = ()
       let steps-meta = ()
       let alts = ()
       for m in moments {
+        let views = aux-views-of(m)
         if m.kind == "init" {
           captions.push([Sort edges by weight])
-          steps-meta.push((kind: "init"))
-          alts.push(pfx + "Consider edges in increasing weight order; each node starts in its own component.")
+          steps-meta.push((kind: "init", aux-views: views))
+          alts.push(
+            pfx + "Consider edges in increasing weight order; each node starts in its own component."
+              + aux-note(m),
+          )
         } else if m.kind == "consider" {
           let e = m.edge
           captions.push([Consider #(e.u)–#(e.v) (#(e.weight))])
-          steps-meta.push((kind: "consider", edge: (e.u, e.v), weight: e.weight))
-          alts.push("Considering edge " + e.u + "–" + e.v + " with weight " + str(e.weight) + ".")
+          steps-meta.push((kind: "consider", edge: (e.u, e.v), weight: e.weight, aux-views: views))
+          alts.push("Considering edge " + e.u + "–" + e.v + " with weight " + str(e.weight) + "." + aux-note(m))
         } else if m.kind == "add" {
           let e = m.edge
           captions.push([Add #(e.u)–#(e.v); weight #(m.total)])
-          steps-meta.push((kind: "add", edge: (e.u, e.v), total: m.total))
+          steps-meta.push((kind: "add", edge: (e.u, e.v), total: m.total, aux-views: views))
           alts.push(
             e.u + " and " + e.v + " are in different components; add the edge and merge them. Total weight "
-              + str(m.total) + ".",
+              + str(m.total) + "." + aux-note(m),
           )
         } else if m.kind == "reject" {
           let e = m.edge
           captions.push([Reject #(e.u)–#(e.v) (cycle)])
-          steps-meta.push((kind: "reject", edge: (e.u, e.v)))
-          alts.push(e.u + " and " + e.v + " are already connected; this edge would form a cycle, so skip it.")
-        } else {
+          steps-meta.push((kind: "reject", edge: (e.u, e.v), aux-views: views))
+          alts.push(
+            e.u + " and " + e.v + " are already connected; this edge would form a cycle, so skip it."
+              + aux-note(m),
+          )
+        } else if m.kind == "done" {
           captions.push([MST weight #(m.total)])
-          steps-meta.push((kind: "done", total: m.total))
-          alts.push("Minimum spanning tree complete; total weight " + str(m.total) + ".")
+          steps-meta.push((kind: "done", total: m.total, aux-views: views))
+          alts.push("Minimum spanning tree complete; total weight " + str(m.total) + "." + aux-note(m))
+        } else {
+          captions.push([Spanning tree])
+          steps-meta.push((
+            kind: "spanning-tree",
+            edges: m.tree-keys.len(),
+            nodes: all-ids.len(),
+            total: m.total,
+            aux-views: views,
+          ))
+          alts.push(
+            "Removed the non-tree edges; the minimum spanning tree ("
+              + str(m.tree-keys.len()) + " edge(s) over " + str(all-ids.len())
+              + " node(s), total weight " + str(m.total) + ") remains." + aux-note(m),
+          )
         }
       }
 
@@ -845,6 +1312,13 @@
               graph-draw.edge-key(m.edge.u, m.edge.v, directed: self.directed),
               stroke: op.danger-stroke,
             ))
+          } else if m.kind == "prune" {
+            // Hide every edge that isn't in the spanning tree.
+            for e in pg.edges {
+              if not m.tree-keys.contains(e.key) {
+                r = (r.patch)(f => (f.style-edge)(e.key, hide: true))
+              }
+            }
           }
         }
         r.snapshots
@@ -1024,7 +1498,15 @@
     // stops the moment the target is dequeued (or runs to completion if
     // the target is unreachable); `_render-graph-traversal` then appends
     // a terminal "found" / "not-found" frame.
-    bfs-display: (self, start, target: none, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+    // `sort-frontier: true` enqueues each node's unseen neighbours in
+    // ascending node-id order (a lexicographic string sort) instead of
+    // edge-declaration order, giving a deterministic A-before-B / "0"-
+    // before-"1" visit sequence.
+    // `spanning-tree: true` renders the BFS tree instead of the palette
+    // traversal: each node joins the tree with a uniform commit style and
+    // its discovery edge (the edge from the node that first enqueued it)
+    // is highlighted. Full-component only — incompatible with `target`.
+    bfs-display: (self, start, target: none, sort-frontier: false, spanning-tree: false, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
       let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       assert(start in self.nodes, message: "bfs-display: start node '" + start + "' not in graph.")
@@ -1032,7 +1514,13 @@
         target == none or target in self.nodes,
         message: "bfs-display: target node " + repr(target) + " not in graph.",
       )
+      assert(
+        not spanning-tree or target == none,
+        message: "bfs-display: spanning-tree mode spans the whole reachable component; it does not support a target.",
+      )
       let order = ()
+      // BFS-tree parent of each node: the node that first enqueued it.
+      let parents = (:)
       // Parallel to the frame sequence: index 0 is the initial queue,
       // index i the queue state after visiting order[i-1] (the frontier
       // heading into the next dequeue). Drives `aux-strip`.
@@ -1047,14 +1535,22 @@
           aux-states.push(queue)
           break
         }
-        for nb in (self.neighbors)(u) {
+        let frontier = (self.neighbors)(u)
+        if sort-frontier { frontier = frontier.sorted(key: nb => nb.id) }
+        for nb in frontier {
           if not seen.contains(nb.id) {
             seen.push(nb.id)
+            parents.insert(nb.id, u)
             queue.push(nb.id)
           }
         }
         aux-states.push(queue)
       }
+      let tree-edges = if spanning-tree {
+        order.map(id => if id in parents {
+          graph-draw.edge-key(parents.at(id), id, directed: self.directed)
+        } else { none })
+      } else { none }
       _render-graph-traversal(
         self,
         pg,
@@ -1066,12 +1562,21 @@
         node-style: node-style,
         aux: aux-states,
         aux-kind: "queue",
+        tree-edges: tree-edges,
       )
     },
     // ---- Depth-first traversal / search (iterative pre-order) ----
     // As with `bfs-display`, a non-`none` `target` turns the traversal
     // into a search that stops the moment the target is visited.
-    dfs-display: (self, start, target: none, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+    // `sort-frontier: true` explores each node's unseen neighbours in
+    // ascending node-id order (a lexicographic string sort): the ids are
+    // sorted ascending, then pushed reversed so the smallest lands on top
+    // of the stack and is popped first.
+    // `spanning-tree: true` renders the DFS tree instead of the palette
+    // traversal: each node joins the tree with a uniform commit style and
+    // its discovery edge (from the node whose push it was popped by) is
+    // highlighted. Full-component only — incompatible with `target`.
+    dfs-display: (self, start, target: none, sort-frontier: false, spanning-tree: false, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
       let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       assert(start in self.nodes, message: "dfs-display: start node '" + start + "' not in graph.")
@@ -1079,32 +1584,48 @@
         target == none or target in self.nodes,
         message: "dfs-display: target node " + repr(target) + " not in graph.",
       )
+      assert(
+        not spanning-tree or target == none,
+        message: "dfs-display: spanning-tree mode spans the whole reachable component; it does not support a target.",
+      )
       let order = ()
+      // DFS-tree parent of each node: whoever's push got it popped. The
+      // stack holds (id, parent) pairs so this is captured faithfully
+      // even when a node is pushed by several parents before being popped.
+      let parents = (:)
       // Parallel to the frame sequence: index 0 is the initial stack,
       // index i the stack state after visiting order[i-1]. Faithful to
       // the iterative algorithm: a node can sit in the stack more than
       // once and be popped-and-skipped later, so duplicates are kept.
-      // Drives `aux-strip`.
+      // Drives `aux-strip` (mapped back to bare ids).
       let aux-states = ((start,),)
       let seen = ()
-      let stack = (start,)
+      let stack = ((id: start, parent: none),)
       while stack.len() > 0 {
-        let u = stack.last()
+        let top = stack.last()
+        let u = top.id
         stack = stack.slice(0, stack.len() - 1)
         if not seen.contains(u) {
           seen.push(u)
           order.push(u)
+          if top.parent != none { parents.insert(u, top.parent) }
           if u == target {
-            aux-states.push(stack)
+            aux-states.push(stack.map(e => e.id))
             break
           }
           // Push unseen neighbours reversed so the first neighbour is
           // explored first (pre-order).
           let nbs = (self.neighbors)(u).map(nb => nb.id).filter(id => not seen.contains(id))
-          for id in nbs.rev() { stack.push(id) }
-          aux-states.push(stack)
+          if sort-frontier { nbs = nbs.sorted() }
+          for id in nbs.rev() { stack.push((id: id, parent: u)) }
+          aux-states.push(stack.map(e => e.id))
         }
       }
+      let tree-edges = if spanning-tree {
+        order.map(id => if id in parents {
+          graph-draw.edge-key(parents.at(id), id, directed: self.directed)
+        } else { none })
+      } else { none }
       _render-graph-traversal(
         self,
         pg,
@@ -1116,6 +1637,7 @@
         node-style: node-style,
         aux: aux-states,
         aux-kind: "stack",
+        tree-edges: tree-edges,
       )
     },
   ),

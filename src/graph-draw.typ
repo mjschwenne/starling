@@ -302,7 +302,10 @@
         if w == none { none } else { str(w) }
       } else { lbl }
     }
+    // An explicitly empty label (`[]` or `""`) suppresses the weight *and*
+    // its `note-bg` halo — otherwise an empty label box would still be drawn.
     let tag = s.at("tag", default: intrinsic)
+    if tag == [] or tag == "" { tag = none }
     let note = s.at("note", default: none)
     let gu = resolved.at(e.u)
 
