@@ -502,9 +502,12 @@
     rt,
     inset: (x: 0.45em, y: 0.4em),
   ))
+  // Every cell reserves the cursor glyph's height (via `hide`) so the row
+  // keeps a constant height whether or not this frame has a current edge —
+  // otherwise the strip bounces vertically across a touying animation.
   let cursor-row = items.map(it => if it.status == "current" {
     _strip-end-label(rt, "▲")
-  } else { [] })
+  } else { hide(_strip-end-label(rt, "▲")) })
   grid(
     columns: items.len(),
     column-gutter: 0.4em,
