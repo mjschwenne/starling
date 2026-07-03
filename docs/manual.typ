@@ -100,6 +100,12 @@ responsibility:
    The only file referencing that dependency, and it does so with a
    lazy import inside `auto-layout`'s body — so the dependency stays
    optional even though `lib.typ` re-exports the function.],
+  [`src/git-graph.typ`],
+  [The git-graph DSL — a *stateful* cetz builder (`commit`, `branch`,
+   `merge`, `tag`, `branch-pointer`, `head-pointer`, `detached-commit`)
+   for drawing git commit graphs. Deliberately off the `Frame` stack;
+   surfaced under the `starling.git.*` namespace. Carries its own per-DS
+   theme (`default-git-theme` / `set-git-theme`).],
   [`src/lib.typ`],
   [The public surface — re-exports everything users need, plus the
    render helpers (`last`, `stacked`, `figures`, `canvases-only`).],
@@ -1298,6 +1304,92 @@ in. (Typst has no subpath package import, so re-exporting from the
 entrypoint is the only way to reach `auto-layout`; the older
 `@preview/starling:<ver>/src/graph-layout.typ` form never worked.)
 
+= Git graph
+
+The `git-graph` DSL draws git commit graphs — commits, branches, merges,
+tags, and HEAD/branch pointers. It is the one part of starling that does
+*not* ride the `Frame` / `Renderer` / `*-display` stack: rather than an
+immutable structure animated step by step, it is a *stateful, imperative
+cetz builder*. You call `commit` / `branch` / `merge` inside a
+`git-graph({ .. })` block and the commands mutate cetz's canvas context
+as they draw. Consequently the frame helpers (`last`, `stacked`,
+`figures`) do not apply here — you place a `git-graph` block directly
+inside a `cetz.canvas(..)`. Animation is touying-native instead: put
+`pause` / `alternatives(..)` markers inside the canvas body, or redraw a
+commit dot with `git-highlight`.
+
+Because its verbs use generic names (`commit`, `branch`, `merge`, `tag`,
+`checkout`), they live behind a `git` namespace rather than being
+re-exported flat, so `import starling: *` never collides with them:
+
+```typ
+#import "@preview/cetz:0.5.2"
+#import "@preview/starling:0.3.0" as starling
+#import starling: git
+
+#cetz.canvas(git.git-graph({
+  git.branch("main")
+  git.commit("init")
+  git.commit("work")
+  git.branch("dev")
+  git.commit("feature")
+  git.checkout("main")
+  git.commit("main work")
+  git.merge("dev", message: "merge dev")
+  git.branch-pointer("main")
+  git.head-pointer()
+  git.tag("v1.0")
+}))
+```
+
+#align(center, cetz.canvas(starling.git.git-graph({
+  starling.git.branch("main")
+  starling.git.commit("init")
+  starling.git.commit("work")
+  starling.git.branch("dev")
+  starling.git.commit("feature")
+  starling.git.checkout("main")
+  starling.git.commit("main work")
+  starling.git.merge("dev", message: "merge dev")
+  starling.git.branch-pointer("main")
+  starling.git.head-pointer()
+  starling.git.tag("v1.0")
+})))
+
+You must create the initial branch (`branch("main")`) before the first
+`commit`. `merge(branch)` takes the *branch name* to merge in; `commit`,
+`branch`, and `merge` accept a `name:` so later annotations survive
+reordering. `detached-commit(from, msg, name)` draws an orphan dot and
+`head-pointer(target: name)` hangs a detached HEAD off it.
+
+Pass `direction: "left-to-right"` to `git-graph` to lay commits out
+rightward (lanes spread downward) instead of the default upward stacking;
+sensible label angles/anchors switch automatically.
+
+== Theming the git graph
+
+git-graph carries its own per-DS theme, `default-git-theme`, exactly like
+the RBT palette (see @theming). Its keys are the branch `colors` palette
+and the `lane-style` / `graph-style` / `commit-style` / `tag-style` /
+`pointer-style` sub-dicts. Override document-wide with `set-git-theme(..)`
+or per-call with `git-graph(theme: (..))`:
+
+```typ
+// Document-wide (state — persists for the rest of the document):
+#starling.set-git-theme((graph-style: (stroke: (thickness: 0.4em), radius: 0.15)))
+
+// Per-call (bypasses state entirely — the perf escape hatch):
+#cetz.canvas(git.git-graph(
+  theme: (colors: (teal, maroon, olive)),
+  { git.branch("main"); git.commit("a"); .. },
+))
+```
+
+Merging is *shallow* at the top level: overriding `commit-style` replaces
+the whole sub-dict, so pass a complete style dict for the role you change.
+As elsewhere in starling, the state path costs an extra layout pass (see
+@theming-perf) — prefer the per-call `theme:` argument on hot paths.
+
 = Theming <theming>
 
 Starling exposes three theme layers so document authors can match
@@ -1790,6 +1882,13 @@ by the `tidy` package from doc-comments in the source.
   scope: (starling: starling, cetz: cetz),
 )
 
+#let git-docs = tidy.parse-module(
+  read("/src/git-graph.typ"),
+  name: "Git graph",
+  label-prefix: "git-",
+  scope: (starling: starling, cetz: cetz),
+)
+
 == Render helpers
 
 #tidy.show-module(lib-docs, style: tidy.styles.default, show-module-name: false)
@@ -1813,3 +1912,7 @@ by the `tidy` package from doc-comments in the source.
 == Graph auto-layout
 
 #tidy.show-module(glayout-docs, style: tidy.styles.default, show-module-name: false)
+
+== Git graph
+
+#tidy.show-module(git-docs, style: tidy.styles.default, show-module-name: false)

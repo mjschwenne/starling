@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `factors:` flag on each display tags every node with its signed
   balance factor, mirroring RBT's `bits:` flag for black-height bits.
 - `avl(..vals)` factory matching the `bst(..)` / `rbt(..)` signature.
+- Git-graph DSL for drawing git commit graphs (`commit`, `branch`,
+  `merge`, `tag`, `checkout`, `branch-pointer`, `head-pointer`,
+  `detached-commit`, `git-highlight`, `background-lanes`), surfaced under
+  the `starling.git.*` namespace. A stateful cetz builder rather than a
+  `Frame`-based structure — placed directly inside `cetz.canvas(..)`,
+  with touying-native animation. Supports `direction: "bottom-to-top"`
+  (default) and `"left-to-right"` layouts.
+- `default-git-theme` / `set-git-theme` / `GitTheme` — the git-graph
+  per-DS theme (branch `colors` palette plus lane/graph/commit/tag/pointer
+  styles), overridable document-wide via `set-git-theme(..)` or per-call
+  via `git-graph(theme: (..))`, mirroring the RBT palette.
 
 ## [0.2.0]
 

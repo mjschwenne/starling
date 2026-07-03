@@ -40,6 +40,24 @@
   make-graph-renderer,
   GraphNodeId,
 )
+// Git graph — a stateful cetz DSL (commits, branches, merges, tags,
+// HEAD/branch pointers). Unlike the tree/graph structures it does NOT
+// ride the `Frame` stack, so the frame helpers below (`last`, `stacked`,
+// `figures`) do not apply to it; its animation is touying-native (`pause`
+// / `alternatives` inside the canvas, plus `git-highlight`). The DSL verbs
+// use generic names (`commit`, `branch`, `merge`, `tag`, `checkout`), so
+// they are kept behind the `git` namespace — `starling.git.git-graph`,
+// `starling.git.commit`, etc. — rather than re-exported flat, so
+// `import starling: *` doesn't collide with them.
+#import "./git-graph.typ" as git
+// Its per-DS theme surfaces at the top level, consistent with the other
+// `set-*-theme` setters.
+#import "./git-graph.typ": (
+  default-git-theme,
+  set-git-theme,
+  GitTheme,
+  _git-theme-state,
+)
 #import "./op-theme.typ": (
   default-op-theme,
   set-op-theme,
