@@ -40,7 +40,7 @@
 #let t = bnode(4, rnode(2, bleaf(1), bleaf(3)), bleaf(7))
 
 #assert((t.check-invariants)())
-#assert.eq((t.describe)(), "4B (left: 2R (left: 1B, right: 3B), right: 7B)")
+#assert.eq((t.describe)(), "4 B (left: 2 R (left: 1 B, right: 3 B), right: 7 B)")
 
 // --- contains -------------------------------------------------------
 #assert((t.contains)(4))
@@ -188,7 +188,7 @@
 
 // Single-arg = root only.
 #let rf1 = rbt(8)
-#assert.eq((rf1.describe)(), "8B")
+#assert.eq((rf1.describe)(), "8 B")
 
 // Tuple form for labels.
 #let rfl = rbt((8, "eight"), 4, (12, "twelve"))

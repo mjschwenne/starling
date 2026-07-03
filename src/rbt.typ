@@ -1270,8 +1270,10 @@
       self.right != none and (self.right.contains)(v)
     },
     describe: self => {
+      // Separate the colour tag from the label with a space so a
+      // single-letter label (e.g. "A") doesn't fuse with it into "AB".
       let c = if self.red { "R" } else { "B" }
-      let head = tree-anim._alt-label(self) + c
+      let head = tree-anim._alt-label(self) + " " + c
       if self.left == none and self.right == none {
         head
       } else {
