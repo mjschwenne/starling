@@ -496,6 +496,7 @@
       target-path: target-path,
       predecessor-path: pred-path,
       new-value: pred-node.value,
+      new-label: tree-anim._alt-label(pred-node),
       tree: cur-tree,
     ))
     excise-path = pred-path
@@ -795,16 +796,16 @@
   } else if event.kind == "recompute" {
     caption = [Recompute height]
     step = (kind: "recompute", path: event.path, height: event.height)
-    let nv = _resolve-at(event.tree, event.path).value
+    let nv = tree-anim._alt-label(_resolve-at(event.tree, event.path))
     alt = (
-      "Recomputed height at node " + str(nv) + ": new height is " + str(event.height) + "."
+      "Recomputed height at node " + nv + ": new height is " + str(event.height) + "."
     )
   } else if event.kind == "check" {
     caption = [Imbalance: case #(event.case)]
     step = (kind: "check", path: event.path, case: event.case, bf: event.bf)
-    let nv = _resolve-at(event.tree, event.path).value
+    let nv = tree-anim._alt-label(_resolve-at(event.tree, event.path))
     alt = (
-      "Balance factor at node " + str(nv) + " is " + str(event.bf) + "; case " + event.case + " applies."
+      "Balance factor at node " + nv + " is " + str(event.bf) + "; case " + event.case + " applies."
     )
   } else if event.kind == "rotate-zigzag" {
     caption = [Rotate child]
@@ -889,8 +890,9 @@
     step = (kind: "init")
     alt = init-alt
   } else if event.kind == "compare" {
-    let nv = _resolve-at(event.tree, event.path).value
-    let cmp-text = str(v) + " " + event.cmp + " " + str(nv)
+    let node = _resolve-at(event.tree, event.path)
+    let cmp-text = str(v) + " " + event.cmp + " " + str(node.value)
+    let nlabel = tree-anim._alt-label(node)
     caption = cmp-text
     step = (
       kind: "compare",
@@ -899,9 +901,9 @@
       found: event.found,
     )
     alt = if event.found {
-      "Match found at node " + str(nv) + "; ready to delete."
+      "Match found at node " + nlabel + "; ready to delete."
     } else {
-      "Comparing " + cmp-text + " at node " + str(nv) + "; descending."
+      "Comparing " + cmp-text + " at node " + nlabel + "; descending."
     }
   } else if event.kind == "descend" {
     caption = [Search for #v]
@@ -914,11 +916,13 @@
     step = (kind: "not-found")
     alt = str(v) + " is not in the tree; nothing to delete."
   } else if event.kind == "mark-target" {
+    let tlabel = tree-anim._alt-label(_resolve-at(event.tree, event.target-path))
     caption = [Delete #v]
     step = (kind: "mark-target", path: event.target-path)
-    alt = "Marked node " + str(v) + " for deletion."
+    alt = "Marked node " + tlabel + " for deletion."
   } else if event.kind == "find-predecessor" {
-    let pv = _resolve-at(event.tree, event.predecessor-path).value
+    let tlabel = tree-anim._alt-label(_resolve-at(event.tree, event.target-path))
+    let pv = tree-anim._alt-label(_resolve-at(event.tree, event.predecessor-path))
     caption = [Find predecessor]
     step = (
       kind: "find-predecessor",
@@ -928,9 +932,9 @@
     )
     alt = (
       "Node "
-        + str(v)
+        + tlabel
         + " has two children; walking the left subtree to find the in-order predecessor: "
-        + str(pv)
+        + pv
         + "."
     )
   } else if event.kind == "transfer" {
@@ -942,7 +946,7 @@
     )
     alt = (
       "Copied predecessor's value "
-        + str(event.new-value)
+        + event.new-label
         + " into the target slot; about to remove the predecessor node."
     )
   } else if event.kind == "excise" {
@@ -952,16 +956,16 @@
   } else if event.kind == "recompute" {
     caption = [Recompute height]
     step = (kind: "recompute", path: event.path, height: event.height)
-    let nv = _resolve-at(event.tree, event.path).value
+    let nv = tree-anim._alt-label(_resolve-at(event.tree, event.path))
     alt = (
-      "Recomputed height at node " + str(nv) + ": new height is " + str(event.height) + "."
+      "Recomputed height at node " + nv + ": new height is " + str(event.height) + "."
     )
   } else if event.kind == "check" {
     caption = [Imbalance: case #(event.case)]
     step = (kind: "check", path: event.path, case: event.case, bf: event.bf)
-    let nv = _resolve-at(event.tree, event.path).value
+    let nv = tree-anim._alt-label(_resolve-at(event.tree, event.path))
     alt = (
-      "Balance factor at node " + str(nv) + " is " + str(event.bf) + "; case " + event.case + " applies."
+      "Balance factor at node " + nv + " is " + str(event.bf) + "; case " + event.case + " applies."
     )
   } else if event.kind == "rotate-zigzag" {
     caption = [Rotate child]
@@ -1079,18 +1083,19 @@
 
   let output = ()
   for (i, p) in paths.enumerate() {
-    let value = (self.resolve)(p).value
-    output.push(str(value))
+    let node = (self.resolve)(p)
+    let disp = tree-anim._alt-label(node)
+    output.push(disp)
     captions.push([Output: #raw("[" + output.join(", ") + "]")])
     steps-meta.push((
       kind: "visit",
       path: p,
       index: i + 1,
-      value: value,
+      value: node.value,
     ))
     alts.push(
       "Visited "
-        + str(value)
+        + disp
         + " (visit "
         + str(i + 1)
         + " of "
@@ -1198,7 +1203,7 @@
       self.right != none and (self.right.contains)(v)
     },
     describe: self => {
-      let head = str(self.value) + ":" + str(self.height)
+      let head = tree-anim._alt-label(self) + ":" + str(self.height)
       if self.left == none and self.right == none {
         head
       } else {
@@ -1405,7 +1410,7 @@
           cmp: s.cmp,
           found: s.found,
         ))
-        let node-value = str((self.resolve)(s.path).value)
+        let node-value = tree-anim._alt-label((self.resolve)(s.path))
         let is-last = i == steps.len() - 1
         let alt = if s.found {
           "Match found at node " + node-value + "."
@@ -1597,8 +1602,13 @@
       let resolved-op = _resolve-op-theme-arg(theme)
       let resolved-render = _resolve-render-theme-arg(render-theme)
 
+      // Name the target by its label when present (it displays that way);
+      // fall back to the queried key when it isn't in the tree.
+      let del-label = if (self.contains)(v) {
+        tree-anim._alt-label(_resolve-at(self, (self.by-value)(v)))
+      } else { str(v) }
       let init-alt = (
-        "AVL tree: " + (self.describe)() + ". About to delete " + str(v) + "."
+        "AVL tree: " + (self.describe)() + ". About to delete " + del-label + "."
       )
 
       // For compare frames (with search: true), accumulate descended
@@ -1672,8 +1682,8 @@
       )
 
       let direction = if is-right { "right" } else { "left" }
-      let parent-value = str(parent-subtree.value)
-      let child-value-str = str(child-value)
+      let parent-value = tree-anim._alt-label(parent-subtree)
+      let child-value-str = tree-anim._alt-label(child)
 
       let resolved-op = _resolve-op-theme-arg(theme)
       let resolved-render = _resolve-render-theme-arg(render-theme)

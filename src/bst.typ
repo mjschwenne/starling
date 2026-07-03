@@ -93,18 +93,19 @@
 
   let output = ()
   for (i, p) in paths.enumerate() {
-    let value = (self.resolve)(p).value
-    output.push(str(value))
+    let node = (self.resolve)(p)
+    let disp = tree-anim._alt-label(node)
+    output.push(disp)
     captions.push([Output: #raw("[" + output.join(", ") + "]")])
     steps-meta.push((
       kind: "visit",
       path: p,
       index: i + 1,
-      value: value,
+      value: node.value,
     ))
     alts.push(
       "Visited "
-        + str(value)
+        + disp
         + " (visit "
         + str(i + 1)
         + " of "
@@ -357,14 +358,15 @@
       replace-at(self, parent-path, rotated)
     },
     describe: self => {
+      let head = tree-anim._alt-label(self)
       if self.left == none and self.right == none {
-        str(self.value)
+        head
       } else {
         let l = if self.left == none { "empty" } else { (self.left.describe)() }
         let r = if self.right == none { "empty" } else {
           (self.right.describe)()
         }
-        str(self.value) + " (left: " + l + ", right: " + r + ")"
+        head + " (left: " + l + ", right: " + r + ")"
       }
     },
     // Traversal-order helpers. Each returns an array of L/R path strings
@@ -511,7 +513,7 @@
           cmp: s.cmp,
           found: s.found,
         ))
-        let node-value = str((self.resolve)(s.path).value)
+        let node-value = tree-anim._alt-label((self.resolve)(s.path))
         let is-last = i == steps.len() - 1
         let alt = if s.found {
           "Match found at node " + node-value + "."
@@ -610,8 +612,8 @@
       )
 
       let direction = if is-right { "right" } else { "left" }
-      let parent-value = str(parent-subtree.value)
-      let child-value-str = str(child-value)
+      let parent-value = tree-anim._alt-label(parent-subtree)
+      let child-value-str = tree-anim._alt-label(child)
 
       let resolved-theme = _resolve-op-theme-arg(theme)
       let resolved-render-theme = _resolve-render-theme-arg(render-theme)
@@ -791,6 +793,7 @@
       // "highlight", "break", "descend", "transfer", "settle".
       let target-path = (self.by-value)(v)
       let target = (self.resolve)(target-path)
+      let target-label = tree-anim._alt-label(target)
       let after = (self.delete)(v)
 
       let resolved-theme = _resolve-op-theme-arg(theme)
@@ -834,7 +837,7 @@
         "Binary search tree: "
           + (self.describe)()
           + ". About to delete "
-          + str(v)
+          + target-label
           + ".",
       )
       for s in search-steps {
@@ -845,7 +848,7 @@
           cmp: s.cmp,
           found: s.found,
         ))
-        let node-value = str((self.resolve)(s.path).value)
+        let node-value = tree-anim._alt-label((self.resolve)(s.path))
         let alt = if s.found {
           "Found target node " + node-value + "; ready to delete."
         } else {
@@ -865,16 +868,16 @@
           (kind: "break", path: target-path),
         )
         alts-a += (
-          "Marked leaf node " + str(v) + " for deletion.",
-          "Removing the edge to node " + str(v) + ".",
+          "Marked leaf node " + target-label + " for deletion.",
+          "Removing the edge to node " + target-label + ".",
         )
         captions-b.push([Done])
         steps-meta-b.push((kind: "settle"))
-        alts-b.push("Deletion of " + str(v) + " complete.")
+        alts-b.push("Deletion of " + target-label + " complete.")
       } else if is-one-child {
         let has-left = target.left != none
         let child-path = target-path + (if has-left { "L" } else { "R" })
-        let child-value = str((self.resolve)(child-path).value)
+        let child-value = tree-anim._alt-label((self.resolve)(child-path))
 
         captions-a += ([Delete #v], [Mark edges to remove], [Remove])
         steps-meta-a += (
@@ -884,12 +887,12 @@
         )
         alts-a += (
           "Marked node "
-            + str(v)
+            + target-label
             + " for deletion; its single child "
             + child-value
             + " will be promoted.",
-          "Marking edges around node " + str(v) + " for removal.",
-          "Removed node " + str(v) + " and its edges.",
+          "Marking edges around node " + target-label + " for removal.",
+          "Removed node " + target-label + " and its edges.",
         )
         captions-b.push([Reattach])
         steps-meta-b.push((kind: "settle", path: target-path))
@@ -897,7 +900,7 @@
           "Child "
             + child-value
             + " reattached in place of "
-            + str(v)
+            + target-label
             + "; deletion complete.",
         )
       } else {
@@ -908,19 +911,21 @@
         }
         let predecessor-paths = walk-max(target-path + "L")
         let predecessor-path = predecessor-paths.last()
-        let predecessor-value = (self.resolve)(predecessor-path).value
+        let predecessor-node = (self.resolve)(predecessor-path)
+        let predecessor-value = predecessor-node.value
+        let predecessor-label = tree-anim._alt-label(predecessor-node)
 
         captions-a.push([Delete #v])
         steps-meta-a.push((kind: "highlight", path: target-path))
         alts-a.push(
           "Marked node "
-            + str(v)
+            + target-label
             + " for deletion; it has two children, so an in-order predecessor will replace it.",
         )
         for p in predecessor-paths {
           captions-a.push([Find predecessor])
           steps-meta-a.push((kind: "descend", path: p))
-          let pv = str((self.resolve)(p).value)
+          let pv = tree-anim._alt-label((self.resolve)(p))
           alts-a.push("Descending into the left subtree at node " + pv + ".")
         }
         captions-a.push([Transfer #predecessor-value])
@@ -932,18 +937,18 @@
         ))
         alts-a.push(
           "Replacing "
-            + str(v)
+            + target-label
             + " with predecessor value "
-            + str(predecessor-value)
+            + predecessor-label
             + ".",
         )
         captions-b.push([Done])
         steps-meta-b.push((kind: "settle", path: target-path))
         alts-b.push(
           "Deletion of "
-            + str(v)
+            + target-label
             + " complete; node now holds "
-            + str(predecessor-value)
+            + predecessor-label
             + ".",
         )
       }
@@ -1087,7 +1092,7 @@
       for (i, s) in steps.enumerate() {
         captions-a.push(s.cmp)
         steps-meta-a.push((kind: "compare", path: s.path, cmp: s.cmp))
-        let node-value = str((self.resolve)(s.path).value)
+        let node-value = tree-anim._alt-label((self.resolve)(s.path))
         let is-last = i == steps.len() - 1
         let alt = if is-last {
           (

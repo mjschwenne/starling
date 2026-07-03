@@ -744,8 +744,10 @@
 
   for (i, p) in paths.enumerate() {
     let (node-path, key-idx) = split-path(p)
-    let value = (self.resolve)(node-path).keys.at(key-idx)
-    output.push(str(value))
+    let node = (self.resolve)(node-path)
+    let value = node.keys.at(key-idx)
+    let disp = tree-anim._alt-key-label(node, key-idx)
+    output.push(disp)
     captions.push([Output: #raw("[" + output.join(", ") + "]")])
     steps-meta.push((
       kind: "visit",
@@ -755,7 +757,7 @@
     ))
     alts.push(
       "Visited "
-        + str(value)
+        + disp
         + " (visit "
         + str(i + 1)
         + " of "
@@ -1660,7 +1662,9 @@
 // kind to apply the right styling. Captured event payloads are copied
 // at closure-creation time (Typst value semantics), so each frame
 // renders the snapshot for its own event regardless of later events.
-#let _insert-events-to-specs(events, v) = events.map(ev => {
+// `disp` is the human-readable name of the inserted key — its label
+// when a string was supplied, else `str(v)` (see `_alt-key-label`).
+#let _insert-events-to-specs(events, v, disp) = events.map(ev => {
   let caption = none
   let alt = ""
   let step = (kind: ev.kind)
@@ -1671,7 +1675,7 @@
       "2-4 tree: "
         + (ev.tree.describe)()
         + ". About to insert "
-        + str(v)
+        + disp
         + "."
     )
   } else if ev.kind == "compare" {
@@ -1694,7 +1698,7 @@
     step.insert("overflow-path", ev.overflow-path)
   } else if ev.kind == "settled" {
     caption = [Inserted #v]
-    alt = "Inserted " + str(v) + "."
+    alt = "Inserted " + disp + "."
     step.insert("leaf-path", ev.leaf-path)
     step.insert("new-key-idx", ev.new-key-idx)
   }
@@ -1753,7 +1757,10 @@
   (tree: ev.tree, build: build, caption: caption, step: step, alt: alt)
 })
 
-#let _delete-events-to-specs(events, v) = events.map(ev => {
+// `disp` names the deleted key by its label when a string was supplied,
+// else `str(v)` — resolved once up front since a swap can relocate the
+// key mid-descent (see `_alt-key-label`).
+#let _delete-events-to-specs(events, v, disp) = events.map(ev => {
   let caption = none
   let alt = ""
   let step = (kind: ev.kind)
@@ -1763,7 +1770,7 @@
       "2-4 tree: "
         + (ev.tree.describe)()
         + ". About to delete "
-        + str(v)
+        + disp
         + "."
     )
   } else if ev.kind == "compare" {
@@ -1808,7 +1815,7 @@
     step.insert("key-idx", ev.key-idx)
   } else if ev.kind == "td-remove" {
     caption = [Removed #v]
-    alt = "Removed " + str(v) + " from the leaf."
+    alt = "Removed " + disp + " from the leaf."
     step.insert("leaf-path", ev.leaf-path)
   } else if ev.kind == "td-root-collapse" {
     caption = [Root collapsed]
@@ -1946,11 +1953,12 @@
     path-to: (self, v) => {
       // Returns the sequence of comparison records made along the
       // search path. Each record:
-      //   (path, key-idx, key-value, cmp, found)
+      //   (path, key-idx, key-value, key-label, cmp, found)
       // where `path` is the node-path being examined, `key-idx` is
       // the compartment compared, `key-value` is the key at that
-      // compartment, `cmp` is the comparison string, and `found` is
-      // true if v == key-value.
+      // compartment, `key-label` is its display name (label if a string,
+      // else `str(key-value)`), `cmp` is the comparison string, and
+      // `found` is true if v == key-value.
       let walk(node, path) = {
         let scan(i) = {
           if i == node.keys.len() {
@@ -1972,6 +1980,7 @@
               path: path,
               key-idx: i,
               key-value: k,
+              key-label: tree-anim._alt-key-label(node, i),
               cmp: cmp,
               found: v == k,
             )
@@ -2039,7 +2048,9 @@
     },
 
     describe: self => {
-      let key-str = self.keys.map(str).join(", ")
+      let key-str = range(self.keys.len())
+        .map(i => tree-anim._alt-key-label(self, i))
+        .join(", ")
       if _is-leaf(self) {
         "[" + key-str + "]"
       } else {
@@ -2167,6 +2178,7 @@
                 path: path,
                 key-idx: node.keys.len() - 1,
                 key-value: k,
+                key-label: tree-anim._alt-key-label(node, node.keys.len() - 1),
                 cmp: str(v) + " > " + str(k),
                 found: false,
               ),)
@@ -2184,6 +2196,7 @@
               path: path,
               key-idx: i,
               key-value: k,
+              key-label: tree-anim._alt-key-label(node, i),
               cmp: cmp,
               found: v == k,
             )
@@ -2221,13 +2234,13 @@
         ))
         let is-last = i == cmps.len() - 1
         let alt = if c.found {
-          "Match found at key " + str(c.key-value) + "."
+          "Match found at key " + c.key-label + "."
         } else if is-last {
           (
             "Comparing "
               + c.cmp
               + " at key "
-              + str(c.key-value)
+              + c.key-label
               + "; search ends here, "
               + str(v)
               + " is not in the tree."
@@ -2237,7 +2250,7 @@
             "Comparing "
               + c.cmp
               + " at key "
-              + str(c.key-value)
+              + c.key-label
               + "; continuing search."
           )
         }
@@ -2295,7 +2308,11 @@
             + "; supported: \"top-down\", \"bottom-up\".",
         )
       }
-      let specs = _delete-events-to-specs(events, v)
+      // Resolve the deleted key's display name up front (v is guaranteed
+      // present here — delete-display panics otherwise).
+      let bp = (self.by-value)(v).split("#")
+      let disp = tree-anim._alt-key-label(_resolve-at(self, bp.at(0)), int(bp.at(1)))
+      let specs = _delete-events-to-specs(events, v, disp)
       _make-frames-multi(
         specs,
         _resolve-op-theme-arg(theme),
@@ -2323,7 +2340,9 @@
             + "; supported: \"top-down\", \"bottom-up\".",
         )
       }
-      let specs = _insert-events-to-specs(events, v)
+      // The inserted key displays its label when a string was given.
+      let disp = if type(label) == str { label } else { str(v) }
+      let specs = _insert-events-to-specs(events, v, disp)
       _make-frames-multi(
         specs,
         _resolve-op-theme-arg(theme),

@@ -575,6 +575,7 @@
       target-path: target-path,
       predecessor-path: pred-path,
       new-value: pred-node.value,
+      new-label: tree-anim._alt-label(pred-node),
       tree: cur-tree,
     ))
     excise-path = pred-path
@@ -1270,7 +1271,7 @@
     },
     describe: self => {
       let c = if self.red { "R" } else { "B" }
-      let head = str(self.value) + c
+      let head = tree-anim._alt-label(self) + c
       if self.left == none and self.right == none {
         head
       } else {
@@ -1610,11 +1611,16 @@
       let resolved-rbt = _resolve-rbt-theme-arg(theme)
       let resolved-render = _resolve-render-theme-arg(render-theme)
 
+      // Name the target by its label when present (it displays that way);
+      // fall back to the queried key when it isn't in the tree.
+      let del-label = if (self.contains)(v) {
+        tree-anim._alt-label(_resolve-at(self, (self.by-value)(v)))
+      } else { str(v) }
       let init-alt = (
         "Red-black tree: "
           + (self.describe)()
           + ". About to delete "
-          + str(v)
+          + del-label
           + "."
       )
 
@@ -1779,8 +1785,9 @@
           step = (kind: "init")
           alt = init-alt
         } else if event.kind == "compare" {
-          let nv = _resolve-at(event.tree, event.path).value
-          let cmp-text = str(v) + " " + event.cmp + " " + str(nv)
+          let node = _resolve-at(event.tree, event.path)
+          let cmp-text = str(v) + " " + event.cmp + " " + str(node.value)
+          let nlabel = tree-anim._alt-label(node)
           caption = cmp-text
           step = (
             kind: "compare",
@@ -1789,9 +1796,9 @@
             found: event.found,
           )
           alt = if event.found {
-            "Match found at node " + str(nv) + "; ready to delete."
+            "Match found at node " + nlabel + "; ready to delete."
           } else {
-            "Comparing " + cmp-text + " at node " + str(nv) + "; descending."
+            "Comparing " + cmp-text + " at node " + nlabel + "; descending."
           }
         } else if event.kind == "descend" {
           caption = [Search for #v]
@@ -1804,11 +1811,13 @@
           step = (kind: "not-found")
           alt = str(v) + " is not in the tree; nothing to delete."
         } else if event.kind == "mark-target" {
+          let tlabel = tree-anim._alt-label(_resolve-at(event.tree, event.target-path))
           caption = [Delete #v]
           step = (kind: "mark-target", path: event.target-path)
-          alt = "Marked node " + str(v) + " for deletion."
+          alt = "Marked node " + tlabel + " for deletion."
         } else if event.kind == "find-predecessor" {
-          let pv = _resolve-at(event.tree, event.predecessor-path).value
+          let tlabel = tree-anim._alt-label(_resolve-at(event.tree, event.target-path))
+          let pv = tree-anim._alt-label(_resolve-at(event.tree, event.predecessor-path))
           caption = [Find predecessor]
           step = (
             kind: "find-predecessor",
@@ -1818,9 +1827,9 @@
           )
           alt = (
             "Node "
-              + str(v)
+              + tlabel
               + " has two children; walking the left subtree to find the in-order predecessor: "
-              + str(pv)
+              + pv
               + "."
           )
         } else if event.kind == "transfer" {
@@ -1832,7 +1841,7 @@
           )
           alt = (
             "Copied predecessor's value "
-              + str(event.new-value)
+              + event.new-label
               + " into the target slot; about to remove the predecessor node."
           )
         } else if event.kind == "excise" {

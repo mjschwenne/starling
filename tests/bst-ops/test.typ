@@ -182,3 +182,12 @@
 #assert.eq(tfl.label, "four")
 #assert.eq(((tfl.resolve)((tfl.by-value)(7))).label, "seven")
 #assert.eq(((tfl.resolve)((tfl.by-value)(1))).label, auto)
+
+// Captions and alt text name a node by its string label when it has one,
+// falling back to the ordering value otherwise (node 1 is unlabelled).
+#assert.eq((tfl.describe)(), "four (left: 1, right: seven)")
+#assert.eq((tfl.search-display)(7).last().alt, "Match found at node seven.")
+#assert.eq(
+  (tfl.in-order-display)().at(2).alt,
+  "Visited four (visit 2 of 3); output so far: 1, four.",
+)

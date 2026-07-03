@@ -40,6 +40,31 @@
 #import "./anim-core.typ" as core
 
 // ===================================================================
+// Alt-text / caption node labels
+// ===================================================================
+
+// Human-readable reference to a node for captions and alt text. A node
+// visually displays its `label` whenever that is set to a string (see
+// `draw-tree.draw-node`, which falls back to `str(value)` only for
+// `auto`), so text that refers to the node should read the same way.
+// We use the label only when it is a plain string — `auto` or arbitrary
+// content can't be spliced into an alt-text string — otherwise falling
+// back to the ordering `value`. Binary trees (BST/AVL/RBT) carry the
+// `value`/`label` pair.
+#let _alt-label(node) = if type(node.label) == str {
+  node.label
+} else {
+  str(node.value)
+}
+
+// N-ary (B24) analog: a node carries parallel `keys`/`labels` arrays, so
+// a reference names one compartment `i`. Same string-only rule.
+#let _alt-key-label(node, i) = {
+  let l = node.labels.at(i, default: auto)
+  if type(l) == str { l } else { str(node.keys.at(i)) }
+}
+
+// ===================================================================
 // Path identity
 // ===================================================================
 

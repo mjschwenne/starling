@@ -108,30 +108,36 @@
   let n = order.len()
   let searching = target != none
   let found = searching and order.contains(target)
+  // A node displays its `label` when that's a string, else its id (see
+  // `draw-graph`); captions and alt text follow the same rule.
+  let label-of = id => {
+    let l = self.nodes.at(id).at("label", default: auto)
+    if type(l) == str { l } else { id }
+  }
   // Format an aux snapshot (array of ids) for the alt-text track.
   let aux-label = if aux-kind == "queue" { "Queue" } else if aux-kind == "stack" { "Stack" } else { "Structure" }
-  let aux-str = a => if a.len() == 0 { "(empty)" } else { "[" + a.join(", ") + "]" }
+  let aux-str = a => if a.len() == 0 { "(empty)" } else { "[" + a.map(label-of).join(", ") + "]" }
   let aux-note = a => if aux-kind == none { "" } else { " " + aux-label + " now: " + aux-str(a) + "." }
   let captions = (none,)
   let steps-meta = ((kind: "init", aux: aux.at(0, default: ()), aux-kind: aux-kind),)
   let start = if n > 0 { order.first() } else { "" }
   let intro = if searching {
-    "About to search " + name + " from " + start + " for " + target + "."
+    "About to search " + name + " from " + label-of(start) + " for " + label-of(target) + "."
   } else {
-    "About to traverse " + name + " from " + start + "."
+    "About to traverse " + name + " from " + label-of(start) + "."
   }
   let init-aux = if aux-kind == none { "" } else { " " + aux-label + " starts: " + aux-str(aux.at(0, default: ())) + "." }
   let alts = ("Graph: " + (self.describe)() + ". " + intro + init-aux,)
   let output = ()
   for (i, id) in order.enumerate() {
-    output.push(id)
+    output.push(label-of(id))
     captions.push([Visited: #raw("[" + output.join(", ") + "]")])
     let a = aux.at(i + 1, default: ())
     steps-meta.push((kind: "visit", node: id, index: i + 1, aux: a, aux-kind: aux-kind))
     let suffix = if searching and id == target { " — this is the target." } else { "." }
     alts.push(
       "Visited "
-        + id
+        + label-of(id)
         + " (visit "
         + str(i + 1)
         + " of "
@@ -144,16 +150,16 @@
   if searching {
     let a = aux.at(-1, default: ())
     if found {
-      captions.push([Found #target])
+      captions.push([Found #label-of(target)])
       steps-meta.push((kind: "found", node: target, visits: n, aux: a, aux-kind: aux-kind))
       alts.push(
-        "Found " + target + " after visiting " + str(n) + " node(s); the search stops here.",
+        "Found " + label-of(target) + " after visiting " + str(n) + " node(s); the search stops here.",
       )
     } else {
-      captions.push([#target not found])
+      captions.push([#label-of(target) not found])
       steps-meta.push((kind: "not-found", target: target, visits: n, aux: a, aux-kind: aux-kind))
       alts.push(
-        "Visited all " + str(n) + " reachable node(s); " + target + " was not found.",
+        "Visited all " + str(n) + " reachable node(s); " + label-of(target) + " was not found.",
       )
     }
   }
@@ -738,17 +744,22 @@
     },
     describe: (self) => {
       let ids = self.nodes.keys()
+      // A node reads by its string label when it has one, else its id.
+      let label-of = id => {
+        let l = self.nodes.at(id).at("label", default: auto)
+        if type(l) == str { l } else { id }
+      }
       let kind = if self.directed { "directed" } else { "undirected" }
       let edge-strs = self.edges.map(e => {
         let conn = if self.directed { " -> " } else { " - " }
-        e.u + conn + e.v + " (w=" + str(e.weight) + ")"
+        label-of(e.u) + conn + label-of(e.v) + " (w=" + str(e.weight) + ")"
       })
       (
         kind
           + " graph with "
           + str(ids.len())
           + " nodes ("
-          + ids.join(", ")
+          + ids.map(label-of).join(", ")
           + ") and "
           + str(self.edges.len())
           + " edges: "
@@ -1005,10 +1016,15 @@
           weight: e.weight,
           status: if mark-chosen and i == 0 { "chosen" } else { "candidate" },
         ))
+      // Nodes read by their string label when they have one, else by id.
+      let label-of = id => {
+        let l = self.nodes.at(id).at("label", default: auto)
+        if type(l) == str { l } else { id }
+      }
       let pq-note(items) = if items.len() == 0 {
         " Frontier is empty."
       } else {
-        let listing = items.map(it => it.u + "–" + it.v + " (" + str(it.weight) + ")").join(", ")
+        let listing = items.map(it => label-of(it.u) + "–" + label-of(it.v) + " (" + str(it.weight) + ")").join(", ")
         " Frontier: " + listing + "."
       }
 
@@ -1021,14 +1037,14 @@
         if m.kind == "init" {
           captions.push([Start at #start])
           steps-meta.push((kind: "init", start: start, aux: pq, aux-kind: "pq"))
-          alts.push(pfx + "Starting Prim's algorithm at node " + start + "." + pq-note(pq))
+          alts.push(pfx + "Starting Prim's algorithm at node " + label-of(start) + "." + pq-note(pq))
         } else if m.kind == "consider" {
           let c = m.chosen
           captions.push([Min crossing edge: #(c.u)–#(c.v) (#(c.weight))])
           steps-meta.push((kind: "consider", edge: (c.u, c.v), weight: c.weight, aux: pq, aux-kind: "pq"))
           alts.push(
             "Examining the frontier; the lightest crossing edge is "
-              + c.u + "–" + c.v + " with weight " + str(c.weight) + "." + pq-note(pq),
+              + label-of(c.u) + "–" + label-of(c.v) + " with weight " + str(c.weight) + "." + pq-note(pq),
           )
         } else if m.kind == "commit" {
           let c = m.chosen
@@ -1042,7 +1058,7 @@
             aux-kind: "pq",
           ))
           alts.push(
-            "Adding edge " + c.u + "–" + c.v + " and node " + m.new-node
+            "Adding edge " + label-of(c.u) + "–" + label-of(c.v) + " and node " + label-of(m.new-node)
               + "; tree weight is now " + str(m.total) + "." + pq-note(pq),
           )
         } else if m.kind == "done" {
@@ -1224,8 +1240,13 @@
         }
         order.map(r => groups.at(r))
       }
+      // Nodes read by their string label when they have one, else by id.
+      let label-of = id => {
+        let l = self.nodes.at(id).at("label", default: auto)
+        if type(l) == str { l } else { id }
+      }
       let aux-note(m) = {
-        let listing = partition(m.parent).map(g => "{" + g.join(", ") + "}").join(" ")
+        let listing = partition(m.parent).map(g => "{" + g.map(label-of).join(", ") + "}").join(" ")
         " Components: " + listing + "."
       }
       let aux-views-of(m) = (
@@ -1250,13 +1271,13 @@
           let e = m.edge
           captions.push([Consider #(e.u)–#(e.v) (#(e.weight))])
           steps-meta.push((kind: "consider", edge: (e.u, e.v), weight: e.weight, aux-views: views))
-          alts.push("Considering edge " + e.u + "–" + e.v + " with weight " + str(e.weight) + "." + aux-note(m))
+          alts.push("Considering edge " + label-of(e.u) + "–" + label-of(e.v) + " with weight " + str(e.weight) + "." + aux-note(m))
         } else if m.kind == "add" {
           let e = m.edge
           captions.push([Add #(e.u)–#(e.v); weight #(m.total)])
           steps-meta.push((kind: "add", edge: (e.u, e.v), total: m.total, aux-views: views))
           alts.push(
-            e.u + " and " + e.v + " are in different components; add the edge and merge them. Total weight "
+            label-of(e.u) + " and " + label-of(e.v) + " are in different components; add the edge and merge them. Total weight "
               + str(m.total) + "." + aux-note(m),
           )
         } else if m.kind == "reject" {
@@ -1264,7 +1285,7 @@
           captions.push([Reject #(e.u)–#(e.v) (cycle)])
           steps-meta.push((kind: "reject", edge: (e.u, e.v), aux-views: views))
           alts.push(
-            e.u + " and " + e.v + " are already connected; this edge would form a cycle, so skip it."
+            label-of(e.u) + " and " + label-of(e.v) + " are already connected; this edge would form a cycle, so skip it."
               + aux-note(m),
           )
         } else if m.kind == "done" {
@@ -1415,6 +1436,11 @@
       ))
 
       let pfx = "Shortest paths (Dijkstra) on " + (self.describe)() + ". "
+      // Nodes read by their string label when they have one, else by id.
+      let label-of = id => {
+        let l = self.nodes.at(id).at("label", default: auto)
+        if type(l) == str { l } else { id }
+      }
       let captions = ()
       let steps-meta = ()
       let alts = ()
@@ -1422,24 +1448,24 @@
         if m.kind == "init" {
           captions.push([Initialize: #source = 0])
           steps-meta.push((kind: "init", source: source))
-          alts.push(pfx + "Initialize tentative distances: " + source + " = 0, all others infinity.")
+          alts.push(pfx + "Initialize tentative distances: " + label-of(source) + " = 0, all others infinity.")
         } else if m.kind == "select" {
           captions.push([Visit #(m.u) (#(dlabel(m.dist.at(m.u))))])
           steps-meta.push((kind: "select", node: m.u, dist: m.dist.at(m.u)))
           alts.push(
-            "Selecting " + m.u + ", the unvisited node with the smallest tentative distance ("
+            "Selecting " + label-of(m.u) + ", the unvisited node with the smallest tentative distance ("
               + dlabel(m.dist.at(m.u)) + "); finalizing it.",
           )
         } else if m.kind == "relax" {
           captions.push([Relax from #(m.u)])
           steps-meta.push((kind: "relax", node: m.u, relaxed: m.relaxed))
-          alts.push("Relaxing edges out of " + m.u + "; " + str(m.relaxed.len()) + " distance(s) improved.")
+          alts.push("Relaxing edges out of " + label-of(m.u) + "; " + str(m.relaxed.len()) + " distance(s) improved.")
         } else {
           if target != none {
             captions.push([Shortest path to #target: #(dlabel(m.dist.at(target)))])
             steps-meta.push((kind: "done", target: target, dist: m.dist.at(target)))
             alts.push(
-              "Dijkstra complete; shortest distance from " + source + " to " + target + " is "
+              "Dijkstra complete; shortest distance from " + label-of(source) + " to " + label-of(target) + " is "
                 + dlabel(m.dist.at(target)) + ".",
             )
           } else {
