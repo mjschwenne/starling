@@ -230,7 +230,11 @@
 /// node rather than a zero-length line. An edge-style #raw("bend")
 /// (cetz units, positive = left of the u→v direction) curves the edge
 /// into an arc; giving a mutual directed pair the same bend fans the two
-/// arcs to opposite sides so they no longer overlap into one line.
+/// arcs to opposite sides so they no longer overlap into one line. A
+/// straight edge's weight/label sits off the line by the edge-style
+/// #raw("label-offset") (signed cetz units, default #raw("0.12")): its
+/// sign picks the side (positive = left of the u→v direction, negative =
+/// right — same convention as #raw("bend")) and its magnitude the gap.
 ///
 /// -> content
 #let draw-graph(
@@ -376,8 +380,13 @@
       // Intrinsic weight/label, off the line; snapshot `tag` overrides.
       // Push by a small gap, not to the box center, and anchor the box's
       // near side so a wide multi-digit weight grows away from the edge.
+      // `label-offset` (signed cetz units) chooses the side: positive =
+      // left of the u->v direction (same sign convention as `bend`),
+      // negative = right; the magnitude is the gap. `_tag-anchor` reads
+      // the signed offset, so flipping the sign moves the label to the
+      // other side *and* keeps its box growing away from the line.
       if tag != none {
-        let (ox, oy) = _perp-offset(dx, dy, 0.12)
+        let (ox, oy) = _perp-offset(dx, dy, s.at("label-offset", default: 0.12))
         _edge-tag(
           draw,
           (mid.at(0) + ox, mid.at(1) + oy),

@@ -61,6 +61,7 @@
   "child-anchor",
   "force-show",
   "bend",
+  "label-offset",
 )
 
 /// Typsy refinement: a dictionary of node-style overrides. Recognised
@@ -110,7 +111,8 @@
 /// Typsy refinement: a dictionary of edge-style overrides. Recognised
 /// keys are #raw("stroke"), #raw("note"), #raw("note-fill"),
 /// #raw("tag"), #raw("mark"), #raw("hide"), #raw("parent-anchor"),
-/// #raw("child-anchor"), #raw("force-show"), and #raw("bend"). The two
+/// #raw("child-anchor"), #raw("force-show"), #raw("bend"), and
+/// #raw("label-offset"). The two
 /// #raw("*-anchor") keys accept a cetz anchor name (e.g.
 /// #raw("\"north\"")) and override the default fractional-distance
 /// endpoint on the parent or child side respectively; useful for
@@ -129,6 +131,11 @@
 /// the straight midpoint pushed perpendicular by this amount (positive =
 /// left of the u→v direction). Giving a mutual directed pair the same
 /// bend fans the two arcs apart so they don't overlap into one line.
+/// #raw("label-offset") is a graph-only number (signed cetz units,
+/// default #raw("0.12")) that seats a straight edge's weight/label off
+/// the line: its sign picks the side (positive = left of the u→v
+/// direction, negative = right — same convention as #raw("bend")) and
+/// its magnitude the gap.
 #let EdgeStyle = Refine(
   Dictionary(..Any),
   d => d.keys().all(k => _edge-style-keys.contains(k)),
