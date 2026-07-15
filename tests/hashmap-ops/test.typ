@@ -56,6 +56,24 @@
 #assert.eq((r.size)(), 3)
 #assert((r.check-invariants)())
 
+// ---- Double hashing ----
+// h1 = k mod 7, h2 = 1 + (k mod 6). For 28: h1=0, h2=5 -> 0,5,3,1,6,4,2.
+#let d = hashmap(7, strategy: "double", entries: (14, 21, 7))
+#assert.eq((d.probe-seq)(28), (0, 5, 3, 1, 6, 4, 2))
+#assert.eq((d.slots).at(0).key, 14) // h1(14)=0
+#assert.eq((d.slots).at(4).key, 21) // 0 + h2(21)=4 -> slot 4
+#assert.eq((d.slots).at(2).key, 7) //  0 + h2(7)=2  -> slot 2
+#let d2 = (d.insert)(28) // 0 occupied, +5 -> slot 5
+#assert.eq((d2.slots).at(5).key, 28)
+#assert((d2.contains)(28) and (d2.contains)(21))
+// A constant second hash makes the step fixed (must stay coprime to m
+// for full coverage — 3 is coprime to 7).
+#let dc = hashmap(7, strategy: "double", hash2: (k, m) => 3, hash2-repr: "3")
+#assert.eq((dc.probe-seq)(0), (0, 3, 6, 2, 5, 1, 4))
+// A zero step is bumped to 1 so the probe never stalls.
+#let dz = hashmap(5, strategy: "double", hash2: (k, m) => 0, hash2-repr: "0")
+#assert.eq((dz.probe-seq)(0), (0, 1, 2, 3, 4))
+
 // ---- Custom hash function + repr ----
 #let cu = hashmap(
   8,

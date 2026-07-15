@@ -384,7 +384,19 @@
     let (bc0, bc1, bcenter) = _cell-geom(idx, orientation)
     let hb-stroke = render-theme.at("hash-box-stroke", default: render-theme.node-stroke)
     let hb-fill = render-theme.at("hash-box-fill", default: white)
-    let body = [h(#hb.key) = #hb.expr = #text(weight: "bold")[#hb.index]]
+    // Double hashing carries a second-hash line (the step size); other
+    // strategies show the single hash line.
+    let expr2 = hb.at("expr2", default: none)
+    let body = if expr2 == none {
+      [h(#hb.key) = #hb.expr = #text(weight: "bold")[#hb.index]]
+    } else {
+      stack(
+        dir: ttb,
+        spacing: 0.35em,
+        [h₁(#hb.key) = #hb.expr = #text(weight: "bold")[#hb.index]],
+        [h₂(#hb.key) = #expr2 = #text(weight: "bold")[#hb.step]],
+      )
+    }
     if orientation == "vertical" {
       // Box to the left of the target cell, arrow pointing right.
       let anchor-pt = (bc0.at(0) - 1.6, bcenter.at(1))

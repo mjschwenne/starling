@@ -1308,12 +1308,14 @@ entrypoint is the only way to reach `auto-layout`; the older
 
 A `HashMap` is a fixed-length array of `capacity` slots. Keys are placed
 by a *pluggable hash function* `(key, m) => index`, and collisions are
-resolved by one of three strategies chosen at construction:
+resolved by one of four strategies chosen at construction:
 
 - `"chaining"` — separate chaining; each slot holds a linked list of
   entries.
 - `"linear"` — open addressing; on a collision probe `(h + i) mod m`.
 - `"quadratic"` — open addressing; on a collision probe `(h + i*i) mod m`.
+- `"double"` — open addressing; on a collision probe
+  `(h1 + i * h2) mod m`, taking the step size from a *second* hash `h2`.
 
 Unlike the trees and graphs, a hash table has no per-node layout to
 supply — the array geometry is fixed — so the display methods take only
@@ -1334,7 +1336,10 @@ The hash function and the formula shown on screen are both configurable.
 with `k` (the key) and `m` (the capacity) substituted as whole words —
 so write them as standalone tokens (`"k mod m"`, `"(k * 31) mod m"`),
 not glued to a coefficient (`"3k"` would not substitute the `k`). The
-default is the division method `k mod m`.
+default is the division method `k mod m`. Double hashing takes a second
+pair, `hash2:` / `hash2-repr:`, for the probe step (default
+`1 + (k mod (m - 1))`, which stays nonzero and — when `m` is prime —
+coprime to `m`, so the probe visits every slot).
 
 ```typ
 #let h = hashmap(
@@ -1396,6 +1401,19 @@ full* frame.
 
 #align(center, starling.stacked(
   (starling.hashmap(7, strategy: "quadratic", entries: (0, 7, 14)).insert-display)(21),
+))
+
+== Double hashing
+
+Double hashing keeps the entries in the array like the other open
+schemes, but the *step size* between probes comes from a second hash
+`h2(key)` rather than a fixed pattern — so two keys that collide at the
+same home slot generally walk different slots afterwards, avoiding the
+clustering of linear probing. The hash box shows both hashes: `h₁` (the
+home slot) and `h₂` (the step).
+
+#align(center, starling.stacked(
+  (starling.hashmap(7, strategy: "double", entries: (14, 21, 7)).insert-display)(28),
 ))
 
 == Search

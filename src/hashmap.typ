@@ -141,9 +141,20 @@
   if r < 0 { r + hm.capacity } else { r }
 }
 
+// The (nonzero) step size for double hashing: the second hash function
+// normalized into [1, m). A zero step would stall the probe, so it's
+// bumped to 1.
+#let _hash2-step(hm, key) = {
+  let raw = (hm.hash2.fn)(key, hm.capacity)
+  let s = calc.rem(raw, hm.capacity)
+  if s < 0 { s = s + hm.capacity }
+  if s == 0 { 1 } else { s }
+}
+
 // The open-addressing probe sequence for `key`: `capacity` indices in
-// probe order. Linear steps by i; quadratic by i*i (both mod m). For
-// chaining there is a single relevant bucket, so we return `(h,)`.
+// probe order. Linear steps by i; quadratic by i*i; double hashing by
+// i * h2(key) (all mod m). For chaining there is a single relevant
+// bucket, so we return `(h,)`.
 #let _probe-seq(hm, key) = {
   let h = _hash-index(hm, key)
   let m = hm.capacity
@@ -151,25 +162,28 @@
     (h,)
   } else if hm.strategy == "linear" {
     range(m).map(i => calc.rem(h + i, m))
-  } else {
+  } else if hm.strategy == "quadratic" {
     range(m).map(i => calc.rem(h + i * i, m))
+  } else {
+    let step = _hash2-step(hm, key)
+    range(m).map(i => calc.rem(h + i * step, m))
   }
 }
 
-// Render the middle of the hash-box formula: substitute the key for `k`
-// and the capacity for `m` in `hash-repr` (word-boundary regex so `mod`
-// is left intact).
-// Double-backslash so the Typst string carries a literal `\b` into the
-// regex engine as a word boundary (a single `\b` would be a backspace
-// char and never match). Parenthesised so the multi-line method chain is
-// read as one expression (a bare `#let x = a\n  .f()` ends at the
-// newline at module scope).
-#let _expr-of(hm, key) = (
-  hm
-    .hash-repr
+// Substitute the key for `k` and the capacity for `m` in a hash-repr
+// string (word-boundary regex so `mod` is left intact). Double-backslash
+// so the Typst string carries a literal `\b` into the regex engine as a
+// word boundary (a single `\b` would be a backspace char and never
+// match). Parenthesised so the multi-line method chain is read as one
+// expression (a bare `#let x = a\n  .f()` ends at the newline at module
+// scope).
+#let _sub-repr(repr, key, m) = (
+  repr
     .replace(regex("\\bk\\b"), str(key))
-    .replace(regex("\\bm\\b"), str(hm.capacity))
+    .replace(regex("\\bm\\b"), str(m))
 )
+#let _expr-of(hm, key) = _sub-repr(hm.hash-repr, key, hm.capacity)
+#let _expr2-of(hm, key) = _sub-repr(hm.hash2-repr, key, hm.capacity)
 
 #let _make-entry(key, value, label) = (
   key: key,
@@ -250,6 +264,8 @@
   strategy: hm.strategy,
   hash: hm.hash,
   hash-repr: hm.hash-repr,
+  hash2: hm.hash2,
+  hash2-repr: hm.hash2-repr,
   slots: slots,
 )
 
@@ -271,12 +287,23 @@
 
 // The hash-box overlay dict for `key` on `hm` (an operation annotation
 // pointing at the initial hash slot). `index` is where the hash sends
-// the key before any probing.
-#let _hash-box(hm, key) = (
-  key: key,
-  expr: _expr-of(hm, key),
-  index: _hash-index(hm, key),
-)
+// the key before any probing. For double hashing it also carries the
+// second-hash formula (`expr2`) and its step value (`step`), which the
+// backend renders as a second line.
+#let _hash-box(hm, key) = {
+  let base = (
+    key: key,
+    expr: _expr-of(hm, key),
+    index: _hash-index(hm, key),
+    expr2: none,
+    step: none,
+  )
+  if hm.strategy == "double" {
+    base.expr2 = _expr2-of(hm, key)
+    base.step = _hash2-step(hm, key)
+  }
+  base
+}
 
 // Build Frame records from per-frame specs. Each spec carries:
 //   table  — the positioned table for that frame
@@ -677,6 +704,8 @@
     strategy: hm.strategy,
     hash: hm.hash,
     hash-repr: hm.hash-repr,
+    hash2: hm.hash2,
+    hash2-repr: hm.hash2-repr,
     slots: empty-slots,
   )
   specs.push((
@@ -721,11 +750,12 @@
 // HashMap class
 // ===================================================================
 
-#let _strategies = ("chaining", "linear", "quadratic")
+#let _strategies = ("chaining", "linear", "quadratic", "double")
 
 /// Typsy class representing a hash table with a pluggable hash function
-/// and one of three collision strategies (#raw("\"chaining\""),
-/// #raw("\"linear\""), #raw("\"quadratic\"")). Build one via the
+/// and one of four collision strategies (#raw("\"chaining\""),
+/// #raw("\"linear\""), #raw("\"quadratic\""), #raw("\"double\"")). Build
+/// one via the
 /// @@hashmap() factory. Pure operations (#raw("hash-of"),
 /// #raw("probe-seq"), #raw("insert"), #raw("contains"), #raw("get"),
 /// #raw("delete"), #raw("resize"), #raw("load-factor"),
@@ -742,6 +772,11 @@
     // (same trick as `Frame._builder` / `Renderer.draw`).
     hash: Dictionary(..Any),
     hash-repr: Str,
+    // The second hash function (step size) for double hashing, same
+    // singleton-dict wrapping. Unused by the other strategies but always
+    // present (typsy classes have fixed fields).
+    hash2: Dictionary(..Any),
+    hash2-repr: Str,
     // length == capacity; element type depends on strategy (see header).
     slots: Array(..Any),
   ),
@@ -843,6 +878,8 @@
         strategy: self.strategy,
         hash: self.hash,
         hash-repr: self.hash-repr,
+        hash2: self.hash2,
+        hash2-repr: self.hash2-repr,
         slots: empty,
       )
       for e in _live-entries(self) {
@@ -856,7 +893,9 @@
         "separate chaining"
       } else if self.strategy == "linear" {
         "linear probing"
-      } else { "quadratic probing" }
+      } else if self.strategy == "quadratic" {
+        "quadratic probing"
+      } else { "double hashing" }
       let contents = _live-entries(self)
         .map(e => {
           if e.value == none { e.label } else { e.label + "=" + repr(e.value) }
@@ -990,16 +1029,19 @@
 /// #raw("strategy"), a pluggable #raw("hash") function
 /// #raw("(key, m) => index"), and a display #raw("hash-repr") string
 /// (with #raw("k") = key and #raw("m") = capacity, e.g.
-/// #raw("\"k mod m\"")). Optionally seed it by inserting each item in
-/// #raw("entries") (a bare key, or a #raw("(key, value)") pair).
+/// #raw("\"k mod m\"")). For the #raw("\"double\"") strategy a second
+/// hash #raw("hash2") supplies the probe step size (with its own
+/// #raw("hash2-repr")); it is ignored by the other strategies.
+/// Optionally seed it by inserting each item in #raw("entries") (a bare
+/// key, or a #raw("(key, value)") pair).
 ///
 /// -> HashMap
 #let hashmap(
   /// Number of array slots (m). Must be positive.
   /// -> int
   capacity,
-  /// Collision resolution: #raw("\"chaining\""), #raw("\"linear\""), or
-  /// #raw("\"quadratic\"").
+  /// Collision resolution: #raw("\"chaining\""), #raw("\"linear\""),
+  /// #raw("\"quadratic\""), or #raw("\"double\"").
   /// -> str
   strategy: "chaining",
   /// The hash function #raw("(key, m) => index"). Default is the
@@ -1010,6 +1052,18 @@
   /// #raw("k") and #raw("m") are substituted with the key and capacity.
   /// -> str
   hash-repr: "k mod m",
+  /// The second hash function #raw("(key, m) => step") used by the
+  /// #raw("\"double\"") strategy to size each probe step. The step is
+  /// normalized into #raw("[1, m)") (a zero step becomes #raw("1")).
+  /// Default #raw("1 + (k mod (m - 1))"), which is nonzero and — when
+  /// #raw("m") is prime — coprime to #raw("m"), so the probe sequence
+  /// visits every slot.
+  /// -> function
+  hash2: (k, m) => 1 + calc.rem(k, m - 1),
+  /// Display form of the second hash, shown on the hash box's second
+  /// line for double hashing.
+  /// -> str
+  hash2-repr: "1 + (k mod (m - 1))",
   /// Items to seed the table with — each a bare key or a
   /// #raw("(key, value)") pair, inserted in order.
   /// -> array
@@ -1028,6 +1082,8 @@
     strategy: strategy,
     hash: (fn: hash),
     hash-repr: hash-repr,
+    hash2: (fn: hash2),
+    hash2-repr: hash2-repr,
     slots: slots,
   )
   for e in entries {
