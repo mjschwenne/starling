@@ -40,6 +40,25 @@
   make-graph-renderer,
   GraphNodeId,
 )
+// Hash map — a fixed array of slots addressed by a pluggable hash
+// function, with three collision strategies (chaining / linear /
+// quadratic probing). Names don't collide with anything, so it's
+// re-exported flat (unlike the namespaced git DSL).
+#import "./hashmap.typ": (
+  HashMap,
+  hashmap,
+  default-hashmap-theme,
+  set-hashmap-theme,
+  HashmapTheme,
+  _hashmap-theme-state,
+)
+#import "./hashmap-draw.typ": (
+  draw-hashmap,
+  cell-anchor,
+  cell-key,
+  entry-key,
+  make-hashmap-renderer,
+)
 // Git graph — a stateful cetz DSL (commits, branches, merges, tags,
 // HEAD/branch pointers). Unlike the tree/graph structures it does NOT
 // ride the `Frame` stack, so the frame helpers below (`last`, `stacked`,

@@ -1304,6 +1304,152 @@ in. (Typst has no subpath package import, so re-exporting from the
 entrypoint is the only way to reach `auto-layout`; the older
 `@preview/starling:<ver>/src/graph-layout.typ` form never worked.)
 
+= Hash map animations tour
+
+A `HashMap` is a fixed-length array of `capacity` slots. Keys are placed
+by a *pluggable hash function* `(key, m) => index`, and collisions are
+resolved by one of three strategies chosen at construction:
+
+- `"chaining"` — separate chaining; each slot holds a linked list of
+  entries.
+- `"linear"` — open addressing; on a collision probe `(h + i) mod m`.
+- `"quadratic"` — open addressing; on a collision probe `(h + i*i) mod m`.
+
+Unlike the trees and graphs, a hash table has no per-node layout to
+supply — the array geometry is fixed — so the display methods take only
+an `orientation:` (`"horizontal"`, the default, or `"vertical"`) and a
+`scale:`, alongside the usual `theme:` / `render-theme:`.
+
+== Construction
+
+Build one with the `hashmap(..)` factory. `entries:` seeds the table by
+inserting each item in order (a bare key, or a `(key, value)` pair):
+
+```typ
+#let h = hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13))
+```
+
+The hash function and the formula shown on screen are both configurable.
+`hash:` is any `(key, m) => index`; `hash-repr:` is its display form,
+with `k` (the key) and `m` (the capacity) substituted as whole words —
+so write them as standalone tokens (`"k mod m"`, `"(k * 31) mod m"`),
+not glued to a coefficient (`"3k"` would not substitute the `k`). The
+default is the division method `k mod m`.
+
+```typ
+#let h = hashmap(
+  8,
+  strategy: "linear",
+  hash: (k, m) => calc.rem(k * 3, m),
+  hash-repr: "(k * 3) mod m",
+)
+```
+
+== Static display
+
+`display()` renders the current table as a single frame. Empty slots are
+muted; a bucket's chain hangs below it; a deleted open-addressing slot
+shows a tombstone (`×`).
+
+#align(center, starling.last(
+  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13)).display)(),
+))
+
+The same table in `orientation: "vertical"` runs the array top-to-bottom
+(a memory-diagram look) with chains extending rightward.
+
+== Hash functions and the hash box
+
+Every `insert` / `search` / `delete` opens by computing the hash. The
+animation draws a *hash box* — `h(<key>) = <formula> = <index>` — above
+the target slot with an arrow pointing at it, so the mapping from key to
+bucket is explicit before any probing begins.
+
+== Separate chaining
+
+Insertion hashes to a bucket, walks the existing chain comparing keys
+(so a repeated key updates in place), and appends a new entry at the
+tail:
+
+#align(center, starling.stacked(
+  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7)).insert-display)(20),
+))
+
+== Linear probing
+
+Open addressing keeps every entry in the array itself. On a collision,
+linear probing steps to the next slot, `(h + i) mod m`, until it finds a
+free one:
+
+#align(center, starling.stacked(
+  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).insert-display)(28),
+))
+
+== Quadratic probing
+
+Quadratic probing spreads the probes out as `(h + i*i) mod m`, which
+reduces the primary clustering linear probing suffers. The trade-off is
+that the probe sequence visits only a subset of the slots: with these
+parameters it can report the table "full" for a key even while empty
+slots remain — a genuine teaching point, surfaced as a terminal *table
+full* frame.
+
+#align(center, starling.stacked(
+  (starling.hashmap(7, strategy: "quadratic", entries: (0, 7, 14)).insert-display)(21),
+))
+
+== Search
+
+`search-display` walks the same probe/chain sequence and ends on a hit
+(a settled ring) or a miss. Crucially, open-addressing search *stops at
+the first empty slot* but *steps over tombstones* — a lookup for a key
+whose slot sits past a deleted entry still finds it:
+
+#align(center, starling.stacked(
+  ((starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete)(21).search-display)(7),
+))
+
+== Deletion and tombstones
+
+Deletion is where the two collision families diverge. Chaining simply
+unlinks the entry and re-links the chain. Open addressing cannot blank
+the slot — that would truncate probe sequences that run through it — so
+it writes a *tombstone* (`×`) that search skips and insert may reuse:
+
+#align(center, starling.stacked(
+  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete-display)(21),
+))
+
+== Resizing and rehashing
+
+`resize-display(new-cap)` allocates a larger array and replays every
+live entry through the hash under the new capacity, one entry per frame
+— so the load factor drops and old collisions frequently scatter apart:
+
+#align(center, starling.stacked(
+  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7, 3)).resize-display)(11),
+))
+
+== Theming
+
+The hash map reuses the render theme (structural colours) and the op
+theme (probe/landing/miss strokes) unchanged, and adds its own palette,
+`default-hashmap-theme`, for what's intrinsic to a table: `empty-fill`,
+`index-fill`, `hash-box-fill`, `hash-box-stroke`, `tombstone-fill`,
+`tombstone-stroke`, `chain-stroke`, and `chain-fill`. Override it
+document-wide with `set-hashmap-theme(..)` or per call with the
+`theme:` argument (the per-call form skips the state read — see
+@theming-perf).
+
+A per-call override (shown here, scoped so it doesn't leak into the rest
+of the manual) recolours a single display:
+
+#align(center, starling.last(
+  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3)).display)(
+    theme: (empty-fill: rgb("#eef3ff"), index-fill: rgb("#3355aa")),
+  ),
+))
+
 = Git graph
 
 The `git-graph` DSL draws git commit graphs — commits, branches, merges,
@@ -1889,6 +2035,20 @@ by the `tidy` package from doc-comments in the source.
   scope: (starling: starling, cetz: cetz),
 )
 
+#let hashmap-docs = tidy.parse-module(
+  read("/src/hashmap.typ"),
+  name: "Hash map",
+  label-prefix: "hashmap-",
+  scope: (starling: starling, cetz: cetz),
+)
+
+#let hdraw-docs = tidy.parse-module(
+  read("/src/hashmap-draw.typ"),
+  name: "Hash map renderer",
+  label-prefix: "hdraw-",
+  scope: (starling: starling, cetz: cetz),
+)
+
 == Render helpers
 
 #tidy.show-module(lib-docs, style: tidy.styles.default, show-module-name: false)
@@ -1916,3 +2076,11 @@ by the `tidy` package from doc-comments in the source.
 == Git graph
 
 #tidy.show-module(git-docs, style: tidy.styles.default, show-module-name: false)
+
+== Hash map
+
+#tidy.show-module(hashmap-docs, style: tidy.styles.default, show-module-name: false)
+
+== Hash map renderer
+
+#tidy.show-module(hdraw-docs, style: tidy.styles.default, show-module-name: false)
