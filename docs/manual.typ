@@ -1768,6 +1768,37 @@ itself a `cetz.canvas` block, so for static "annotate the final
 frame" use you can either render once via `draw-tree` (as above) or
 extract the cetz block from a frame and add to it externally.
 
+Graphs and hash maps expose the same escape hatch. `draw-graph` /
+`draw-hashmap` emit drawables without a canvas, and each structure has
+its own anchor helper: `node-anchor(id)` for a graph node,
+`cell-anchor(i)` for a hash-map slot, and `entry-anchor(i, j)` for a
+chaining entry (depth `j` of bucket `i`). Feed the renderer the
+structure's positioned form — `(g.positioned)()` for a graph,
+`(h.positioned)()` for a hash map (which also takes `orientation:` and
+an optional `hash-box:`). Compass sub-anchors (`.north`, `.south`,
+`.east`, `.west`) follow each shape's bounding box, so a callout can
+track any face:
+
+```typ
+#let h = hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3))
+#cetz.canvas({
+  starling.draw-hashmap((h.positioned)(), starling.blank-snapshot())
+  import cetz.draw: *
+  circle(starling.cell-anchor(2), radius: 0.8, stroke: red + 2pt)
+  content(starling.entry-anchor(0, 1) + ".east", anchor: "west", [ ← tail])
+})
+```
+
+#align(center, cetz.canvas({
+  starling.draw-hashmap(
+    (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3)).positioned)(),
+    starling.blank-snapshot(),
+  )
+  import cetz.draw: *
+  circle(starling.cell-anchor(2), radius: 0.8, stroke: red + 2pt)
+  content(starling.entry-anchor(0, 1) + ".east", anchor: "west", [ ← tail])
+}))
+
 = The Op command stream
 
 For animations that don't fit the BST's built-in methods — say, a
@@ -1932,6 +1963,60 @@ Pass `sizes: auto` so graphviz reserves room per node (it also sets
 with `auto-layout`'s `unit:` or `positioned`'s `scale:`. Keeping this
 `auto-layout` call explicit is what preserves its laziness — the manual
 op-stream path never pulls `diagraph-layout` unless you make the call.
+
+== On a hash map
+
+The same escape hatch drives a hash map — reach for it to stage a probe
+sequence the built-in `insert-display` / `search-display` don't cover
+(a custom hash, a deliberately pathological collision run, a
+side-by-side comparison). Build the renderer with `make-hashmap-renderer`
+over `(h.positioned)()`, and address the structure with the *snapshot*
+keys (distinct from the cetz anchors above): `cell-key(i)` for slot `i`,
+and `entry-key(i, j)` for the chaining entry at depth `j` of bucket `i`.
+`entry-key(i, j)` also keys the chain *link* into that entry, so
+`Op.StyleEdge` recolors links. Everything else — `Op.Highlight`,
+`Op.StyleNode`, `Op.Annotate`, `Op.Commit` — is identical.
+
+Here we trace a linear-probing insert of 7 by hand, lighting each probed
+slot and landing the key:
+
+```typ
+#let h = hashmap(7, strategy: "linear", entries: (14, 21))
+#let r = starling.make-hashmap-renderer((h.positioned)(), sticky: true)
+#let r = (r.with-caption)([h(7) = 0])
+#let r = starling.apply-ops(r, (
+  (starling.Op.Highlight.new)(path: starling.cell-key(0), color: blue),
+  (starling.Op.Commit.new)(alt: "Probe slot 0; occupied by 14."),
+))
+#let r = (r.with-caption)([probe → slot 2])
+#let r = starling.apply-ops(r, (
+  (starling.Op.Highlight.new)(path: starling.cell-key(1), color: blue),
+  (starling.Op.Highlight.new)(path: starling.cell-key(2), color: blue),
+  (starling.Op.StyleNode.new)(
+    path: starling.cell-key(2), style: (fill: green.lighten(60%)),
+  ),
+  (starling.Op.Alt.new)(text: "Slots 1 (occupied) then 2 (free): land at 2."),
+))
+#starling.stacked((r.render)())
+```
+
+#let hop-h = starling.hashmap(7, strategy: "linear", entries: (14, 21))
+#let hop-r = starling.make-hashmap-renderer((hop-h.positioned)(), sticky: true)
+#let hop-r = (hop-r.with-caption)([h(7) = 0])
+#let hop-r = (starling.apply-ops)(hop-r, (
+  (starling.Op.Highlight.new)(path: starling.cell-key(0), color: blue),
+  (starling.Op.Commit.new)(alt: "Probe slot 0; occupied by 14."),
+))
+#let hop-r = (hop-r.with-caption)([probe → slot 2])
+#let hop-r = (starling.apply-ops)(hop-r, (
+  (starling.Op.Highlight.new)(path: starling.cell-key(1), color: blue),
+  (starling.Op.Highlight.new)(path: starling.cell-key(2), color: blue),
+  (starling.Op.StyleNode.new)(
+    path: starling.cell-key(2), style: (fill: green.lighten(60%)),
+  ),
+  (starling.Op.Alt.new)(text: "Slots 1 (occupied) then 2 (free): land at 2."),
+))
+#align(center, starling.stacked((hop-r.render)()))
 
 == Custom shapes and edge anchors
 

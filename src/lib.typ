@@ -55,6 +55,7 @@
 #import "./hashmap-draw.typ": (
   draw-hashmap,
   cell-anchor,
+  entry-anchor,
   cell-key,
   entry-key,
   make-hashmap-renderer,

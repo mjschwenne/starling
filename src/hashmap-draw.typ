@@ -92,6 +92,26 @@
   prefix: "cell-",
 ) = prefix + "c" + str(i)
 
+/// The fully-qualified cetz anchor name for the chaining entry at depth
+/// #raw("j") in bucket #raw("i") (0 = the head entry) drawn by
+/// @@draw-hashmap(). The counterpart of @@cell-anchor() for chain
+/// entries. Sub-anchors follow (e.g. #raw("entry-anchor(3, 0) +
+/// \".east\"")). Only meaningful for the #raw("\"chaining\"") strategy.
+///
+/// -> str
+#let entry-anchor(
+  /// Bucket (slot) index.
+  /// -> int
+  i,
+  /// Depth in the chain (0 = head).
+  /// -> int
+  j,
+  /// Per-cell name prefix; must match #raw("draw-hashmap")'s
+  /// #raw("cell-prefix").
+  /// -> str
+  prefix: "cell-",
+) = prefix + "c" + str(i) + "-" + str(j)
+
 // ===================================================================
 // Layout geometry
 // ===================================================================
@@ -350,6 +370,21 @@
       } else { none }
       let value = if state == "occupied" { cell.at("value", default: none) } else { none }
       draw-box(cell-key(i), name, c0, c1, center, state, label, value, false)
+    }
+  }
+
+  // --- re-stroke highlighted array cells on top ---
+  // Array cells form a contiguous row/column sharing edges, drawn in
+  // index order, so cell i+1's (default) border is painted over cell i's
+  // shared edge — clipping a highlight applied to cell i. Redraw the
+  // border of any cell carrying an explicit stroke override, on top of
+  // every neighbour, so a probe/landing/miss highlight stays crisp on
+  // all four sides. Stroke-only (no fill) leaves the content untouched.
+  for i in range(m) {
+    let s = _merge-into(default-node-style, snapshot.nodes.at(cell-key(i), default: (:)))
+    if "stroke" in s and not s.at("hide", default: false) {
+      let (c0, c1, _) = _cell-geom(i, orientation)
+      draw.rect(c0, c1, fill: none, stroke: s.stroke)
     }
   }
 

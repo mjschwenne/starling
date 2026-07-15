@@ -945,6 +945,15 @@
       }
       true
     },
+    // The positioned-table dict the renderer consumes — the hash-map
+    // counterpart to `Graph.positioned`. Feed it to `draw-hashmap` (for
+    // hand-composed cetz canvases) or `make-hashmap-renderer` (for the
+    // `Op` command stream). `orientation` picks the layout; `hash-box`,
+    // when set to `(key:, expr:, index:[, expr2:, step:])`, draws the
+    // hash-box overlay.
+    positioned: (self, orientation: "horizontal", hash-box: none) => {
+      _to-table(self, orientation, hash-box: hash-box)
+    },
     // -----------------------------------------------------------------
     // Display methods
     // -----------------------------------------------------------------
