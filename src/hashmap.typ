@@ -379,8 +379,11 @@
       + str(key)
       + "."
   )
+  // The init frame reserves the hash box's footprint with a *ghost* box (same
+  // geometry, nothing drawn) so the table doesn't jump on the slide when the
+  // real hash box appears on the next subslide.
   let init = (
-    table: _to-table(hm, orientation),
+    table: _to-table(hm, orientation, hash-box: (..hb, ghost: true)),
     build: (_op, _rt) => core.blank-snapshot(),
     caption: none,
     step: (kind: "init"),

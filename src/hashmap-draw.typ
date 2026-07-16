@@ -132,14 +132,19 @@
 // short (numeric) tables render at the historical size (see `_resolve-dims`).
 #let _CW = 1.4
 #let _CH = 1.0
-// Chain-entry box half-extents and the pitch between successive entries.
+// Chain-entry box half-extents. These are *floors*: in "fit" mode both the
+// half-width (`ehw`) and the half-height (`ehh`) grow to the widest / tallest
+// label, so entries don't clip at large (e.g. touying) font sizes. The pitch
+// between successive entries and the first-entry drop are derived from `ehh`.
 #let _EHW = 0.55
 #let _EHH = 0.34
-#let _EPITCH = 1.02
 
-// The resolved layout dimensions for one render (`_resolve-dims`) are
-// threaded into the geometry helpers below: `cw`/`ch` are the array-cell
-// footprint; `ehw` the chaining-entry half-width (height is fixed at `_EHH`).
+// The resolved layout dimensions for one render (`_resolve-dims`) are threaded
+// into the geometry helpers below: `cw`/`ch` are the array-cell footprint;
+// `ehw`/`ehh` the chaining-entry half-extents; `epitch` the vertical pitch
+// between horizontal-chain entries; `first-off` the drop from a cell to its
+// first entry; `gap` the clear vertical band (cell → first entry) the index
+// label is seated in for horizontal chaining.
 
 // `(corner0, corner1, center)` of cell `i` for the given orientation.
 #let _cell-geom(i, orientation, dims) = {
@@ -165,7 +170,7 @@
     (dims.cw + 0.15 + dims.ehw + j * (2 * dims.ehw + 0.5), c.at(1))
   } else {
     // Entries hang downward below the cell's south face.
-    (c.at(0), -0.95 - j * _EPITCH)
+    (c.at(0), -dims.first-off - j * dims.epitch)
   }
 }
 
@@ -180,12 +185,20 @@
   }
 }
 
-#let _index-label-pos(i, orientation, dims) = {
+// Returns `(pos, anchor)` — the cetz point and the `_haloed` anchor that seats
+// the index label there.
+#let _index-label-pos(i, orientation, strategy, dims) = {
   let (c0, c1, c) = _cell-geom(i, orientation, dims)
   if orientation == "vertical" {
-    (-0.35, c.at(1)) // west of the column
+    ((-0.35, c.at(1)), "center") // west of the column
+  } else if strategy == "chaining" {
+    // Horizontal chaining: the head-pointer arrow drops straight down the cell
+    // center to the first entry, so a centered index would bury it (its opaque
+    // halo covers the whole short arrow). Seat the index just left of the
+    // arrow, in the clear band between the cell and the first entry.
+    ((c.at(0) - 0.22, -dims.gap / 2), "east")
   } else {
-    (c.at(0), c0.at(1) - 0.35) // below the row
+    ((c.at(0), c0.at(1) - 0.35), "center") // below the row
   }
 }
 
@@ -231,9 +244,11 @@
   }
 }
 
-// Horizontal padding (per side, cetz units) between a label and its box
-// edge when sizing to fit. Matches the graph backend's `pad-x`.
+// Padding (per side, cetz units) between a label and its box edge when sizing
+// to fit. `_PAD-X` matches the graph backend's `pad-x`; `_PAD-Y` keeps a
+// comfortable band above/below the (possibly large) label text.
 #let _PAD-X = 0.22
+#let _PAD-Y = 0.15
 
 // Resolve the layout dimensions for one render. `cell-width` selects the
 // sizing mode:
@@ -251,23 +266,38 @@
 // the table, not per-frame snapshot overrides) drive the measurement, so
 // `cw` stays constant across an animation.
 #let _resolve-dims(cells, strategy, orientation, text-fill, cell-width) = {
+  let m = cells.len()
   let ehw = _EHW
+  let ehh = _EHH
   let cw = _CW
+  let ch = _CH
+  let gap = 0.61 // clear band between a cell and its first chain entry
   if cell-width == "fit" {
-    let label-w(label, value) = measure(_entry-body(label, value, text-fill)).width / 1cm
+    let dims-of(label, value) = measure(_entry-body(label, value, text-fill))
     let max-cell-w = 0
+    let max-cell-h = 0
     let max-entry-w = 0
+    let max-entry-h = 0
     for cell in cells {
       if strategy == "chaining" {
         for e in cell {
-          max-entry-w = calc.max(max-entry-w, label-w(e.at("label", default: str(e.key)), e.at("value", default: none)))
+          let d = dims-of(e.at("label", default: str(e.key)), e.at("value", default: none))
+          max-entry-w = calc.max(max-entry-w, d.width / 1cm)
+          max-entry-h = calc.max(max-entry-h, d.height / 1cm)
         }
       } else if cell != none and not cell.at("tombstone", default: false) {
-        max-cell-w = calc.max(max-cell-w, label-w(cell.at("label", default: str(cell.key)), cell.at("value", default: none)))
+        let d = dims-of(cell.at("label", default: str(cell.key)), cell.at("value", default: none))
+        max-cell-w = calc.max(max-cell-w, d.width / 1cm)
+        max-cell-h = calc.max(max-cell-h, d.height / 1cm)
       }
     }
     ehw = calc.max(_EHW, max-entry-w / 2 + _PAD-X)
+    ehh = calc.max(_EHH, max-entry-h / 2 + _PAD-Y)
     cw = calc.max(_CW, max-cell-w + 2 * _PAD-X)
+    ch = calc.max(_CH, max-cell-h + 2 * _PAD-Y)
+    // Widen the cell→first-entry band to clear the (font-scaled) index label.
+    let idx-h = measure(text(size: 0.75em, str(calc.max(0, m - 1)))).height / 1cm
+    gap = calc.max(0.61, idx-h + 0.18)
   } else if cell-width != auto {
     cw = cell-width
   }
@@ -276,7 +306,10 @@
   if strategy == "chaining" and orientation != "vertical" {
     cw = calc.max(cw, 2 * ehw + 0.2)
   }
-  (cw: cw, ch: _CH, ehw: ehw)
+  // `epitch`/`first-off` derive from `ehh` so taller entries stay clear of one
+  // another and of the array (at the floor these reproduce the historical
+  // 1.02 pitch / 0.95 drop exactly).
+  (cw: cw, ch: ch, ehw: ehw, ehh: ehh, epitch: 2 * ehh + 0.34, first-off: ehh + gap, gap: gap)
 }
 
 /// Emit the cetz draw commands for one styled snapshot of a hash table,
@@ -400,14 +433,14 @@
         let ec = _entry-center(i, j, orientation, dims)
         let top = if orientation == "vertical" {
           (ec.at(0) - dims.ehw, ec.at(1))
-        } else { (ec.at(0), ec.at(1) + _EHH) }
+        } else { (ec.at(0), ec.at(1) + dims.ehh) }
         let from = if j == 0 {
           exit
         } else {
           let pc = _entry-center(i, j - 1, orientation, dims)
           if orientation == "vertical" {
             (pc.at(0) + dims.ehw, pc.at(1))
-          } else { (pc.at(0), pc.at(1) - _EHH) }
+          } else { (pc.at(0), pc.at(1) - dims.ehh) }
         }
         let lk = entry-key(i, j)
         let ls = _merge-into(default-edge-style, snapshot.edges.at(lk, default: (:)))
@@ -467,8 +500,8 @@
     for (i, chain) in cells.enumerate() {
       for (j, entry) in chain.enumerate() {
         let ec = _entry-center(i, j, orientation, dims)
-        let c0 = (ec.at(0) - dims.ehw, ec.at(1) - _EHH)
-        let c1 = (ec.at(0) + dims.ehw, ec.at(1) + _EHH)
+        let c0 = (ec.at(0) - dims.ehw, ec.at(1) - dims.ehh)
+        let c1 = (ec.at(0) + dims.ehw, ec.at(1) + dims.ehh)
         let name = cell-prefix + "c" + str(i) + "-" + str(j)
         let label = entry.at("label", default: str(entry.key))
         draw-box(entry-key(i, j), name, c0, c1, ec, "entry", label, entry.at("value", default: none), true)
@@ -478,11 +511,13 @@
 
   // --- index labels ---
   for i in range(m) {
+    let (pos, anchor) = _index-label-pos(i, orientation, strategy, dims)
     _haloed(
       draw,
-      _index-label-pos(i, orientation, dims),
+      pos,
       text(size: 0.75em, fill: index-fill, str(i)),
       render-theme,
+      anchor: anchor,
     )
   }
 
@@ -491,8 +526,18 @@
   if hb != none {
     let idx = hb.index
     let (bc0, bc1, bcenter) = _cell-geom(idx, orientation, dims)
-    let hb-stroke = render-theme.at("hash-box-stroke", default: render-theme.node-stroke)
-    let hb-fill = render-theme.at("hash-box-fill", default: white)
+    // A "ghost" hash box reserves the box's exact footprint but draws nothing
+    // visible: no frame, hidden (still laid-out) text, no arrow. The walk-based
+    // displays put a ghost box on their leading pre-hash frame so the canvas
+    // bounds — and hence the table's on-slide position — don't jump when the
+    // real hash box appears on the next subslide.
+    let ghost = hb.at("ghost", default: false)
+    let hb-stroke = if ghost { none } else {
+      render-theme.at("hash-box-stroke", default: render-theme.node-stroke)
+    }
+    let hb-fill = if ghost { none } else {
+      render-theme.at("hash-box-fill", default: white)
+    }
     // Double hashing carries a second-hash line (the step size); other
     // strategies show the single hash line.
     let expr2 = hb.at("expr2", default: none)
@@ -506,6 +551,10 @@
         [h₂(#hb.key) = #expr2 = #text(weight: "bold")[#hb.step]],
       )
     }
+    // `hide` keeps the content's layout footprint (so the frame sizes and the
+    // cetz bounds are identical to a visible box) while rendering nothing.
+    let body = if ghost { hide(body) } else { body }
+    let arrow-stroke = render-theme.at("attention-stroke", default: (paint: rgb("#ffcd00"), thickness: 2pt))
     if orientation == "vertical" {
       // Box to the left of the target cell, arrow pointing right.
       let anchor-pt = (bc0.at(0) - 1.6, bcenter.at(1))
@@ -518,12 +567,14 @@
         padding: 0.14,
         text(size: 0.85em, body),
       )
-      draw.line(
-        (bc0.at(0) - 1.55, bcenter.at(1)),
-        (bc0.at(0), bcenter.at(1)),
-        stroke: render-theme.at("attention-stroke", default: (paint: rgb("#ffcd00"), thickness: 2pt)),
-        mark: (end: ">"),
-      )
+      if not ghost {
+        draw.line(
+          (bc0.at(0) - 1.55, bcenter.at(1)),
+          (bc0.at(0), bcenter.at(1)),
+          stroke: arrow-stroke,
+          mark: (end: ">"),
+        )
+      }
     } else {
       // Box above the target cell (clamped to stay over the array),
       // arrow pointing down.
@@ -538,12 +589,14 @@
         padding: 0.14,
         text(size: 0.85em, body),
       )
-      draw.line(
-        (box-x, box-y),
-        (bcenter.at(0), dims.ch + 0.05),
-        stroke: render-theme.at("attention-stroke", default: (paint: rgb("#ffcd00"), thickness: 2pt)),
-        mark: (end: ">"),
-      )
+      if not ghost {
+        draw.line(
+          (box-x, box-y),
+          (bcenter.at(0), dims.ch + 0.05),
+          stroke: arrow-stroke,
+          mark: (end: ">"),
+        )
+      }
     }
   }
 }

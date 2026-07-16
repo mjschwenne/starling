@@ -1377,11 +1377,13 @@ for chaining, each entry box) to the widest label, so a wide label such as
 }
 
 The sizing is controlled by each display method's `cell-width:` argument:
-`"fit"` (the default) measures the labels and grows the cells to fit
-(floored at the historical size, so numeric tables are unchanged); a
-number pins an exact cell width in cetz units; and `auto` keeps the fixed
-historical footprint without measuring — useful when you know the labels
-are short and want to skip the measurement pass. On the `positioned(..)`
+`"fit"` (the default) measures the labels and grows the cells to fit — in
+*both* width and height, so chaining entries stay legible at the larger
+font sizes of a slide deck (floored at the historical size, so numeric
+tables at the default font are unchanged); a number pins an exact cell
+width in cetz units; and `auto` keeps the fixed historical footprint
+without measuring — useful when you know the labels are short and want to
+skip the measurement pass. On the `positioned(..)`
 entry point (for hand-composed cetz canvases) `cell-width:` defaults to
 `auto`, since that path may render outside a layout context where `"fit"`
 cannot `measure`.
@@ -1392,6 +1394,12 @@ Every `insert` / `search` / `delete` opens by computing the hash. The
 animation draws a *hash box* — `h(<key>) = <formula> = <index>` — above
 the target slot with an arrow pointing at it, so the mapping from key to
 bucket is explicit before any probing begins.
+
+The opening frame (before the hash box appears) invisibly reserves the
+box's footprint, so all of the walk frames render at the same canvas size
+and the table doesn't jump when the box appears on the next subslide. Give
+the canvas a `top` alignment in your deck and the whole animation stays
+pinned in place.
 
 == Separate chaining
 
