@@ -1363,6 +1363,29 @@ shows a tombstone (`×`).
 The same table in `orientation: "vertical"` runs the array top-to-bottom
 (a memory-diagram look) with chains extending rightward.
 
+Entries carry both a key and an optional value: an inserted `(key, value)`
+pair (or `insert(key, value: ..)`) renders the value as a smaller second
+line under the key. By default the display methods *fit* each cell (and,
+for chaining, each entry box) to the widest label, so a wide label such as
+`(k1, v1)` — here set explicitly on each entry — is never clipped:
+
+#{
+  let h = starling.hashmap(5, strategy: "linear")
+  let h = (h.insert)(3, value: "v1", label: "(k1, v1)")
+  let h = (h.insert)(8, value: "v2", label: "(k2, v2)")
+  align(center, starling.last((h.display)()))
+}
+
+The sizing is controlled by each display method's `cell-width:` argument:
+`"fit"` (the default) measures the labels and grows the cells to fit
+(floored at the historical size, so numeric tables are unchanged); a
+number pins an exact cell width in cetz units; and `auto` keeps the fixed
+historical footprint without measuring — useful when you know the labels
+are short and want to skip the measurement pass. On the `positioned(..)`
+entry point (for hand-composed cetz canvases) `cell-width:` defaults to
+`auto`, since that path may render outside a layout context where `"fit"`
+cannot `measure`.
+
 == Hash functions and the hash box
 
 Every `insert` / `search` / `delete` opens by computing the hash. The

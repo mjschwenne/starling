@@ -277,12 +277,13 @@
 // in the backend's expected shape, so this is a thin wrapper; `cells`
 // may be overridden for frames that show a table state other than the
 // map's own (e.g. resize showing the pre-insert new array).
-#let _to-table(hm, orientation, cells: auto, capacity: auto, strategy: auto, hash-box: none) = (
+#let _to-table(hm, orientation, cells: auto, capacity: auto, strategy: auto, hash-box: none, cell-width: auto) = (
   capacity: if capacity == auto { hm.capacity } else { capacity },
   orientation: orientation,
   strategy: if strategy == auto { hm.strategy } else { strategy },
   cells: if cells == auto { hm.slots } else { cells },
   hash-box: hash-box,
+  cell-width: cell-width,
 )
 
 // The hash-box overlay dict for `key` on `hm` (an operation annotation
@@ -314,7 +315,7 @@
 // render time). op-theme is always the `op-arg` the lib helpers resolve
 // and pass in. The render-theme handed to the backend and the snapshot
 // builder is the render theme with the hash-map palette merged on top.
-#let _hm-make-frames-multi(specs, hm-theme, render-theme) = {
+#let _hm-make-frames-multi(specs, hm-theme, render-theme, cell-width: "fit") = {
   specs.map(s => (core.Frame.new)(
     _builder: (
       fn: (op-arg, rt-arg) => {
@@ -324,9 +325,14 @@
         let rt = if render-theme == auto { rt-arg } else { render-theme }
         let combined = _combined-render-theme(rt, hm)
         let snap = (s.build)(op-arg, combined)
+        // Pin the sizing mode for this render (displays fit to content by
+        // default — they always render inside the lib helpers' `context`,
+        // so `measure` is available).
+        let table = s.table
+        table.cell-width = cell-width
         core._make-canvas(
           hm-draw._draw-hashmap-backend,
-          s.table,
+          table,
           snap,
           (:),
           (:),
@@ -950,9 +956,10 @@
     // hand-composed cetz canvases) or `make-hashmap-renderer` (for the
     // `Op` command stream). `orientation` picks the layout; `hash-box`,
     // when set to `(key:, expr:, index:[, expr2:, step:])`, draws the
-    // hash-box overlay.
-    positioned: (self, orientation: "horizontal", hash-box: none) => {
-      _to-table(self, orientation, hash-box: hash-box)
+    // hash-box overlay. `cell-width` (`auto` by default) pins a fixed
+    // array-cell width in cetz units; `auto` fits the widest label.
+    positioned: (self, orientation: "horizontal", hash-box: none, cell-width: auto) => {
+      _to-table(self, orientation, hash-box: hash-box, cell-width: cell-width)
     },
     // -----------------------------------------------------------------
     // Display methods
@@ -960,8 +967,10 @@
     // Returns a one-frame Frame array — the static table, no operation
     // styling. `orientation` is "horizontal" (default) or "vertical".
     // `theme:` overrides the hash-map palette; `render-theme:` the
-    // structural render theme.
-    display: (self, orientation: "horizontal", theme: auto, render-theme: auto) => {
+    // structural render theme. `cell-width` sizes the array cells:
+    // "fit" (default) grows them to the widest label, `auto` keeps the
+    // fixed historical footprint, or a number pins an exact width.
+    display: (self, orientation: "horizontal", theme: auto, render-theme: auto, cell-width: "fit") => {
       let spec = (
         table: _to-table(self, orientation),
         build: (_op, _rt) => core.blank-snapshot(),
@@ -973,11 +982,13 @@
         (spec,),
         _resolve-hashmap-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        cell-width: cell-width,
       )
     },
     // Animate inserting `key` (with optional `value`). Shows the hash
     // box, the probe/chain walk, and the landing. Frame `step.kind`s:
     // "init", "hash", "probe" / "compare", "insert" / "update", "full".
+    // `cell-width` sizes the array cells (see `display`).
     insert-display: (
       self,
       key,
@@ -986,11 +997,13 @@
       orientation: "horizontal",
       theme: auto,
       render-theme: auto,
+      cell-width: "fit",
     ) => {
       _hm-make-frames-multi(
         _insert-specs(self, key, value, label, orientation),
         _resolve-hashmap-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        cell-width: cell-width,
       )
     },
     // Animate looking `key` up. Same walk as insert, ending in a
@@ -998,33 +1011,36 @@
     // addressing stops at the first empty slot; chaining at the chain's
     // end. Frame `step.kind`s: "init", "hash"/"probe"/"compare",
     // "found", "not-found".
-    search-display: (self, key, orientation: "horizontal", theme: auto, render-theme: auto) => {
+    search-display: (self, key, orientation: "horizontal", theme: auto, render-theme: auto, cell-width: "fit") => {
       _hm-make-frames-multi(
         _search-specs(self, key, orientation),
         _resolve-hashmap-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        cell-width: cell-width,
       )
     },
     // Animate deleting `key`. Walks to the key, then removes it: chaining
     // unlinks the entry; open addressing writes a tombstone (×) so later
     // probes still traverse the slot. Frame `step.kind`s: "init",
     // walk kinds, "remove", "deleted"/"tombstone", or "not-found".
-    delete-display: (self, key, orientation: "horizontal", theme: auto, render-theme: auto) => {
+    delete-display: (self, key, orientation: "horizontal", theme: auto, render-theme: auto, cell-width: "fit") => {
       _hm-make-frames-multi(
         _delete-specs(self, key, orientation),
         _resolve-hashmap-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        cell-width: cell-width,
       )
     },
     // Animate growing (or shrinking) to `new-cap` and rehashing every
     // live entry through the new capacity, one entry per frame. Frame
     // `step.kind`s: "init", "new-array", "rehash", "done".
-    resize-display: (self, new-cap, orientation: "horizontal", theme: auto, render-theme: auto) => {
+    resize-display: (self, new-cap, orientation: "horizontal", theme: auto, render-theme: auto, cell-width: "fit") => {
       assert(new-cap > 0, message: "resize-display: capacity must be positive.")
       _hm-make-frames-multi(
         _resize-specs(self, new-cap, orientation),
         _resolve-hashmap-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
+        cell-width: cell-width,
       )
     },
   ),

@@ -38,9 +38,14 @@
 //     hash-box: none | (key:, expr:, index:) — the operation overlay for
 //            this frame: renders `h(<key>) = <expr> = <index>` above the
 //            array with an arrow to cell `index`.
+//     cell-width: auto | "fit" | number — cell sizing (optional, default
+//            `auto`). `auto` keeps the fixed historical footprint; "fit"
+//            grows cells/entries to the widest label (measures, so it
+//            needs a layout context); a number pins an exact cell width.
 //   )
 // Coordinates are derived deterministically from `capacity` +
-// `orientation`; unlike graphs there is no explicit layout to supply.
+// `orientation` + the resolved cell width; unlike graphs there is no
+// explicit layout to supply.
 
 #import "@preview/typsy:0.2.2": *
 #import "@preview/cetz:0.5.2"
@@ -119,9 +124,12 @@
 // All measurements are in cetz units. The layout is fully determined by
 // the slot index and orientation, so callers never supply positions.
 
-// Cell footprint. Horizontal: cells run left→right, each `_CW` wide and
-// `_CH` tall, sharing edges into a contiguous array. Vertical: cells run
-// top→bottom (a memory-diagram column), `_CW` wide and `_CH` tall.
+// Default cell footprint. Horizontal: cells run left→right, each `_CW`
+// wide and `_CH` tall, sharing edges into a contiguous array. Vertical:
+// cells run top→bottom (a memory-diagram column), `_CW` wide and `_CH`
+// tall. These are the *floors*: `draw-hashmap` widens `cw` (and the chain
+// entry half-width) to fit longer labels, but never below these, so
+// short (numeric) tables render at the historical size (see `_resolve-dims`).
 #let _CW = 1.4
 #let _CH = 1.0
 // Chain-entry box half-extents and the pitch between successive entries.
@@ -129,25 +137,32 @@
 #let _EHH = 0.34
 #let _EPITCH = 1.02
 
+// The resolved layout dimensions for one render (`_resolve-dims`) are
+// threaded into the geometry helpers below: `cw`/`ch` are the array-cell
+// footprint; `ehw` the chaining-entry half-width (height is fixed at `_EHH`).
+
 // `(corner0, corner1, center)` of cell `i` for the given orientation.
-#let _cell-geom(i, orientation) = {
+#let _cell-geom(i, orientation, dims) = {
+  let (cw, ch) = (dims.cw, dims.ch)
   if orientation == "vertical" {
-    let y0 = -(i + 1) * _CH
-    let y1 = -i * _CH
-    ((0, y0), (_CW, y1), (_CW / 2, -(i + 0.5) * _CH))
+    let y0 = -(i + 1) * ch
+    let y1 = -i * ch
+    ((0, y0), (cw, y1), (cw / 2, -(i + 0.5) * ch))
   } else {
-    let x0 = i * _CW
-    let x1 = (i + 1) * _CW
-    ((x0, 0), (x1, _CH), ((i + 0.5) * _CW, _CH / 2))
+    let x0 = i * cw
+    let x1 = (i + 1) * cw
+    ((x0, 0), (x1, ch), ((i + 0.5) * cw, ch / 2))
   }
 }
 
 // Center of chaining entry `j` hanging off bucket `i`.
-#let _entry-center(i, j, orientation) = {
-  let (_, _, c) = _cell-geom(i, orientation)
+#let _entry-center(i, j, orientation, dims) = {
+  let (_, _, c) = _cell-geom(i, orientation, dims)
   if orientation == "vertical" {
-    // Entries extend rightward from the cell's east face.
-    (_CW + 0.7 + j * (2 * _EHW + 0.5), c.at(1))
+    // Entries extend rightward from the cell's east face; each entry is
+    // `2*ehw` wide with a 0.5-unit gap, seated 0.15 past the cell's east
+    // face (matches the historical offset when `ehw == _EHW`).
+    (dims.cw + 0.15 + dims.ehw + j * (2 * dims.ehw + 0.5), c.at(1))
   } else {
     // Entries hang downward below the cell's south face.
     (c.at(0), -0.95 - j * _EPITCH)
@@ -156,8 +171,8 @@
 
 // The point on cell `i`'s face from which its chain (head pointer)
 // departs, and the point at which the whole array's index label sits.
-#let _cell-chain-exit(i, orientation) = {
-  let (c0, c1, c) = _cell-geom(i, orientation)
+#let _cell-chain-exit(i, orientation, dims) = {
+  let (c0, c1, c) = _cell-geom(i, orientation, dims)
   if orientation == "vertical" {
     (c1.at(0), c.at(1)) // east-center
   } else {
@@ -165,8 +180,8 @@
   }
 }
 
-#let _index-label-pos(i, orientation) = {
-  let (c0, c1, c) = _cell-geom(i, orientation)
+#let _index-label-pos(i, orientation, dims) = {
+  let (c0, c1, c) = _cell-geom(i, orientation, dims)
   if orientation == "vertical" {
     (-0.35, c.at(1)) // west of the column
   } else {
@@ -216,6 +231,54 @@
   }
 }
 
+// Horizontal padding (per side, cetz units) between a label and its box
+// edge when sizing to fit. Matches the graph backend's `pad-x`.
+#let _PAD-X = 0.22
+
+// Resolve the layout dimensions for one render. `cell-width` selects the
+// sizing mode:
+//   * `auto`   — the historical fixed footprint (`_CW` / `_EHW`). Never
+//                measures, so it is safe outside a layout context.
+//   * "fit"    — grow `cw` to fit the widest occupied-cell label (open
+//                addressing) and `ehw` to fit the widest chain-entry
+//                label (chaining), each floored at the historical size so
+//                short (numeric) tables are unchanged. Calls `measure`, so
+//                it REQUIRES a layout context (the `*-display` methods,
+//                wrapped by the lib frame helpers, always supply one).
+//   * a number — pin `cw` to that exact width (no measure).
+// Either way, horizontal chaining widens the array pitch (`cw`) so a
+// bucket's hanging chain clears its neighbours. Structural labels (from
+// the table, not per-frame snapshot overrides) drive the measurement, so
+// `cw` stays constant across an animation.
+#let _resolve-dims(cells, strategy, orientation, text-fill, cell-width) = {
+  let ehw = _EHW
+  let cw = _CW
+  if cell-width == "fit" {
+    let label-w(label, value) = measure(_entry-body(label, value, text-fill)).width / 1cm
+    let max-cell-w = 0
+    let max-entry-w = 0
+    for cell in cells {
+      if strategy == "chaining" {
+        for e in cell {
+          max-entry-w = calc.max(max-entry-w, label-w(e.at("label", default: str(e.key)), e.at("value", default: none)))
+        }
+      } else if cell != none and not cell.at("tombstone", default: false) {
+        max-cell-w = calc.max(max-cell-w, label-w(cell.at("label", default: str(cell.key)), cell.at("value", default: none)))
+      }
+    }
+    ehw = calc.max(_EHW, max-entry-w / 2 + _PAD-X)
+    cw = calc.max(_CW, max-cell-w + 2 * _PAD-X)
+  } else if cell-width != auto {
+    cw = cell-width
+  }
+  // Horizontal chaining: entries hang under each bucket, so the array
+  // pitch must clear adjacent chains (each entry is `2*ehw` wide).
+  if strategy == "chaining" and orientation != "vertical" {
+    cw = calc.max(cw, 2 * ehw + 0.2)
+  }
+  (cw: cw, ch: _CH, ehw: ehw)
+}
+
 /// Emit the cetz draw commands for one styled snapshot of a hash table,
 /// _without_ wrapping them in a #raw("cetz.canvas"). The caller wraps the
 /// canvas — use this to add your own cetz annotations alongside the table
@@ -258,6 +321,17 @@
   let orientation = tbl.at("orientation", default: "horizontal")
   let strategy = tbl.at("strategy", default: "chaining")
   let cells = tbl.cells
+
+  // Resolve the cell/entry footprint so longer labels aren't clipped. The
+  // table dict may pin a fixed `cell-width`; otherwise it fits the widest
+  // label (floored at the historical size — numeric tables are unchanged).
+  let dims = _resolve-dims(
+    cells,
+    strategy,
+    orientation,
+    render-theme.node-text-fill,
+    tbl.at("cell-width", default: auto),
+  )
 
   // Palette fallbacks. `render-theme` carries both the structural keys
   // and the hash-map keys (the class merges them before calling), but we
@@ -321,18 +395,18 @@
     for (i, chain) in cells.enumerate() {
       if chain.len() == 0 { continue }
       // Head pointer: array slot -> entry 0.
-      let exit = _cell-chain-exit(i, orientation)
+      let exit = _cell-chain-exit(i, orientation, dims)
       for (j, _entry) in chain.enumerate() {
-        let ec = _entry-center(i, j, orientation)
+        let ec = _entry-center(i, j, orientation, dims)
         let top = if orientation == "vertical" {
-          (ec.at(0) - _EHW, ec.at(1))
+          (ec.at(0) - dims.ehw, ec.at(1))
         } else { (ec.at(0), ec.at(1) + _EHH) }
         let from = if j == 0 {
           exit
         } else {
-          let pc = _entry-center(i, j - 1, orientation)
+          let pc = _entry-center(i, j - 1, orientation, dims)
           if orientation == "vertical" {
-            (pc.at(0) + _EHW, pc.at(1))
+            (pc.at(0) + dims.ehw, pc.at(1))
           } else { (pc.at(0), pc.at(1) - _EHH) }
         }
         let lk = entry-key(i, j)
@@ -351,7 +425,7 @@
 
   // --- cells ---
   for (i, cell) in cells.enumerate() {
-    let (c0, c1, center) = _cell-geom(i, orientation)
+    let (c0, c1, center) = _cell-geom(i, orientation, dims)
     let name = cell-prefix + "c" + str(i)
     if strategy == "chaining" {
       // The array slot itself is the bucket header. An empty bucket reads
@@ -383,7 +457,7 @@
   for i in range(m) {
     let s = _merge-into(default-node-style, snapshot.nodes.at(cell-key(i), default: (:)))
     if "stroke" in s and not s.at("hide", default: false) {
-      let (c0, c1, _) = _cell-geom(i, orientation)
+      let (c0, c1, _) = _cell-geom(i, orientation, dims)
       draw.rect(c0, c1, fill: none, stroke: s.stroke)
     }
   }
@@ -392,9 +466,9 @@
   if strategy == "chaining" {
     for (i, chain) in cells.enumerate() {
       for (j, entry) in chain.enumerate() {
-        let ec = _entry-center(i, j, orientation)
-        let c0 = (ec.at(0) - _EHW, ec.at(1) - _EHH)
-        let c1 = (ec.at(0) + _EHW, ec.at(1) + _EHH)
+        let ec = _entry-center(i, j, orientation, dims)
+        let c0 = (ec.at(0) - dims.ehw, ec.at(1) - _EHH)
+        let c1 = (ec.at(0) + dims.ehw, ec.at(1) + _EHH)
         let name = cell-prefix + "c" + str(i) + "-" + str(j)
         let label = entry.at("label", default: str(entry.key))
         draw-box(entry-key(i, j), name, c0, c1, ec, "entry", label, entry.at("value", default: none), true)
@@ -406,7 +480,7 @@
   for i in range(m) {
     _haloed(
       draw,
-      _index-label-pos(i, orientation),
+      _index-label-pos(i, orientation, dims),
       text(size: 0.75em, fill: index-fill, str(i)),
       render-theme,
     )
@@ -416,7 +490,7 @@
   let hb = tbl.at("hash-box", default: none)
   if hb != none {
     let idx = hb.index
-    let (bc0, bc1, bcenter) = _cell-geom(idx, orientation)
+    let (bc0, bc1, bcenter) = _cell-geom(idx, orientation, dims)
     let hb-stroke = render-theme.at("hash-box-stroke", default: render-theme.node-stroke)
     let hb-fill = render-theme.at("hash-box-fill", default: white)
     // Double hashing carries a second-hash line (the step size); other
@@ -453,8 +527,8 @@
     } else {
       // Box above the target cell (clamped to stay over the array),
       // arrow pointing down.
-      let box-x = calc.max(1.1, calc.min((m - 1 + 0.5) * _CW - 0.1, bcenter.at(0)))
-      let box-y = _CH + 1.5
+      let box-x = calc.max(1.1, calc.min((m - 1 + 0.5) * dims.cw - 0.1, bcenter.at(0)))
+      let box-y = dims.ch + 1.5
       draw.content(
         (box-x, box-y),
         anchor: "south",
@@ -466,7 +540,7 @@
       )
       draw.line(
         (box-x, box-y),
-        (bcenter.at(0), _CH + 0.05),
+        (bcenter.at(0), dims.ch + 0.05),
         stroke: render-theme.at("attention-stroke", default: (paint: rgb("#ffcd00"), thickness: 2pt)),
         mark: (end: ">"),
       )
