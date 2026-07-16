@@ -644,7 +644,9 @@
     ))
     let hm2 = (hm.delete)(key)
     specs.push((
-      table: _to-table(hm2, orientation),
+      // Ghost hash box reserves the walk's footprint so this clean result frame
+      // doesn't jump — the table stays put (top-anchored) as the chain shrinks.
+      table: _to-table(hm2, orientation, hash-box: (..hb, ghost: true)),
       build: (_op, _rt) => core.blank-snapshot(),
       caption: [deleted #key],
       step: (kind: "deleted", bucket: bucket),
@@ -678,7 +680,9 @@
   let hm2 = (hm.delete)(key, tombstone: tombstone)
   if tombstone {
     specs.push((
-      table: _to-table(hm2, orientation),
+      // Ghost hash box reserves the walk's footprint so the terminal frame keeps
+      // the table in place — matches the `init` ghost and insert's real box.
+      table: _to-table(hm2, orientation, hash-box: (..hb, ghost: true)),
       build: (op, _rt) => _styled(hm-draw.cell-key(idx), stroke: op.danger-stroke),
       caption: [tombstone at #idx],
       step: (kind: "tombstone", index: idx),
@@ -689,7 +693,8 @@
     // flag the hazard — a later probe that reaches this now-empty slot
     // stops early, so any key stored beyond it becomes unreachable.
     specs.push((
-      table: _to-table(hm2, orientation),
+      // Ghost hash box reserves the walk's footprint (see the tombstone branch).
+      table: _to-table(hm2, orientation, hash-box: (..hb, ghost: true)),
       build: (op, _rt) => _styled(hm-draw.cell-key(idx), stroke: op.danger-stroke),
       caption: [clear slot #idx],
       step: (kind: "cleared", index: idx),

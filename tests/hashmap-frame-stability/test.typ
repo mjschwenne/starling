@@ -33,6 +33,24 @@
   }
 }
 
+// Single-axis stability. Chaining's terminal frame legitimately changes the
+// *along-chain* dimension as the chain grows (insert) or shrinks (delete): the
+// chain hangs downward when horizontal (height moves) and rightward when
+// vertical (width moves). The *other* axis must stay pinned — a ghost hash box
+// over an end cell reserves the same footprint as the visible box before it, so
+// the table never slides on the fixed axis.
+#let check-axis-stable(frames, axis) = context {
+  assert(frames.len() >= 2, message: "expected a multi-frame walk")
+  let d0 = dims-of(frames.first())
+  for f in frames {
+    let d = dims-of(f)
+    assert(
+      d.at(axis) == d0.at(axis),
+      message: "frame '" + f.step.kind + "' " + axis + " " + repr(d.at(axis)) + " != " + repr(d0.at(axis)),
+    )
+  }
+}
+
 // Open addressing (linear) — a multi-probe insert.
 #let l = hashmap(7, strategy: "linear", entries: (14, 21, 7))
 #check-stable((l.insert-display)(28), ("insert", "update", "full"))
@@ -45,7 +63,19 @@
 // Search and delete share the same leading walk.
 #check-stable((l.search-display)(7), ("found", "not-found"))
 #check-stable(((l.delete)(21).search-display)(7), ("found", "not-found"))
-#check-stable((c.delete-display)(10), ("remove", "deleted", "not-found"))
+
+// Open-addressing delete is pinned end-to-end: the terminal tombstone frame
+// (and the naive `cleared` variant) fills the existing cell and carries a ghost
+// hash box, so the WHOLE animation renders at one canvas size — no jump up when
+// the box vanishes, no slide sideways when it sat over an end cell.
+#check-stable((l.delete-display)(21), ())
+#check-stable((l.delete-display)(21, tombstone: false), ())
+
+// Chaining delete: the chain retracts along its own axis (height when
+// horizontal, width when vertical), but the ghost hash box pins the cross axis
+// so the table never slides there — the end-cell jump this bug fix removed.
+#check-axis-stable((c.delete-display)(10), "w")
+#check-axis-stable((c.delete-display)(10, orientation: "vertical"), "h")
 
 // A large (touying-like) font must stay stable too.
 #[
