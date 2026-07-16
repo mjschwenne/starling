@@ -269,6 +269,19 @@
   slots: slots,
 )
 
+// Rebuild a HashMap with a new `capacity` and `slots` (everything else
+// carried over). Used by `resize` and the resize animation to allocate a
+// table at a different size than the source.
+#let _rebuild-cap(hm, new-cap, slots) = (hm.meta.cls.new)(
+  capacity: new-cap,
+  strategy: hm.strategy,
+  hash: hm.hash,
+  hash-repr: hm.hash-repr,
+  hash2: hm.hash2,
+  hash2-repr: hm.hash2-repr,
+  slots: slots,
+)
+
 // ===================================================================
 // Display-frame helpers
 // ===================================================================
@@ -706,12 +719,21 @@
   specs
 }
 
-// Resize / rehash: allocate a `new-cap`-slot array and replay every live
-// entry (old-slot order) through the new hash. One frame per entry, each
-// showing the hash box under the new capacity and the entry landing in
-// the growing new array. Frame `step.kind`s: "init", "new-array",
-// "rehash", "done".
-#let _resize-specs(hm, new-cap, orientation) = {
+// Resize: allocate a `new-cap`-slot array and move every live entry into
+// it, one frame per entry landing in the growing new array. Frame
+// `step.kind`s: "init", "new-array", "rehash"/"copy", "done".
+//
+// `rehash: true` (default) replays each live entry (old-slot order)
+// through the hash under the *new* capacity — the correct resize — each
+// frame showing the hash box and the recomputed landing slot.
+//
+// `rehash: false` is the *buggy* variant for teaching: each entry is
+// copied verbatim into its OLD index of the larger array, WITHOUT
+// recomputing the hash. No hash box is shown (nothing is hashed). Because
+// the array is now longer, `h(k) mod new-cap` points somewhere else, so a
+// later `search-display` for a moved key probes the wrong slot and
+// misses — the demonstration of why a real resize must rehash.
+#let _resize-specs(hm, new-cap, orientation, rehash: true) = {
   let live = _live-entries(hm)
   let base-alt = (
     "Hash table: "
@@ -720,9 +742,12 @@
       + str(hm.capacity)
       + " to "
       + str(new-cap)
-      + " slots and rehashing "
-      + str(live.len())
-      + " entries."
+      + " slots"
+      + (if rehash {
+        " and rehashing " + str(live.len()) + " entries."
+      } else {
+        ", copying " + str(live.len()) + " entries to their old indices WITHOUT rehashing (buggy)."
+      })
   )
   let specs = (
     (
@@ -737,49 +762,99 @@
   let empty-slots = if hm.strategy == "chaining" {
     range(new-cap).map(_ => ())
   } else { range(new-cap).map(_ => none) }
-  let acc = (hm.meta.cls.new)(
-    capacity: new-cap,
-    strategy: hm.strategy,
-    hash: hm.hash,
-    hash-repr: hm.hash-repr,
-    hash2: hm.hash2,
-    hash2-repr: hm.hash2-repr,
-    slots: empty-slots,
-  )
+  let acc = _rebuild-cap(hm, new-cap, empty-slots)
   specs.push((
     table: _to-table(acc, orientation),
     build: (_op, _rt) => core.blank-snapshot(),
     caption: [new array (m = #new-cap)],
     step: (kind: "new-array", capacity: new-cap),
-    alt: "Allocated a new array of " + str(new-cap) + " slots; rehashing each entry into it.",
+    alt: "Allocated a new array of "
+      + str(new-cap)
+      + " slots; "
+      + (if rehash { "rehashing" } else { "copying" })
+      + " each entry into it.",
   ))
-  for e in live {
-    let acc2 = (acc.insert)(e.key, value: e.value, label: e.label)
-    let hb = _hash-box(acc2, e.key)
-    let style-key = if hm.strategy == "chaining" {
-      let w = _chain-walk(acc2, e.key)
-      hm-draw.entry-key(w.bucket, w.depth)
-    } else {
-      let w = _oa-walk(acc2, e.key)
-      hm-draw.cell-key(w.index)
+  if rehash {
+    for e in live {
+      let acc2 = (acc.insert)(e.key, value: e.value, label: e.label)
+      let hb = _hash-box(acc2, e.key)
+      let style-key = if hm.strategy == "chaining" {
+        let w = _chain-walk(acc2, e.key)
+        hm-draw.entry-key(w.bucket, w.depth)
+      } else {
+        let w = _oa-walk(acc2, e.key)
+        hm-draw.cell-key(w.index)
+      }
+      let sk = style-key
+      let e-lbl = e.label
+      specs.push((
+        table: _to-table(acc2, orientation, hash-box: hb),
+        build: (op, _rt) => _styled(sk, fill: op.success-fill, stroke: op.settled-stroke),
+        caption: [rehash #e-lbl],
+        step: (kind: "rehash", key: e.key, index: hb.index),
+        alt: "Rehashed " + e-lbl + " under the new capacity.",
+      ))
+      acc = acc2
     }
-    let sk = style-key
-    let e-lbl = e.label
-    specs.push((
-      table: _to-table(acc2, orientation, hash-box: hb),
-      build: (op, _rt) => _styled(sk, fill: op.success-fill, stroke: op.settled-stroke),
-      caption: [rehash #e-lbl],
-      step: (kind: "rehash", key: e.key, index: hb.index),
-      alt: "Rehashed " + e-lbl + " under the new capacity.",
-    ))
-    acc = acc2
+  } else {
+    // Buggy copy: place each live entry at its OLD index in the larger
+    // array. No hash is computed, so no hash box is shown.
+    let copied = empty-slots
+    if hm.strategy == "chaining" {
+      for (i, chain) in hm.slots.enumerate() {
+        for (j, entry) in chain.enumerate() {
+          copied.at(i) = copied.at(i) + (entry,)
+          let acc2 = _rebuild-cap(hm, new-cap, copied)
+          let sk = hm-draw.entry-key(i, j)
+          let e-lbl = entry.label
+          specs.push((
+            table: _to-table(acc2, orientation),
+            build: (op, _rt) => _styled(sk, fill: op.success-fill, stroke: op.settled-stroke),
+            caption: [copy #e-lbl → bucket #i],
+            step: (kind: "copy", key: entry.key, index: i),
+            alt: "Copied "
+              + e-lbl
+              + " into bucket "
+              + str(i)
+              + " (its old bucket) without rehashing.",
+          ))
+          acc = acc2
+        }
+      }
+    } else {
+      for (i, slot) in hm.slots.enumerate() {
+        if slot == none or slot.at("tombstone", default: false) { continue }
+        copied.at(i) = slot
+        let acc2 = _rebuild-cap(hm, new-cap, copied)
+        let sk = hm-draw.cell-key(i)
+        let e-lbl = slot.label
+        specs.push((
+          table: _to-table(acc2, orientation),
+          build: (op, _rt) => _styled(sk, fill: op.success-fill, stroke: op.settled-stroke),
+          caption: [copy #e-lbl → slot #i],
+          step: (kind: "copy", key: slot.key, index: i),
+          alt: "Copied "
+            + e-lbl
+            + " into slot "
+            + str(i)
+            + " (its old index) without rehashing.",
+        ))
+        acc = acc2
+      }
+    }
   }
   specs.push((
     table: _to-table(acc, orientation),
     build: (_op, _rt) => core.blank-snapshot(),
-    caption: [rehashed],
-    step: (kind: "done", capacity: new-cap),
-    alt: "Resize complete: " + (acc.describe)() + ".",
+    caption: if rehash { [rehashed] } else { [copied (not rehashed)] },
+    step: (kind: "done", capacity: new-cap, rehashed: rehash),
+    alt: (if rehash {
+      "Resize complete: "
+    } else {
+      "Resize complete WITHOUT rehashing — moved keys are now at the wrong index for the new capacity, so lookups will miss: "
+    })
+      + (acc.describe)()
+      + ".",
   ))
   specs
 }
@@ -914,20 +989,38 @@
     },
     // Grow (or shrink) to `new-cap` and rehash every live entry through
     // the new capacity, in slot order. Tombstones are dropped.
-    resize: (self, new-cap) => {
+    //
+    // `rehash: false` is the *naive* resize (buggy, for teaching): each
+    // live entry is copied verbatim into its OLD index of the larger
+    // array, without recomputing the hash. Because `h(k) mod new-cap`
+    // then points elsewhere, a later search for a moved key probes the
+    // wrong slot and misses — the demonstration of why a real resize must
+    // rehash. Requires `new-cap >= capacity` (there must be room for the
+    // old indices). Keep the default (`rehash: true`) in real code.
+    resize: (self, new-cap, rehash: true) => {
       assert(new-cap > 0, message: "resize: capacity must be positive.")
       let empty = if self.strategy == "chaining" {
         range(new-cap).map(_ => ())
       } else { range(new-cap).map(_ => none) }
-      let fresh = (self.meta.cls.new)(
-        capacity: new-cap,
-        strategy: self.strategy,
-        hash: self.hash,
-        hash-repr: self.hash-repr,
-        hash2: self.hash2,
-        hash2-repr: self.hash2-repr,
-        slots: empty,
-      )
+      if not rehash {
+        assert(
+          new-cap >= self.capacity,
+          message: "resize: rehash: false requires new-cap >= capacity (old indices must fit).",
+        )
+        // Copy live entries to their old index; drop tombstones/empties
+        // (matches the animation, and tombstones are meaningless once the
+        // probe chains they patched are already broken by not rehashing).
+        let slots = empty
+        for (i, slot) in self.slots.enumerate() {
+          if self.strategy == "chaining" {
+            slots.at(i) = slot
+          } else if slot != none and not slot.at("tombstone", default: false) {
+            slots.at(i) = slot
+          }
+        }
+        return _rebuild-cap(self, new-cap, slots)
+      }
+      let fresh = _rebuild-cap(self, new-cap, empty)
       for e in _live-entries(self) {
         fresh = (fresh.insert)(e.key, value: e.value, label: e.label)
       }
@@ -1078,10 +1171,21 @@
     // Animate growing (or shrinking) to `new-cap` and rehashing every
     // live entry through the new capacity, one entry per frame. Frame
     // `step.kind`s: "init", "new-array", "rehash", "done".
-    resize-display: (self, new-cap, orientation: "horizontal", theme: auto, render-theme: auto, cell-width: "fit") => {
+    //
+    // `rehash: false` animates the *naive* resize (buggy, for teaching):
+    // each entry is copied to its OLD index in the larger array without
+    // recomputing the hash (no hash box shown), so a subsequent
+    // `search-display` for a moved key misses. Requires
+    // `new-cap >= capacity`. Frame `step.kind`s: "init", "new-array",
+    // "copy", "done".
+    resize-display: (self, new-cap, rehash: true, orientation: "horizontal", theme: auto, render-theme: auto, cell-width: "fit") => {
       assert(new-cap > 0, message: "resize-display: capacity must be positive.")
+      assert(
+        rehash or new-cap >= self.capacity,
+        message: "resize-display: rehash: false requires new-cap >= capacity (old indices must fit).",
+      )
       _hm-make-frames-multi(
-        _resize-specs(self, new-cap, orientation),
+        _resize-specs(self, new-cap, orientation, rehash: rehash),
         _resolve-hashmap-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
         cell-width: cell-width,

@@ -1503,6 +1503,23 @@ live entry through the hash under the new capacity, one entry per frame
   (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7, 3)).resize-display)(11),
 ))
 
+To *demonstrate why* the rehash matters, `resize` and `resize-display`
+take `rehash: false` — the naive resize that grows the array but copies
+each entry into its *old* index instead of hashing it again (no hash box
+is shown, because nothing is hashed). It's deliberately buggy: 14, 21 and
+7 land back in slots 0, 1, 2, but the array is now length 11, so
+`h(7) = 7 mod 11 = 7` — a later search for 7 probes the empty slot 7 and
+wrongly reports a miss even though 7 is still sitting in slot 2. Keep the
+default (`rehash: true`) in real code. (`rehash: false` requires
+`new-cap >= capacity` so the old indices still fit.)
+
+#align(center, starling.stacked(
+  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).resize-display)(11, rehash: false),
+))
+
+#let stale = (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).resize)(11, rehash: false)
+#align(center, starling.stacked((stale.search-display)(7)))
+
 == Theming
 
 The hash map reuses the render theme (structural colours) and the op
