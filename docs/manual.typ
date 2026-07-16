@@ -1477,6 +1477,22 @@ it writes a *tombstone* (`×`) that search skips and insert may reuse:
   (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete-display)(21),
 ))
 
+To *demonstrate why* that matters, `delete` and `delete-display` take
+`tombstone: false` — the naive open-addressing deletion that clears the
+slot to empty instead of tombstoning it. It's deliberately buggy: here
+14, 21 and 7 all hash to slot 0, so clearing 21 (slot 1) severs the
+probe chain, and a later search for 7 stops at the now-empty slot and
+wrongly reports a miss — even though 7 is still in slot 2. Keep the
+default (`tombstone: true`) in real code; the flag is a no-op for
+chaining, which has no tombstones.
+
+#align(center, starling.stacked(
+  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete-display)(21, tombstone: false),
+))
+
+#let broken = (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete)(21, tombstone: false)
+#align(center, starling.stacked((broken.search-display)(7)))
+
 == Resizing and rehashing
 
 `resize-display(new-cap)` allocates a larger array and replays every

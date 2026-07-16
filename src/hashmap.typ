@@ -613,7 +613,7 @@
   specs
 }
 
-#let _delete-specs(hm, key, orientation) = {
+#let _delete-specs(hm, key, orientation, tombstone: true) = {
   let wf = _walk-frames(hm, key, orientation, "delete")
   let specs = wf.specs
   let w = wf.walk
@@ -675,14 +675,29 @@
     step: (kind: "remove", index: idx),
     alt: "Removing " + str(key) + " from slot " + str(idx) + ".",
   ))
-  let hm2 = (hm.delete)(key)
-  specs.push((
-    table: _to-table(hm2, orientation),
-    build: (op, _rt) => _styled(hm-draw.cell-key(idx), stroke: op.danger-stroke),
-    caption: [tombstone at #idx],
-    step: (kind: "tombstone", index: idx),
-    alt: "Slot " + str(idx) + " marked as a tombstone (×), so probes for other keys still pass through it.",
-  ))
+  let hm2 = (hm.delete)(key, tombstone: tombstone)
+  if tombstone {
+    specs.push((
+      table: _to-table(hm2, orientation),
+      build: (op, _rt) => _styled(hm-draw.cell-key(idx), stroke: op.danger-stroke),
+      caption: [tombstone at #idx],
+      step: (kind: "tombstone", index: idx),
+      alt: "Slot " + str(idx) + " marked as a tombstone (×), so probes for other keys still pass through it.",
+    ))
+  } else {
+    // Naive deletion: the slot is blanked to empty. Ring it in danger to
+    // flag the hazard — a later probe that reaches this now-empty slot
+    // stops early, so any key stored beyond it becomes unreachable.
+    specs.push((
+      table: _to-table(hm2, orientation),
+      build: (op, _rt) => _styled(hm-draw.cell-key(idx), stroke: op.danger-stroke),
+      caption: [clear slot #idx],
+      step: (kind: "cleared", index: idx),
+      alt: "Slot "
+        + str(idx)
+        + " cleared to empty (no tombstone). A later probe that reaches it now stops early, so keys stored beyond it in a probe sequence become unreachable — this is the deletion bug tombstones prevent.",
+    ))
+  }
   specs
 }
 
@@ -867,7 +882,15 @@
     // Delete `key`. Chaining unlinks the entry; open addressing writes a
     // tombstone (never a plain empty, so later probes still traverse it).
     // A no-op if the key is absent.
-    delete: (self, key) => {
+    //
+    // `tombstone: false` is the *naive* open-addressing deletion: it
+    // clears the slot to empty instead of leaving a tombstone. That is
+    // deliberately buggy — a later search whose probe sequence runs
+    // through the cleared slot now stops early and fails to find keys
+    // stored beyond it. It exists to *teach* that failure; real code
+    // should keep the default. The flag is a no-op for chaining, which
+    // has no tombstones.
+    delete: (self, key, tombstone: true) => {
       if self.strategy == "chaining" {
         let w = _chain-walk(self, key)
         if w.kind != "found" { return self }
@@ -880,7 +903,7 @@
         let w = _oa-walk(self, key)
         if w.kind != "found" { return self }
         let slots = self.slots
-        slots.at(w.index) = (tombstone: true)
+        slots.at(w.index) = if tombstone { (tombstone: true) } else { none }
         _rebuild(self, slots)
       }
     },
@@ -1033,11 +1056,15 @@
     },
     // Animate deleting `key`. Walks to the key, then removes it: chaining
     // unlinks the entry; open addressing writes a tombstone (×) so later
-    // probes still traverse the slot. Frame `step.kind`s: "init",
-    // walk kinds, "remove", "deleted"/"tombstone", or "not-found".
-    delete-display: (self, key, orientation: "horizontal", theme: auto, render-theme: auto, cell-width: "fit") => {
+    // probes still traverse the slot. `tombstone: false` is the naive
+    // open-addressing deletion that clears the slot to empty instead — a
+    // deliberately buggy variant for teaching why tombstones are needed
+    // (a later search then stops early at the cleared slot); it's a no-op
+    // for chaining. Frame `step.kind`s: "init", walk kinds, "remove",
+    // "deleted"/"tombstone"/"cleared", or "not-found".
+    delete-display: (self, key, orientation: "horizontal", tombstone: true, theme: auto, render-theme: auto, cell-width: "fit") => {
       _hm-make-frames-multi(
-        _delete-specs(self, key, orientation),
+        _delete-specs(self, key, orientation, tombstone: tombstone),
         _resolve-hashmap-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
         cell-width: cell-width,
