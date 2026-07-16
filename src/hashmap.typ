@@ -277,13 +277,14 @@
 // in the backend's expected shape, so this is a thin wrapper; `cells`
 // may be overridden for frames that show a table state other than the
 // map's own (e.g. resize showing the pre-insert new array).
-#let _to-table(hm, orientation, cells: auto, capacity: auto, strategy: auto, hash-box: none, cell-width: auto) = (
+#let _to-table(hm, orientation, cells: auto, capacity: auto, strategy: auto, hash-box: none, cell-width: auto, phantom: none) = (
   capacity: if capacity == auto { hm.capacity } else { capacity },
   orientation: orientation,
   strategy: if strategy == auto { hm.strategy } else { strategy },
   cells: if cells == auto { hm.slots } else { cells },
   hash-box: hash-box,
   cell-width: cell-width,
+  phantom: phantom,
 )
 
 // The hash-box overlay dict for `key` on `hm` (an operation annotation
@@ -567,12 +568,17 @@
         alt: "Found " + str(key) + " at depth " + str(d) + " of bucket " + str(bucket) + ".",
       ))
     } else {
+      // Reached the end of the chain without a match. Highlight a phantom
+      // "null" cell past the last entry (the slot the search fell off the end
+      // into) rather than the bucket header — the header held no key, so a red
+      // ring on it reads as if the bucket itself were the miss.
+      let depth = hm.slots.at(bucket).len()
       specs.push((
-        table: _to-table(hm, orientation, hash-box: hb),
-        build: (op, _rt) => _styled(hm-draw.cell-key(bucket), stroke: op.danger-stroke),
+        table: _to-table(hm, orientation, hash-box: hb, phantom: (bucket: bucket, depth: depth)),
+        build: (op, _rt) => _styled(hm-draw.entry-key(bucket, depth), stroke: op.danger-stroke),
         caption: [#key not found],
         step: (kind: "not-found", bucket: bucket),
-        alt: str(key) + " not found; bucket " + str(bucket) + " exhausted.",
+        alt: str(key) + " not found; reached the end of bucket " + str(bucket) + "'s chain.",
       ))
     }
     return specs
@@ -616,12 +622,15 @@
   if hm.strategy == "chaining" {
     let bucket = w.bucket
     if w.kind != "found" {
+      // Fell off the end of the chain — mark the phantom "null" cell past the
+      // last entry, mirroring the failed lookup (see `_search-specs`).
+      let depth = hm.slots.at(bucket).len()
       specs.push((
-        table: _to-table(hm, orientation, hash-box: hb),
-        build: (op, _rt) => _styled(hm-draw.cell-key(bucket), stroke: op.danger-stroke),
+        table: _to-table(hm, orientation, hash-box: hb, phantom: (bucket: bucket, depth: depth)),
+        build: (op, _rt) => _styled(hm-draw.entry-key(bucket, depth), stroke: op.danger-stroke),
         caption: [#key not found],
         step: (kind: "not-found", bucket: bucket),
-        alt: str(key) + " not found; nothing to delete.",
+        alt: str(key) + " not found in bucket " + str(bucket) + "; nothing to delete.",
       ))
       return specs
     }

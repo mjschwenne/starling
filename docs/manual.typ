@@ -1458,6 +1458,14 @@ whose slot sits past a deleted entry still finds it:
   ((starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete)(21).search-display)(7),
 ))
 
+A chaining miss walks to the end of the bucket and rings a *phantom*
+"null" cell hung one past the last entry — the slot the search fell off
+the chain into — rather than the (keyless) bucket header:
+
+#align(center, starling.stacked(
+  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8)).search-display)(15),
+))
+
 == Deletion and tombstones
 
 Deletion is where the two collision families diverge. Chaining simply

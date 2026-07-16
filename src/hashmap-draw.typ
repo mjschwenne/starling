@@ -37,11 +37,16 @@
 //            For chaining each element is an array of entry dicts.
 //     hash-box: none | (key:, expr:, index:) — the operation overlay for
 //            this frame: renders `h(<key>) = <expr> = <index>` above the
-//            array with an arrow to cell `index`.
+//            array with an arrow to cell `index`. A `ghost: true` key draws
+//            it invisibly (reserving its footprint) — see the hash-box code.
 //     cell-width: auto | "fit" | number — cell sizing (optional, default
 //            `auto`). `auto` keeps the fixed historical footprint; "fit"
 //            grows cells/entries to the widest label (measures, so it
 //            needs a layout context); a number pins an exact cell width.
+//     phantom: none | (bucket:, depth:) — chaining only. Draws one empty
+//            "null" cell hung one past the tail of `bucket` (the slot a
+//            failed lookup falls off the end into), with a link into it.
+//            Stylable via `entry-key(bucket, depth)` like a real entry.
 //   )
 // Coordinates are derived deterministically from `capacity` +
 // `orientation` + the resolved cell width; unlike graphs there is no
@@ -507,6 +512,40 @@
         draw-box(entry-key(i, j), name, c0, c1, ec, "entry", label, entry.at("value", default: none), true)
       }
     }
+  }
+
+  // --- phantom chain cell ---
+  // A single empty "null" cell hung one past the tail of a bucket (`(bucket,
+  // depth)`), with a link into it. It has no structural entry — it's the slot
+  // a failed chaining lookup falls off the end into, so the miss can ring an
+  // empty cell instead of the (keyless) bucket header. Stylable via its
+  // `entry-key(bucket, depth)` like any entry (the miss frame rings it in
+  // `danger-stroke`). Drawn link-then-box so the arrowhead tucks under, matching
+  // the real chain.
+  let phantom = tbl.at("phantom", default: none)
+  if strategy == "chaining" and phantom != none {
+    let (i, d) = (phantom.bucket, phantom.depth)
+    let ec = _entry-center(i, d, orientation, dims)
+    let from = if d == 0 {
+      _cell-chain-exit(i, orientation, dims)
+    } else {
+      let pc = _entry-center(i, d - 1, orientation, dims)
+      if orientation == "vertical" { (pc.at(0) + dims.ehw, pc.at(1)) } else { (pc.at(0), pc.at(1) - dims.ehh) }
+    }
+    let top = if orientation == "vertical" { (ec.at(0) - dims.ehw, ec.at(1)) } else { (ec.at(0), ec.at(1) + dims.ehh) }
+    let lk = entry-key(i, d)
+    let ls = _merge-into(default-edge-style, snapshot.edges.at(lk, default: (:)))
+    if not ls.at("hide", default: false) {
+      draw.line(
+        from,
+        top,
+        stroke: ls.at("stroke", default: chain-stroke),
+        mark: (end: ">", fill: _stroke-paint(ls.at("stroke", default: chain-stroke))),
+      )
+    }
+    let c0 = (ec.at(0) - dims.ehw, ec.at(1) - dims.ehh)
+    let c1 = (ec.at(0) + dims.ehw, ec.at(1) + dims.ehh)
+    draw-box(lk, cell-prefix + "c" + str(i) + "-" + str(d), c0, c1, ec, "empty", none, none, true)
   }
 
   // --- index labels ---
