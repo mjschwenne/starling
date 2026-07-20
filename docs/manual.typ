@@ -907,6 +907,111 @@ node-visit point.
 
 #align(center, starling.last((b24-tour.in-order-display)()))
 
+= Trie animations tour
+
+The `Trie` class is a prefix tree — an n-ary tree that stores a *set of
+strings*. Unlike the other trees, a node carries no ordering key of its
+own: its identity is the prefix spelled by the *edges* from the root
+down to it (the root is the empty prefix). A node is a *word end*
+(terminal) when a stored word finishes there.
+
+Two teaching-relevant conventions follow from that:
+
+- *Letters live on the edges.* Each edge is drawn with the character
+  that leads into its child (in the render theme's `edge-tag-fill`
+  colour, the same persistent-label slot AVL heights and graph weights
+  use). Reading the edges from the root spells each prefix.
+- *Nodes show their word-end bit.* Because the letters are already on
+  the edges, a node's drawn value is its terminal bit — #raw("\"1\"")
+  when a stored word ends there, #raw("\"0\"") for an interior prefix —
+  and terminal nodes are additionally *shaded* via the trie's own
+  per-DS palette (`default-trie-theme`).
+
+`Trie` rides the shared tree backend (`draw-tree`) with ordinary circle
+nodes, so no new renderer is needed; the `tree-anim` trie builder
+extends each child's path by its letter. Paths are therefore plain
+prefix strings (`""`, `"c"`, `"ca"`, `"cat"`) — the core keys
+everything by opaque strings, so this needs no change to `PathId`.
+
+`Trie` exposes `display`, `search-display`, `insert-display`, and
+`delete-display`. The sample trie throughout this section is seeded via
+the #raw("trie(..words)") factory:
+
+```typ
+#let t = trie("cat", "car", "card", "dog", "do")
+```
+
+#let trie-tour = starling.trie("cat", "car", "card", "dog", "do")
+
+== Static display
+
+`(t.display)()` returns a one-frame array. Note that `"do"` is both a
+stored word (its node reads #raw("\"1\"") and is shaded) *and* an
+interior node with a child leading to `"dog"` — a word end need not be
+a leaf.
+
+#align(center, starling.last((trie-tour.display)()))
+
+== Search
+
+`(t.search-display)(word)` walks the query one character at a time,
+lighting up each matched edge and node in the op-theme's
+`search-stroke`. There are three outcomes: reaching a terminal node
+(*found*, ringed in `settled-stroke` + `success-fill`), reaching an
+interior node (a *prefix only*, not a stored word), or hitting a
+character with no matching edge (a *miss*, ringing the last matched
+node in `danger-stroke`).
+
+#align(center, starling.stacked((trie-tour.search-display)("card")))
+
+A prefix that isn't a stored word ends on the neutral "prefix only"
+frame:
+
+#align(center, starling.stacked((trie-tour.search-display)("ca")))
+
+== Insert
+
+`(t.insert-display)(word)` first walks the longest existing prefix
+(search-style), then *grows the remaining suffix one node per frame* —
+each new node appears as a #raw("\"0\"") in `success-stroke` — and
+finally flips the endpoint to a word end (#raw("\"1\""), shaded,
+`success-fill` + `settled-stroke`). Inserting a word whose path is
+brand new grows a whole chain:
+
+#align(center, starling.stacked((trie-tour.insert-display)("bat")))
+
+When the word is already an existing prefix, only the terminal bit
+flips — no new nodes:
+
+#align(center, starling.stacked((trie-tour.insert-display)("ca")))
+
+== Delete
+
+`(t.delete-display)(word)` walks to the word's terminal node, clears
+its word-end mark (bit #raw("\"1\"")→#raw("\"0\"")), then *prunes the
+dead branch one node per frame* (each removed node flashes
+`danger-stroke` before it vanishes). Pruning stops at the first
+ancestor that is itself a word end or that has another child. Deleting
+`"dog"` prunes the whole `d→o→g` chain back to `"do"`, which stays a
+stored word:
+
+#align(center, starling.stacked((trie-tour.delete-display)("dog")))
+
+When the target has children (it's a prefix of another word), the
+unmark is the only change — nothing is pruned:
+
+#align(center, starling.stacked((trie-tour.delete-display)("car")))
+
+== Recolouring word ends
+
+Terminal shading is the trie's only intrinsic styling, so it lives in a
+per-DS palette. Override it document-wide with `set-trie-theme(..)` or
+per call with `(t.display)(theme: (..))`:
+
+#align(center, starling.last((trie-tour.display)(
+  theme: (terminal-fill: rgb("#6b46c1"), terminal-stroke: black),
+)))
+
 = Graph animations tour
 
 The `Graph` class is the first non-tree structure in starling: an

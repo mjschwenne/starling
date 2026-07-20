@@ -162,6 +162,41 @@
   )
 }
 
+// Trie variant — for the `Trie` class. A trie node carries `char` (the
+// letter on its incoming edge; `none` at the root), `terminal` (whether
+// a stored word ends here), and `children` (array of child nodes kept
+// sorted by `char`). Each child's path extends the parent's by the
+// child's `char`, so a node's path is exactly the prefix it spells. The
+// node's drawn label is its terminal bit — "1" when a word ends here,
+// "0" otherwise — and the letters live on the edges (set as edge `tag`s
+// by the trie's paint helper). `child-index` / `n-siblings` record the
+// node's position among its siblings so `draw-edge` can place each
+// edge's letter tag on the correct side of a fork (see `want-x-sign`).
+// No phantom siblings: a lone child hanging straight down is the desired
+// trie look (a prefix chain), unlike the binary builder.
+#let _build-cetz-tree-trie(node, path, child-index: 0, n-siblings: 1) = {
+  let children-rendered = ()
+  let cs = node.at("children", default: ())
+  for (i, c) in cs.enumerate() {
+    children-rendered.push(_build-cetz-tree-trie(
+      c,
+      path + c.char,
+      child-index: i,
+      n-siblings: cs.len(),
+    ))
+  }
+  (
+    (
+      value: none,
+      label: if node.terminal { "1" } else { "0" },
+      path: path,
+      child-index: child-index,
+      n-siblings: n-siblings,
+    ),
+    ..children-rendered,
+  )
+}
+
 // ===================================================================
 // draw-tree
 // ===================================================================
@@ -244,11 +279,18 @@
   // stub edge has somewhere to land — used by the double-black dot.
   // N-ary trees never use this — their invariants forbid missing
   // children at internal nodes.
-  let is-nary = "children" in tree
+  // Shape dispatch. A trie carries `terminal` (and `children`); a B24
+  // n-ary node carries `keys` (and `children`); a binary node carries
+  // `left`/`right`. Check `terminal` first so a trie doesn't fall into
+  // the generic n-ary path.
+  let is-trie = "terminal" in tree
+  let is-nary = (not is-trie) and "children" in tree
   let forced-phantoms = snapshot.edges.pairs()
     .filter(p => p.at(1).at("force-show", default: false))
     .map(p => p.at(0))
-  let cetz-tree-root = if is-nary {
+  let cetz-tree-root = if is-trie {
+    _build-cetz-tree-trie(tree, "")
+  } else if is-nary {
     _build-cetz-tree-nary(tree, "")
   } else {
     _build-cetz-tree(tree, "", forced-phantoms: forced-phantoms)
@@ -562,6 +604,11 @@
             let n-children = from.content.keys.len() + 1
             let idx = int(child-path.at(child-path.len() - 1))
             if idx * 2 < n-children - 1 { -1 } else { 1 }
+          } else if "n-siblings" in to.content {
+            // Trie edge — the child records its own index / sibling count.
+            let idx = to.content.child-index
+            let n = to.content.n-siblings
+            if idx * 2 < n - 1 { -1 } else { 1 }
           } else if child-path.ends-with("L") { -1 } else { 1 }
           draw.get-ctx(ctx => {
             let (_, p, c) = cetz.coordinate.resolve(

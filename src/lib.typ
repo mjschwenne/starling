@@ -26,6 +26,18 @@
 )
 #import "./avl.typ": AVL, avl
 #import "./b24.typ": B24, b24
+// Trie — a prefix tree. An n-ary tree keyed by prefix strings, with the
+// letters on the edges and word-end nodes shaded via its own per-DS
+// palette. Names don't collide, so it re-exports flat.
+#import "./trie.typ": (
+  Trie,
+  trie,
+  default-trie-theme,
+  set-trie-theme,
+  TrieTheme,
+  paint-trie,
+  _trie-theme-state,
+)
 #import "./graph.typ": Graph, graph, aux-strip
 // `auto-layout` carries its `diagraph-layout` import inside its own body
 // (see graph-layout.typ), so re-exporting it here does NOT make
