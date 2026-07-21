@@ -1645,6 +1645,90 @@ of the manual) recolours a single display:
   ),
 ))
 
+= Linear sorts tour
+
+A `Sort` wraps a plain array of non-negative integers and animates the two
+classic *linear* (distribution) sorts — counting sort and LSD radix sort.
+These sorts don't compare-and-swap elements; they *read a value, compute an
+index, and write a cell*, which is exactly the row-of-boxes-with-arrows
+vocabulary the animation kernel is built on. Unlike the trees and graphs
+there is no layout to supply — the rows are laid out on a fixed grid — so
+the display methods take only the usual `theme:` / `render-theme:` (plus
+`cell-width:`, which defaults to fitting the cells to their contents).
+
+Build one with the `sort(..)` factory, which accepts either a splat of
+numbers or a single array:
+
+```typ
+#let s = sort(3, 1, 4, 1, 5)   // or sort((3, 1, 4, 1, 5))
+```
+
+The pure methods `counting-sort(k:)` and `radix-sort(base:)` return the
+sorted array (`sorted()` is the builtin-sort oracle); the `*-display`
+methods return the animation frames.
+
+== Static display
+
+`display()` renders the array as a single indexed row:
+
+#align(center, starling.last((starling.sort(3, 1, 4, 1, 5, 9, 2, 6).display)()))
+
+== Counting sort
+
+`counting-sort-display()` animates the stable, prefix-sum counting sort:
+first the *count* row is filled by sweeping the input (each value bumps the
+bucket it indexes), then the counts are turned into cumulative *end
+positions* by a prefix-sum sweep, and finally the input is walked
+*right-to-left* — the stability that radix sort relies on — placing each
+value at `output[count[value] - 1]` and decrementing. The count row is
+indexed *by value* (index `v` is bucket `v`), so the read arrows land on
+the bucket named by the element being read.
+
+#align(center, starling.stacked((starling.sort(1, 0, 2, 1).counting-sort-display)()))
+
+Passing `variant: "reconstruct"` animates the simpler intro version
+instead: build the histogram, then sweep the buckets in order and emit each
+value `count[v]` times into the output. It sorts, but — because it never
+uses the prefix sums or a right-to-left pass — it does not demonstrate
+stability.
+
+#align(center, starling.stacked(
+  (starling.sort(2, 0, 1, 2).counting-sort-display)(variant: "reconstruct"),
+))
+
+The count array is sized `max + 1` by default (so its indices are the
+values `0..max`); pass an explicit `k:` to reserve a larger range.
+
+== Radix sort
+
+`radix-sort-display()` animates LSD radix sort as *one stable counting-sort
+pass per digit place* — ones, then tens, and so on — keyed on the extracted
+digit (so the count row has `base` buckets). Each input cell shows its
+digit for the active pass as a subscript, and the array emerges sorted
+after the most-significant pass. Because each pass is the stable counting
+sort above, radix is a thin wrapper over the same engine.
+
+#align(center, starling.stacked((starling.sort(23, 4, 8).radix-sort-display)()))
+
+The radix `base:` defaults to `10`; any base `>= 2` works (a smaller base
+means more, narrower passes).
+
+== Theming
+
+Linear sorts reuse the render theme (structural colours) and the op theme
+(the read / active-bucket / placement strokes) unchanged, and add their own
+palette, `default-sort-theme`: `empty-fill`, `index-fill`, `row-label-fill`,
+`count-fill` (the histogram-cell tint), and `active-digit-fill` (the radix
+subscript). Override it document-wide with `set-sort-theme(..)` or per call
+with the `theme:` argument (the per-call form skips the state read — see
+@theming-perf).
+
+#align(center, starling.last(
+  (starling.sort(4, 2, 5, 1).counting-sort-display)(
+    theme: (count-fill: rgb("#eef3ff"), active-digit-fill: rgb("#c0392b")),
+  ),
+))
+
 = Git graph
 
 The `git-graph` DSL draws git commit graphs — commits, branches, merges,

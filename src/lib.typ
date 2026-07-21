@@ -72,6 +72,24 @@
   entry-key,
   make-hashmap-renderer,
 )
+// Linear sorts — counting sort and LSD radix sort, animated as parallel
+// rows of boxes (input / count / output). Rides the multi-row array
+// backend. Names don't collide, so it re-exports flat.
+#import "./sort.typ": (
+  Sort,
+  sort,
+  default-sort-theme,
+  set-sort-theme,
+  SortTheme,
+  _sort-theme-state,
+)
+#import "./array-draw.typ": (
+  draw-array,
+  array-cell-anchor,
+  array-cell-key,
+  array-arrow-key,
+  make-array-renderer,
+)
 // Git graph — a stateful cetz DSL (commits, branches, merges, tags,
 // HEAD/branch pointers). Unlike the tree/graph structures it does NOT
 // ride the `Frame` stack, so the frame helpers below (`last`, `stacked`,
