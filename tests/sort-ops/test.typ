@@ -34,6 +34,44 @@
 #assert.eq((a.len)(), 8)
 #assert((a.check-invariants)())
 
+// ---- Enumerations: (value, label:) elements ----
+// Bare ints get an `auto` label (parallel to values).
+#assert.eq(sort(5, 3, 8, 1).labels, (auto, auto, auto, auto))
+// A dict element splits key (sort) from label (display).
+#let e = sort(
+  (value: 2, label: [Tue]),
+  (value: 0, label: [Sun]),
+  (value: 1, label: [Mon]),
+)
+#assert.eq(e.values, (2, 0, 1))
+#assert.eq(e.labels, ([Tue], [Sun], [Mon]))
+#assert((e.check-invariants)())
+// Pure ops still return the sorted integer KEYS (labels are display-only).
+#assert.eq((e.counting-sort)(), (0, 1, 2))
+#assert.eq((e.radix-sort)(), (0, 1, 2))
+// Mixed bare-int and dict elements, and a single-array form of dicts.
+#let m = sort(3, (value: 1, label: [one]), 2)
+#assert.eq(m.values, (3, 1, 2))
+#assert.eq(m.labels, (auto, [one], auto))
+#assert.eq(sort(((value: 1, label: [a]), (value: 0, label: [b]))).values, (1, 0))
+// A dict without an explicit label defaults to `auto`.
+#assert.eq(sort((value: 4)).labels, (auto,))
+// The displays don't panic over labelled elements (all counting variants + radix).
+#assert.eq(type((e.counting-sort-display)()), array)
+#assert.eq(type((e.counting-sort-display)(variant: "reconstruct")), array)
+#assert.eq(type((e.counting-sort-display)(variant: "buckets")), array)
+#assert.eq(type((e.counting-sort-display)(separate-counts: true)), array)
+#assert.eq(type((e.radix-sort-display)()), array)
+
+// The buckets variant is stable, so it reproduces the counting-sort order.
+#assert.eq((a.counting-sort)(), (a.sorted)())
+#assert.eq(type((sort(3, 1, 4, 1, 0).counting-sort-display)(variant: "buckets")), array)
+// separate-counts only applies to the prefix variant (not buckets).
+#assert.eq(
+  type((sort(2, 0, 1).counting-sort-display)(variant: "buckets")),
+  array,
+)
+
 // Placeholder page (tytanic always compares a rendered page).
 #set page(width: auto, height: auto, margin: 6pt)
 Sort pure-op assertions passed.

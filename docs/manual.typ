@@ -1647,7 +1647,7 @@ of the manual) recolours a single display:
 
 = Linear sorts tour
 
-A `Sort` wraps a plain array of non-negative integers and animates the two
+A `Sort` wraps an array of non-negative integer keys and animates the two
 classic *linear* (distribution) sorts — counting sort and LSD radix sort.
 These sorts don't compare-and-swap elements; they *read a value, compute an
 index, and write a cell*, which is exactly the row-of-boxes-with-arrows
@@ -1664,8 +1664,13 @@ numbers or a single array:
 ```
 
 The pure methods `counting-sort(k:)` and `radix-sort(base:)` return the
-sorted array (`sorted()` is the builtin-sort oracle); the `*-display`
-methods return the animation frames.
+sorted array of keys (`sorted()` is the builtin-sort oracle); the
+`*-display` methods return the animation frames.
+
+Each element may also be a `(value: <int>, label: <content>)` dict, to sort
+an *enumeration* — the integer `value` is the sort key and `label` is what's
+drawn (the same `value`/`label` split the BST uses). See
+@sort-enumerations.
 
 == Static display
 
@@ -1699,6 +1704,44 @@ stability.
 The count array is sized `max + 1` by default (so its indices are the
 values `0..max`); pass an explicit `k:` to reserve a larger range.
 
+The default animation reuses a single `count` row for both the histogram
+and the cumulative end positions — the prefix-sum sweep overwrites the
+histogram in place. Passing `separate-counts: true` (prefix variant only)
+instead keeps the raw histogram in the `count` row all pass and builds the
+cumulative prefix sums up in their own `cumulative` row below it; placement
+then decrements the `cumulative` row. It costs one extra row but keeps the
+original counts visible while the end positions are derived — the clearer
+telling of *why* the prefix sum gives each value's final slot.
+
+#align(center, starling.stacked(
+  (starling.sort(1, 0, 2, 1, 3).counting-sort-display)(separate-counts: true),
+))
+
+A third variant, `variant: "buckets"`, draws the count array as a
+*chaining hash table* (identity hash `h(v) = v`) rather than a histogram of
+numbers. Each element is *copied into the chain* of the bucket named by its
+value (appending at the tail), then the buckets are read left-to-right, each
+chain head-to-tail, into the output. It is deliberately space-inefficient —
+the whole element lives in the bucket, so a skewed distribution grows a long
+chain — but it makes the mechanism concrete: sorting *is* distributing into
+value-indexed buckets and concatenating them. Because elements append at the
+tail and are read head-first, it is stable. (The chains reuse the same
+hanging-chain look as the hash map's separate chaining.)
+
+#align(center, starling.stacked(
+  (starling.sort(3, 1, 4, 1, 0).counting-sort-display)(variant: "buckets"),
+))
+
+Sorting an @sort-enumerations[enumeration] works here too — the labels ride
+their chains into the sorted output:
+
+#align(center, starling.stacked((starling.sort(
+  (value: 2, label: [Tue]),
+  (value: 0, label: [Sun]),
+  (value: 2, label: [Tue]),
+  (value: 1, label: [Mon]),
+).counting-sort-display)(variant: "buckets")))
+
 == Radix sort
 
 `radix-sort-display()` animates LSD radix sort as *one stable counting-sort
@@ -1713,13 +1756,58 @@ sort above, radix is a thin wrapper over the same engine.
 The radix `base:` defaults to `10`; any base `>= 2` works (a smaller base
 means more, narrower passes).
 
+== Sorting enumerations <sort-enumerations>
+
+Counting and radix sort are not comparison sorts — the value is used *as an
+index* into the count array (and, for radix, decomposed into digits), so the
+sort key must be a non-negative integer. To sort an *enumeration* whose
+elements you'd rather show by name (weekdays, ranks, priorities), give each
+element as a `(value: <int>, label: <content>)` dict: the integer `value` is
+the ordinal the sort buckets on, and `label` is the arbitrary content drawn
+in the cell. The label rides along with its key through placement, so the
+output row shows the reordered labels — not just the sorted ordinals:
+
+#align(center, starling.stacked((starling.sort(
+  (value: 3, label: [Wed]),
+  (value: 1, label: [Mon]),
+  (value: 0, label: [Sun]),
+  (value: 2, label: [Tue]),
+).counting-sort-display)()))
+
+Radix works the same way — the digit subscripts read off the integer key
+while the label travels to the sorted output:
+
+#align(center, starling.stacked((starling.sort(
+  (value: 23, label: [23kg]),
+  (value: 4, label: [4kg]),
+  (value: 8, label: [8kg]),
+).radix-sort-display)()))
+
+A bare integer element is shorthand for `(value: n, label: auto)`, where an
+`auto` label draws the key itself — so the all-integer forms above are just
+the common case of this same mechanism, and you can freely mix the two
+(`sort(3, (value: 1, label: [one]), 2)`).
+
+The pure `counting-sort()` / `radix-sort()` methods still return the sorted
+integer *keys* (the correctness oracle); the labels are a display-only
+concern of the `*-display` animations.
+
+One caveat with `variant: "reconstruct"`: that variant rebuilds the output
+from the histogram alone — the bucket index (a key) is all it has, so it
+cannot tell which original element each emitted copy was. With duplicate
+keys but distinct labels it therefore shows the *first-seen* label for each
+key on every copy. This is not a rendering gap but the very reason
+reconstruct is the *unstable* variant (it discards element identity); the
+stable prefix counting sort and radix preserve per-element labels.
+
 == Theming
 
 Linear sorts reuse the render theme (structural colours) and the op theme
 (the read / active-bucket / placement strokes) unchanged, and add their own
 palette, `default-sort-theme`: `empty-fill`, `index-fill`, `row-label-fill`,
-`count-fill` (the histogram-cell tint), and `active-digit-fill` (the radix
-subscript). Override it document-wide with `set-sort-theme(..)` or per call
+`count-fill` (the histogram- and bucket-cell tint), `active-digit-fill` (the
+radix subscript), and `chain-stroke` (the connector colour for the buckets
+variant's chains). Override it document-wide with `set-sort-theme(..)` or per call
 with the `theme:` argument (the per-call form skips the state read — see
 @theming-perf).
 

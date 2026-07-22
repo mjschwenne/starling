@@ -3,8 +3,12 @@
 // `array-draw.typ` (the analog of how `hashmap.typ` rides on
 // `hashmap-draw.typ`).
 //
-// A `Sort` wraps a plain array of non-negative integers and animates the
-// two classic linear (distribution) sorts:
+// A `Sort` wraps parallel arrays: `values` (the non-negative integer sort
+// keys) and `labels` (each `auto` = show the key, or arbitrary content, so
+// an *enumeration* can be sorted by ordinal while displaying names). The
+// integer key is what the count array is indexed by; the label only rides
+// along for display — the `value`/`label` split shared with BST/B24. It
+// animates the two classic linear (distribution) sorts:
 //   * counting sort — histogram the values, then place them. Two variants:
 //       - "prefix"      (default, stable): count -> cumulative prefix sums
 //                        -> place right-to-left into an output array. The
@@ -49,6 +53,8 @@
   row-label-fill: black,
   count-fill: rgb("#eef4fb"),
   active-digit-fill: rgb("#2b6cb0"),
+  // The connector colour for the "buckets" variant's chains / head pointers.
+  chain-stroke: rgb("#8a8f98"),
 )
 
 #let _sort-theme-keys = (
@@ -57,6 +63,7 @@
   "row-label-fill",
   "count-fill",
   "active-digit-fill",
+  "chain-stroke",
 )
 
 /// Typsy refinement: a dictionary whose keys are a subset of the sort
@@ -192,22 +199,56 @@
 } else { str(base) + "^" + str(d) }
 
 // ===================================================================
+// Elements: the (key, label) pair
+// ===================================================================
+//
+// A `Sort` stores parallel `values` (the non-negative integer sort keys,
+// which counting/radix index the count array by) and `labels` (what each
+// element displays — `auto` falls back to the key). An "element" bundles
+// one of each. The counting/radix engine below operates on elements so a
+// label rides along with its key through placement; only the integer
+// `.key` ever drives the histogram. Same split as BST/B24's `value`/`label`.
+
+// Build the element array from parallel `values` / `labels`.
+#let _elems(values, labels) = range(values.len()).map(i => (
+  key: values.at(i),
+  label: labels.at(i, default: auto),
+))
+
+// String reference to an element for captions / alt text. Uses the label
+// only when it is a plain string (arbitrary content can't be spliced into
+// a string), else the ordering key — the same rule as `tree-anim`'s
+// `_alt-label`.
+#let _disp(elem) = if type(elem.label) == str { elem.label } else { str(elem.key) }
+
+// The *visible* display value of an element (for a cell body): the label
+// when set, else the integer key. Returns an int (auto label) or content
+// (explicit label); `_row` renders either. An int auto-label thus draws
+// exactly as the bare-integer path did.
+#let _disp-val(elem) = if elem.label == auto { elem.key } else { elem.label }
+
+// ===================================================================
 // Display-frame helpers
 // ===================================================================
 
 // One row of the positioned table. `values` may contain `none` for empty
-// cells; `subs` (if given) is an array of per-cell secondary annotations
-// (the radix active digit). `indices: auto` labels cells 0..n-1.
+// cells; each non-`none` entry is either an int (rendered `[#v]`, the
+// count/cumul rows and auto-labelled elements) or already-content (an
+// explicit element label, passed through). `subs` (if given) is an array
+// of per-cell secondary annotations (the radix active digit). `indices:
+// auto` labels cells 0..n-1.
+// A cell's rendered value: `none` (empty), an int wrapped to content
+// (`[#v]` — count/cumul rows and auto-labelled elements), or already-content
+// (an explicit element label) passed through.
+#let _cell-value(v) = if v == none { none } else if type(v) == int { [#v] } else { v }
+
 #let _row(id, label, values, indices: auto, kind: "data", subs: none) = (
   id: id,
   label: label,
   kind: kind,
   indices: indices,
   cells: range(values.len()).map(i => (
-    value: {
-      let v = values.at(i)
-      if v == none { none } else { [#v] }
-    },
+    value: _cell-value(values.at(i)),
     sub: if subs == none { none } else { subs.at(i, default: none) },
   )),
 )
@@ -229,7 +270,10 @@
   let measure-cells = ()
   for s in specs {
     for row in s.table.rows {
-      for cell in row.cells {
+      // Cells, plus any chain entries (the "buckets" row kind) so they size
+      // to the same fit width as the array cells.
+      let cells = row.cells + row.at("chains", default: ()).flatten()
+      for cell in cells {
         if cell.at("value", default: none) != none {
           let key = repr(cell)
           if key not in seen {
@@ -285,53 +329,76 @@
 //
 // Frame `step.kind`s: "init"/"pass-start", "count", "count-done", "prefix",
 // "prefix-done", "place", "settled".
+//
+// When `separate-counts` is true the histogram and the cumulative prefix
+// sums live in two DISTINCT rows ("count" and "cumul") instead of one
+// mutated-in-place row: the count row keeps the raw histogram all pass, the
+// prefix sums build up in the cumulative row, and placement decrements the
+// cumulative row. Pedagogically clearer (the original histogram stays
+// visible), at the cost of one extra row. Only meaningful for the prefix
+// engine (radix / the reconstruct variant leave it `false`).
 #let _counting-prefix-specs(
-  values,
+  elems,
   k,
-  key: v => v,
+  key: e => e.key,
   in-label: [input],
   count-label: [count],
+  cumul-label: [cumulative],
   out-label: [output],
   subs: none,
+  separate-counts: false,
   init-caption: none,
   init-step: (kind: "init"),
   init-alt: none,
   with-settled: true,
 ) = {
-  let n = values.len()
+  let n = elems.len()
   let empty-out = range(n).map(_ => none)
-  let mk-table(counts, output, arrows) = (
-    rows: (
-      _row("in", in-label, values, subs: subs),
+  // Empty (all-`none`, muted) count-width row — the cumulative row before it
+  // is built, in separate-counts mode.
+  let empty-counts = range(k).map(_ => none)
+  // The `out` array holds elements (or `none`); render each as its display
+  // value so a label rides to its placed slot.
+  let out-vals(output) = output.map(e => if e == none { none } else { _disp-val(e) })
+  // `cumulative` is ignored unless `separate-counts` (then it becomes the
+  // extra row between count and out).
+  let mk-table(counts, cumulative, output, arrows) = {
+    let rows = (
+      _row("in", in-label, elems.map(_disp-val), subs: subs),
       _row("count", count-label, counts, kind: "count"),
-      _row("out", out-label, output),
-    ),
-    arrows: arrows,
-  )
+    )
+    if separate-counts {
+      rows.push(_row("cumul", cumul-label, cumulative, kind: "count"))
+    }
+    rows.push(_row("out", out-label, out-vals(output)))
+    (rows: rows, arrows: arrows)
+  }
 
   let specs = ((
-    table: mk-table(range(k).map(_ => 0), empty-out, ()),
+    table: mk-table(range(k).map(_ => 0), empty-counts, empty-out, ()),
     build: (_op, _rt) => core.blank-snapshot(),
     caption: init-caption,
     step: init-step,
     alt: if init-alt != none {
       init-alt
     } else {
-      "Counting sort. Input: [" + values.map(str).join(", ") + "]."
+      "Counting sort. Input: [" + elems.map(_disp).join(", ") + "]."
     },
   ),)
 
   // --- count phase ---
   let counts = range(k).map(_ => 0)
   for i in range(n) {
-    let v = values.at(i)
-    let b = key(v)
+    let e = elems.at(i)
+    let b = key(e)
     counts.at(b) = counts.at(b) + 1
     let ii = i
     let bb = b
+    let ds = _disp(e)
     specs.push((
       table: mk-table(
         counts,
+        empty-counts,
         empty-out,
         ((id: "read", from: (row: "in", col: ii), to: (row: "count", col: bb)),),
       ),
@@ -344,24 +411,145 @@
       },
       caption: "count[" + str(bb) + "] += 1",
       step: (kind: "count", index: ii, bucket: bb),
-      alt: "Read input[" + str(ii) + "] = " + str(v) + "; increment count[" + str(bb) + "].",
+      alt: "Read input[" + str(ii) + "] = " + ds + "; increment count[" + str(bb) + "].",
     ))
   }
   specs.push((
-    table: mk-table(counts, empty-out, ()),
+    table: mk-table(counts, empty-counts, empty-out, ()),
     build: (_op, _rt) => core.blank-snapshot(),
     caption: "histogram complete",
     step: (kind: "count-done"),
     alt: "Histogram complete: count = [" + counts.map(str).join(", ") + "].",
   ))
 
-  // --- prefix-sum phase ---
+  // --- separate-counts: build a distinct cumulative row, then place from it
+  if separate-counts {
+    // cumulative[0] = count[0]; cumulative[b] = cumulative[b-1] + count[b].
+    let cumulative = empty-counts
+    cumulative.at(0) = counts.at(0)
+    let c0 = counts.at(0)
+    specs.push((
+      table: mk-table(
+        counts,
+        cumulative,
+        empty-out,
+        ((id: "carry", from: (row: "count", col: 0), to: (row: "cumul", col: 0)),),
+      ),
+      build: (op, _rt) => {
+        let s = core.blank-snapshot()
+        s = (s.style-node)(arr-draw.array-cell-key("count", 0), stroke: op.search-stroke)
+        s = (s.style-node)(arr-draw.array-cell-key("cumul", 0), stroke: op.attention-stroke)
+        s = (s.style-edge)("carry", stroke: op.search-stroke)
+        s
+      },
+      caption: "cumulative[0] = count[0]",
+      step: (kind: "prefix", bucket: 0),
+      alt: "Cumulative sum: cumulative[0] = count[0] = " + str(c0) + ".",
+    ))
+    for b in range(1, k) {
+      cumulative.at(b) = cumulative.at(b - 1) + counts.at(b)
+      let bb = b
+      let cval = cumulative.at(b)
+      specs.push((
+        table: mk-table(
+          counts,
+          cumulative,
+          empty-out,
+          ((id: "carry", from: (row: "count", col: bb), to: (row: "cumul", col: bb)),),
+        ),
+        build: (op, _rt) => {
+          let s = core.blank-snapshot()
+          s = (s.style-node)(arr-draw.array-cell-key("count", bb), stroke: op.search-stroke)
+          s = (s.style-node)(arr-draw.array-cell-key("cumul", bb - 1), stroke: op.search-stroke)
+          s = (s.style-node)(arr-draw.array-cell-key("cumul", bb), stroke: op.attention-stroke)
+          s = (s.style-edge)("carry", stroke: op.search-stroke)
+          s
+        },
+        caption: "cumulative[" + str(bb) + "] = cumulative[" + str(bb - 1) + "] + count[" + str(bb) + "]",
+        step: (kind: "prefix", bucket: bb),
+        alt: "Cumulative sum: cumulative[" + str(bb) + "] becomes " + str(cval) + " (an end position).",
+      ))
+    }
+    specs.push((
+      table: mk-table(counts, cumulative, empty-out, ()),
+      build: (_op, _rt) => core.blank-snapshot(),
+      caption: [cumulative #sym.arrow end positions],
+      step: (kind: "prefix-done"),
+      alt: "Cumulative counts now hold each value's end position (decrement first to get the 0-based slot): [" + cumulative.map(str).join(", ") + "].",
+    ))
+
+    // --- place phase (right-to-left; decrement the cumulative row) ---
+    let output = empty-out
+    for i in range(n - 1, -1, step: -1) {
+      let e = elems.at(i)
+      let b = key(e)
+      cumulative.at(b) = cumulative.at(b) - 1
+      let p = cumulative.at(b)
+      output.at(p) = e
+      let ii = i
+      let bb = b
+      let pp = p
+      let dv = _disp-val(e)
+      let ds = _disp(e)
+      specs.push((
+        table: mk-table(
+          counts,
+          cumulative,
+          output,
+          (
+            (id: "read", from: (row: "in", col: ii), to: (row: "count", col: bb)),
+            (id: "place", from: (row: "cumul", col: bb), to: (row: "out", col: pp)),
+          ),
+        ),
+        build: (op, _rt) => {
+          let s = core.blank-snapshot()
+          s = (s.style-node)(arr-draw.array-cell-key("in", ii), stroke: op.search-stroke)
+          s = (s.style-node)(arr-draw.array-cell-key("count", bb), stroke: op.search-stroke)
+          s = (s.style-node)(arr-draw.array-cell-key("cumul", bb), stroke: op.attention-stroke)
+          s = (s.style-node)(
+            arr-draw.array-cell-key("out", pp),
+            fill: op.success-fill,
+            stroke: op.settled-stroke,
+          )
+          s = (s.style-edge)("read", stroke: op.search-stroke)
+          s = (s.style-edge)("place", stroke: op.success-stroke)
+          s
+        },
+        caption: [place #dv #sym.arrow decrement cumulative #sym.arrow #("output[" + str(pp) + "]")],
+        step: (kind: "place", index: ii, bucket: bb, pos: pp),
+        alt: "Decrement cumulative[" + str(bb) + "] to " + str(pp) + " (its 0-based slot), then place input[" + str(ii) + "] = " + ds + " into output[" + str(pp) + "].",
+      ))
+    }
+
+    if with-settled {
+      specs.push((
+        table: mk-table(counts, cumulative, output, ()),
+        build: (op, _rt) => {
+          let s = core.blank-snapshot()
+          for j in range(n) {
+            s = (s.style-node)(
+              arr-draw.array-cell-key("out", j),
+              fill: op.success-fill,
+              stroke: op.settled-stroke,
+            )
+          }
+          s
+        },
+        caption: "sorted",
+        step: (kind: "settled"),
+        alt: "Sorted output: [" + output.map(e => if e == none { "" } else { _disp(e) }).join(", ") + "].",
+      ))
+    }
+    return (specs: specs, output: output)
+  }
+
+  // --- prefix-sum phase (single-row: mutate the count row in place) ---
   for b in range(1, k) {
     counts.at(b) = counts.at(b) + counts.at(b - 1)
     let bb = b
     let cumulative = counts.at(b)
     specs.push((
-      table: mk-table(counts, empty-out, ()),
+      table: mk-table(counts, none, empty-out, ()),
       build: (op, _rt) => {
         let s = core.blank-snapshot()
         s = (s.style-node)(arr-draw.array-cell-key("count", bb - 1), stroke: op.search-stroke)
@@ -374,28 +562,30 @@
     ))
   }
   specs.push((
-    table: mk-table(counts, empty-out, ()),
+    table: mk-table(counts, none, empty-out, ()),
     build: (_op, _rt) => core.blank-snapshot(),
-    caption: "counts -> end positions",
+    caption: [counts #sym.arrow end positions],
     step: (kind: "prefix-done"),
-    alt: "Counts now hold each value's end position: [" + counts.map(str).join(", ") + "].",
+    alt: "Counts now hold each value's end position (decrement first to get the 0-based slot): [" + counts.map(str).join(", ") + "].",
   ))
 
   // --- place phase (right-to-left for stability) ---
   let output = empty-out
   for i in range(n - 1, -1, step: -1) {
-    let v = values.at(i)
-    let b = key(v)
+    let e = elems.at(i)
+    let b = key(e)
     counts.at(b) = counts.at(b) - 1
     let p = counts.at(b)
-    output.at(p) = v
+    output.at(p) = e
     let ii = i
     let bb = b
     let pp = p
-    let vv = v
+    let dv = _disp-val(e)
+    let ds = _disp(e)
     specs.push((
       table: mk-table(
         counts,
+        none,
         output,
         (
           (id: "read", from: (row: "in", col: ii), to: (row: "count", col: bb)),
@@ -415,15 +605,15 @@
         s = (s.style-edge)("place", stroke: op.success-stroke)
         s
       },
-      caption: "place " + str(vv) + " -> output[" + str(pp) + "]",
+      caption: [place #dv #sym.arrow decrement count #sym.arrow #("output[" + str(pp) + "]")],
       step: (kind: "place", index: ii, bucket: bb, pos: pp),
-      alt: "Place input[" + str(ii) + "] = " + str(vv) + " into output[" + str(pp) + "]; count[" + str(bb) + "] decremented to " + str(counts.at(bb)) + ".",
+      alt: "Decrement count[" + str(bb) + "] to " + str(pp) + " (its 0-based slot), then place input[" + str(ii) + "] = " + ds + " into output[" + str(pp) + "].",
     ))
   }
 
   if with-settled {
     specs.push((
-      table: mk-table(counts, output, ()),
+      table: mk-table(counts, none, output, ()),
       build: (op, _rt) => {
         let s = core.blank-snapshot()
         for j in range(n) {
@@ -437,7 +627,7 @@
       },
       caption: "sorted",
       step: (kind: "settled"),
-      alt: "Sorted output: [" + output.map(str).join(", ") + "].",
+      alt: "Sorted output: [" + output.map(e => if e == none { "" } else { _disp(e) }).join(", ") + "].",
     ))
   }
   (specs: specs, output: output)
@@ -450,14 +640,32 @@
 // Histogram, then emit each value `v` into the output `count[v]` times,
 // left to right. No prefix sums, no stability. Frame `step.kind`s: "init",
 // "count", "count-done", "emit", "settled".
-#let _counting-reconstruct-specs(values, k) = {
-  let n = values.len()
+//
+// Reconstruct rebuilds the output from the histogram alone — the bucket
+// index (a key) is all it has, so it CANNOT tell which original element
+// (hence which label) each emitted copy was. This is exactly why it is the
+// unstable variant. For labelled elements it shows the *first-seen* label
+// for each key (`label-of` below); with duplicate keys but distinct labels
+// the emitted copies therefore share one label. The stable prefix engine
+// and radix carry per-element labels faithfully.
+#let _counting-reconstruct-specs(elems, k) = {
+  let n = elems.len()
   let empty-out = range(n).map(_ => none)
+  // First-seen label per key, so an emitted bucket value can display a
+  // label rather than the bare key.
+  let label-of = (:)
+  for e in elems {
+    let ks = str(e.key)
+    if ks not in label-of { label-of.insert(ks, e.label) }
+  }
+  // Synthetic element for a bucket value (the emit phase has only the key).
+  let bucket-elem(v) = (key: v, label: label-of.at(str(v), default: auto))
+  let out-vals(output) = output.map(e => if e == none { none } else { _disp-val(e) })
   let mk-table(counts, output, arrows) = (
     rows: (
-      _row("in", [input], values),
+      _row("in", [input], elems.map(_disp-val)),
       _row("count", [count], counts, kind: "count"),
-      _row("out", [output], output),
+      _row("out", [output], out-vals(output)),
     ),
     arrows: arrows,
   )
@@ -467,16 +675,18 @@
     build: (_op, _rt) => core.blank-snapshot(),
     caption: none,
     step: (kind: "init"),
-    alt: "Counting sort (reconstruct). Input: [" + values.map(str).join(", ") + "].",
+    alt: "Counting sort (reconstruct). Input: [" + elems.map(_disp).join(", ") + "].",
   ),)
 
   // --- count phase ---
   let counts = range(k).map(_ => 0)
   for i in range(n) {
-    let v = values.at(i)
+    let e = elems.at(i)
+    let v = e.key
     counts.at(v) = counts.at(v) + 1
     let ii = i
     let vv = v
+    let ds = _disp(e)
     specs.push((
       table: mk-table(
         counts,
@@ -492,7 +702,7 @@
       },
       caption: "count[" + str(vv) + "] += 1",
       step: (kind: "count", index: ii, bucket: vv),
-      alt: "Read input[" + str(ii) + "] = " + str(v) + "; increment count[" + str(vv) + "].",
+      alt: "Read input[" + str(ii) + "] = " + ds + "; increment count[" + str(vv) + "].",
     ))
   }
   specs.push((
@@ -509,10 +719,13 @@
   for v in range(k) {
     let c = counts.at(v)
     for _rep in range(c) {
-      output.at(pos) = v
+      let el = bucket-elem(v)
+      output.at(pos) = el
       let vv = v
       let pp = pos
       let cc = c
+      let dv = _disp-val(el)
+      let ds = _disp(el)
       specs.push((
         table: mk-table(
           counts,
@@ -530,9 +743,9 @@
           s = (s.style-edge)("emit", stroke: op.success-stroke)
           s
         },
-        caption: "emit " + str(vv) + " -> output[" + str(pp) + "]",
+        caption: [emit #dv #sym.arrow #("output[" + str(pp) + "]")],
         step: (kind: "emit", value: vv, pos: pp),
-        alt: "Emit value " + str(vv) + " into output[" + str(pp) + "] (count[" + str(vv) + "] = " + str(cc) + ").",
+        alt: "Emit value " + ds + " into output[" + str(pp) + "] (count[" + str(vv) + "] = " + str(cc) + ").",
       ))
       pos = pos + 1
     }
@@ -553,7 +766,154 @@
     },
     caption: "sorted",
     step: (kind: "settled"),
-    alt: "Sorted output: [" + output.map(str).join(", ") + "].",
+    alt: "Sorted output: [" + output.map(e => if e == none { "" } else { _disp(e) }).join(", ") + "].",
+  ))
+  specs
+}
+
+// ===================================================================
+// Counting sort — the buckets (chaining-hash-table) engine
+// ===================================================================
+//
+// The space-inefficient, pedagogically direct view: instead of a histogram
+// of counts, the count array is a *chaining hash table* (identity hash
+// `h(v) = v`, `k` buckets). Phase 1 (distribute) copies each input element
+// into the chain of bucket `key`, appending at the tail. Phase 2 (gather)
+// reads the buckets left-to-right, each chain head-to-tail, into the output
+// — which makes it a *stable* sort (tail-append + head-first read preserves
+// input order within a bucket). Rides the array backend's "buckets" row
+// kind (chains hang down from the header cells). Frame `step.kind`s: "init",
+// "distribute", "distribute-done", "gather", "settled".
+#let _counting-buckets-specs(elems, k) = {
+  let n = elems.len()
+  // Histogram only to size the reserved chain depth (the deepest bucket), so
+  // every frame reserves the same vertical band and the canvas stays fixed.
+  let loads = range(k).map(_ => 0)
+  for e in elems { loads.at(e.key) = loads.at(e.key) + 1 }
+  let max-depth = if k == 0 { 0 } else { calc.max(0, ..loads) }
+
+  let empty-out = range(n).map(_ => none)
+  let out-vals(output) = output.map(e => if e == none { none } else { _disp-val(e) })
+  // `buckets` is an array of k chains (each a list of elements). Render it as
+  // the "buckets" row: k header cells labelled by index, chains hanging down.
+  let bucket-row(buckets) = (
+    id: "buckets",
+    label: [buckets],
+    kind: "buckets",
+    cells: range(k).map(i => (value: [#i], sub: none)),
+    chains: buckets.map(chain => chain.map(e => (value: _cell-value(_disp-val(e)), sub: none))),
+    chain-depth: max-depth,
+    indices: none,
+  )
+  let mk-table(buckets, output, arrows) = (
+    rows: (
+      _row("in", [input], elems.map(_disp-val)),
+      bucket-row(buckets),
+      _row("out", [output], out-vals(output)),
+    ),
+    arrows: arrows,
+  )
+
+  // init
+  let buckets = range(k).map(_ => ())
+  let specs = ((
+    table: mk-table(buckets, empty-out, ()),
+    build: (_op, _rt) => core.blank-snapshot(),
+    caption: none,
+    step: (kind: "init"),
+    alt: "Counting sort (buckets). Input: [" + elems.map(_disp).join(", ") + "].",
+  ),)
+
+  // --- distribute phase: copy each element into its bucket's chain ---
+  for i in range(n) {
+    let e = elems.at(i)
+    let b = e.key
+    let j = buckets.at(b).len()
+    buckets.at(b).push(e)
+    let ii = i
+    let bb = b
+    let jj = j
+    let dv = _disp-val(e)
+    let ds = _disp(e)
+    specs.push((
+      table: mk-table(buckets, empty-out, (
+        (id: "copy", from: (row: "in", col: ii), to: (row: "buckets", col: bb, depth: jj)),
+      )),
+      build: (op, _rt) => {
+        let s = core.blank-snapshot()
+        s = (s.style-node)(arr-draw.array-cell-key("in", ii), stroke: op.search-stroke)
+        s = (s.style-node)(
+          arr-draw.array-entry-key("buckets", bb, jj),
+          fill: op.success-fill,
+          stroke: op.settled-stroke,
+        )
+        s = (s.style-edge)("copy", stroke: op.search-stroke)
+        s
+      },
+      caption: [copy #dv #sym.arrow bucket #bb],
+      step: (kind: "distribute", index: ii, bucket: bb, depth: jj),
+      alt: "Copy input[" + str(ii) + "] = " + ds + " into bucket " + str(bb) + " (chain depth " + str(jj) + ").",
+    ))
+  }
+  specs.push((
+    table: mk-table(buckets, empty-out, ()),
+    build: (_op, _rt) => core.blank-snapshot(),
+    caption: "all elements distributed",
+    step: (kind: "distribute-done"),
+    alt: "Every element copied into its bucket; now read the buckets in order.",
+  ))
+
+  // --- gather phase: read buckets in order, each chain head-to-tail ---
+  let output = empty-out
+  let pos = 0
+  for b in range(k) {
+    for j in range(buckets.at(b).len()) {
+      let e = buckets.at(b).at(j)
+      output.at(pos) = e
+      let bb = b
+      let jj = j
+      let pp = pos
+      let ds = _disp(e)
+      specs.push((
+        table: mk-table(buckets, output, (
+          (id: "gather", from: (row: "buckets", col: bb, depth: jj), to: (row: "out", col: pp)),
+        )),
+        build: (op, _rt) => {
+          let s = core.blank-snapshot()
+          s = (s.style-node)(arr-draw.array-entry-key("buckets", bb, jj), stroke: op.search-stroke)
+          s = (s.style-node)(
+            arr-draw.array-cell-key("out", pp),
+            fill: op.success-fill,
+            stroke: op.settled-stroke,
+          )
+          s = (s.style-edge)("gather", stroke: op.success-stroke)
+          s
+        },
+        caption: [read bucket #bb #sym.arrow #("output[" + str(pp) + "]")],
+        step: (kind: "gather", bucket: bb, depth: jj, pos: pp),
+        alt: "Read bucket " + str(bb) + " (depth " + str(jj) + ") = " + ds + " into output[" + str(pp) + "].",
+      ))
+      pos = pos + 1
+    }
+  }
+
+  // --- settled ---
+  specs.push((
+    table: mk-table(buckets, output, ()),
+    build: (op, _rt) => {
+      let s = core.blank-snapshot()
+      for jx in range(n) {
+        s = (s.style-node)(
+          arr-draw.array-cell-key("out", jx),
+          fill: op.success-fill,
+          stroke: op.settled-stroke,
+        )
+      }
+      s
+    },
+    caption: "sorted",
+    step: (kind: "settled"),
+    alt: "Sorted output: [" + output.map(e => if e == none { "" } else { _disp(e) }).join(", ") + "].",
   ))
   specs
 }
@@ -561,17 +921,17 @@
 // ===================================================================
 // Radix sort (LSD) — one prefix counting-sort pass per digit place
 // ===================================================================
-#let _radix-specs(values, base) = {
-  let n = values.len()
+#let _radix-specs(elems, base) = {
+  let n = elems.len()
   if n == 0 { return () }
-  let maxv = calc.max(..values)
+  let maxv = calc.max(..elems.map(e => e.key))
   let digits = _num-digits(maxv, base)
-  let cur = values
+  let cur = elems
   let all-specs = ()
   for d in range(digits) {
     let place = _ipow(base, d)
-    let keyf = v => calc.rem(calc.quo(v, place), base)
-    let subs = cur.map(v => [#keyf(v)])
+    let keyf = e => calc.rem(calc.quo(e.key, place), base)
+    let subs = cur.map(e => [#keyf(e)])
     let is-last = d == digits - 1
     let ps = _counting-prefix-specs(
       cur,
@@ -580,7 +940,7 @@
       subs: subs,
       init-caption: "pass " + str(d + 1) + ": " + _place-name(d, base) + " digit",
       init-step: (kind: "pass-start", digit: d),
-      init-alt: "Radix pass " + str(d + 1) + " on the " + _place-name(d, base) + " digit (subscript = extracted digit). Current order: [" + cur.map(str).join(", ") + "].",
+      init-alt: "Radix pass " + str(d + 1) + " on the " + _place-name(d, base) + " digit (subscript = extracted digit). Current order: [" + cur.map(_disp).join(", ") + "].",
       with-settled: is-last,
     )
     all-specs += ps.specs
@@ -593,40 +953,54 @@
 // Sort class
 // ===================================================================
 
-/// Typsy class wrapping an array of non-negative integers, with pure
-/// linear-sort operations (#raw("counting-sort"), #raw("radix-sort")) and
-/// the animated #raw("*-display") methods. Build one via the @@sort()
-/// factory. The #raw("*-display") methods return #raw("Array(Frame)").
+/// Typsy class wrapping an array of non-negative integer sort keys (field
+/// #raw("values")) and a parallel array of display #raw("labels") (each
+/// #raw("auto") = show the key, or arbitrary content), with pure linear-sort
+/// operations (#raw("counting-sort"), #raw("radix-sort")) and the animated
+/// #raw("*-display") methods. Counting/radix bucket on the integer keys; the
+/// labels only ride along for display — the #raw("value")/#raw("label") split
+/// shared with @@BST / @@B24. Build one via the @@sort() factory. The
+/// #raw("*-display") methods return #raw("Array(Frame)").
 #let Sort = class(
   name: "Sort",
-  fields: (values: Array(..Int)),
+  fields: (values: Array(..Int), labels: Array(..Any)),
   methods: (
     len: (self) => self.values.len(),
     // Baseline sorted order (Typst's builtin sort) — the correctness oracle.
+    // Sorts the integer keys; labels are a display concern only.
     sorted: (self) => self.values.sorted(),
     // Stable counting sort. `k` is the count-array size (default max+1).
+    // Returns the sorted integer keys (labels are a display-only concern).
     counting-sort: (self, k: auto) => _counting-sort(
       self.values,
       if k == auto { _k-of(self.values) } else { k },
     ),
-    // LSD radix sort in the given `base` (default 10).
+    // LSD radix sort in the given `base` (default 10). Returns the sorted
+    // integer keys.
     radix-sort: (self, base: 10) => _radix-sort(self.values, base),
     describe: (self) => if self.values.len() == 0 {
       "array []"
-    } else { "array [" + self.values.map(str).join(", ") + "]" },
-    // Structural invariants: every value is a non-negative integer.
+    } else {
+      "array [" + _elems(self.values, self.labels).map(_disp).join(", ") + "]"
+    },
+    // Structural invariants: every value is a non-negative integer and the
+    // labels array is parallel to it.
     check-invariants: (self) => {
       for v in self.values {
         assert(type(v) == int, message: "check-invariants: values must be integers.")
         assert(v >= 0, message: "check-invariants: values must be non-negative.")
       }
+      assert(
+        self.labels.len() == self.values.len(),
+        message: "check-invariants: labels must be parallel to values.",
+      )
       true
     },
     // The positioned-table dict the renderer consumes (a single input row)
     // — the counterpart to `Graph.positioned` / `HashMap.positioned`. Feed
     // it to `draw-array` for hand-composed cetz canvases.
     positioned: (self, cell-width: auto) => (
-      rows: (_row("a", none, self.values),),
+      rows: (_row("a", none, _elems(self.values, self.labels).map(_disp-val)),),
       arrows: (),
       cell-width: cell-width,
     ),
@@ -638,7 +1012,10 @@
     // `cell-width` sizes the cells ("fit" default / `auto` / a number).
     display: (self, theme: auto, render-theme: auto, cell-width: "fit") => {
       let spec = (
-        table: (rows: (_row("a", none, self.values),), arrows: ()),
+        table: (
+          rows: (_row("a", none, _elems(self.values, self.labels).map(_disp-val)),),
+          arrows: (),
+        ),
         build: (_op, _rt) => core.blank-snapshot(),
         caption: none,
         step: (kind: "static"),
@@ -653,25 +1030,39 @@
     },
     // Animate counting sort. `variant: "prefix"` (default) is the stable
     // count -> prefix-sum -> place version; `variant: "reconstruct"` is the
-    // simpler histogram-then-emit intro version. `k` is the count-array
-    // size (default max+1). Frame `step.kind`s: see the engine comments.
+    // simpler histogram-then-emit intro version; `variant: "buckets"` is the
+    // space-inefficient chaining-hash-table view (copy each element into the
+    // chain of bucket = its value, then read the buckets in order). `k` is
+    // the count-array size (default max+1). `separate-counts: true` (prefix
+    // variant only) splits the histogram and the cumulative prefix sums into
+    // two distinct rows — the raw counts stay visible while the end positions
+    // build in their own row and placement decrements it. Frame `step.kind`s:
+    // see the engine comments.
     counting-sort-display: (
       self,
       k: auto,
       variant: "prefix",
+      separate-counts: false,
       theme: auto,
       render-theme: auto,
       cell-width: "fit",
     ) => {
       assert(
-        variant == "prefix" or variant == "reconstruct",
-        message: "counting-sort-display: variant must be \"prefix\" or \"reconstruct\".",
+        ("prefix", "reconstruct", "buckets").contains(variant),
+        message: "counting-sort-display: variant must be \"prefix\", \"reconstruct\", or \"buckets\".",
+      )
+      assert(
+        not (separate-counts and variant != "prefix"),
+        message: "counting-sort-display: separate-counts applies only to variant \"prefix\".",
       )
       let kk = if k == auto { _k-of(self.values) } else { k }
+      let elems = _elems(self.values, self.labels)
       let specs = if variant == "reconstruct" {
-        _counting-reconstruct-specs(self.values, kk)
+        _counting-reconstruct-specs(elems, kk)
+      } else if variant == "buckets" {
+        _counting-buckets-specs(elems, kk)
       } else {
-        _counting-prefix-specs(self.values, kk).specs
+        _counting-prefix-specs(elems, kk, separate-counts: separate-counts).specs
       }
       _sort-make-frames-multi(
         specs,
@@ -688,7 +1079,7 @@
     radix-sort-display: (self, base: 10, theme: auto, render-theme: auto, cell-width: "fit") => {
       assert(base >= 2, message: "radix-sort-display: base must be >= 2.")
       _sort-make-frames-multi(
-        _radix-specs(self.values, base),
+        _radix-specs(_elems(self.values, self.labels), base),
         _resolve-sort-theme-arg(theme),
         _resolve-render-theme-arg(render-theme),
         cell-width: cell-width,
@@ -701,23 +1092,57 @@
 // Factory
 // ===================================================================
 
-/// Build a @@Sort over non-negative integers. Accepts either a splat of
-/// numbers (#raw("sort(3, 1, 4, 1, 5)")) or a single array
-/// (#raw("sort((3, 1, 4, 1, 5))")).
+/// Build a @@Sort. Each element is either a bare non-negative integer
+/// (the common case — it is both the sort key and what's shown) or a dict
+/// #raw("(value: <int>, label: <content>)") to sort an *enumeration*: the
+/// integer #raw("value") is the sort key (counting/radix index by it) and
+/// #raw("label") is the arbitrary content drawn in the cell (the
+/// #raw("value")/#raw("label") split shared with @@BST). Accepts a splat of
+/// elements (#raw("sort(3, 1, 4)")) or a single array of them
+/// (#raw("sort((3, 1, 4))")).
+///
+/// #example(```typc
+/// sort(3, 1, 4, 1, 5)                         // plain integers
+/// sort(
+///   (value: 2, label: [Tue]),                 // an enumeration
+///   (value: 0, label: [Sun]),
+///   (value: 1, label: [Mon]),
+/// )
+/// ```)
 ///
 /// -> Sort
 #let sort(
-  /// The values to sort — a splat of ints or one array of ints.
-  /// -> int
+  /// The elements to sort — a splat of ints and/or
+  /// #raw("(value:, label:)") dicts, or one array of them.
+  /// -> int | dictionary
   ..args,
 ) = {
-  let v = args.pos()
-  if v.len() == 1 and type(v.first()) == array { v = v.first() }
-  for x in v {
+  let raw = args.pos()
+  if raw.len() == 1 and type(raw.first()) == array { raw = raw.first() }
+  let values = ()
+  let labels = ()
+  for x in raw {
+    let (key, label) = if type(x) == dictionary {
+      assert(
+        "value" in x,
+        message: "sort: an element dict must have a 'value' key.",
+      )
+      for k in x.keys() {
+        assert(
+          k == "value" or k == "label",
+          message: "sort: element dict keys must be 'value' / 'label', got '" + k + "'.",
+        )
+      }
+      (x.value, x.at("label", default: auto))
+    } else {
+      (x, auto)
+    }
     assert(
-      type(x) == int and x >= 0,
+      type(key) == int and key >= 0,
       message: "sort: values must be non-negative integers.",
     )
+    values.push(key)
+    labels.push(label)
   }
-  (Sort.new)(values: v)
+  (Sort.new)(values: values, labels: labels)
 }

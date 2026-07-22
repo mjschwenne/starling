@@ -86,7 +86,9 @@
 #import "./array-draw.typ": (
   draw-array,
   array-cell-anchor,
+  array-entry-anchor,
   array-cell-key,
+  array-entry-key,
   array-arrow-key,
   make-array-renderer,
 )

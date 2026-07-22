@@ -46,6 +46,9 @@
               just
               just-formatter
               just-lsp
+
+              # Helpers
+              imagemagick
             ];
           };
       }
