@@ -59,6 +59,12 @@
   nil-text-fill: rgb("#666666"),
   index-fill: rgb("#888888"),
   pointer-stroke: black,
+  // A node box at a level where it is NOT linked into the list (spliced
+  // out, or not yet spliced in) is drawn muted, and the pointers run OVER
+  // it — so it reads as skipped-past rather than a live stop on the list.
+  unlinked-fill: rgb("#e6e6e6"),
+  unlinked-stroke: rgb("#a8a8a8"),
+  unlinked-text-fill: rgb("#9a9a9a"),
 )
 
 #let _skiplist-theme-keys = (
@@ -70,6 +76,9 @@
   "nil-text-fill",
   "index-fill",
   "pointer-stroke",
+  "unlinked-fill",
+  "unlinked-stroke",
+  "unlinked-text-fill",
 )
 
 /// Typsy refinement: a dictionary whose keys are a subset of the
@@ -270,10 +279,13 @@
 // ===================================================================
 
 // Build the backend column array from a display-node list plus per-node
-// `state` ("live"/"ghost") and `link` (linked height). Prepends the
-// header and (optionally) appends the nil sentinel.
-#let _mk-cols(dnodes, states, links, nil-flag) = {
-  let cols = ((kind: "header", height: 1, state: "live", link-height: 0),)
+// `state` ("live"/"ghost") and `links` (linked height, one past the top
+// linked level). Optional `mins` gives each data node its `link-min` (the
+// lowest linked level; default 0) so a top-down insert splice can raise
+// the linked range from the top. Prepends the header and (optionally)
+// appends the nil sentinel.
+#let _mk-cols(dnodes, states, links, nil-flag, mins: none) = {
+  let cols = ((kind: "header", height: 1, state: "live", link-min: 0, link-height: 0),)
   for (j, nd) in dnodes.enumerate() {
     cols.push((
       kind: "data",
@@ -281,10 +293,11 @@
       key: nd.key,
       label: _disp-val(nd),
       state: states.at(j),
+      link-min: if mins == none { 0 } else { mins.at(j) },
       link-height: links.at(j),
     ))
   }
-  if nil-flag { cols.push((kind: "nil", height: 1, state: "live", link-height: 0)) }
+  if nil-flag { cols.push((kind: "nil", height: 1, state: "live", link-min: 0, link-height: 0)) }
   cols
 }
 
@@ -371,8 +384,13 @@
   ),)
 }
 
-// Highlight the "current" box of the walk plus, for an advance, the
-// traversed forward pointer and the box moved onto.
+// Animate the top-left descent, leaving the WHOLE walk lit: every box the
+// search has stepped on and every forward pointer it has followed stays in
+// `search-stroke` (an accumulating trail), while the box currently under
+// comparison is emphasized in `attention-stroke`. The trail is threaded
+// through the loop as two growing key lists; each frame captures its own
+// snapshot of them (Typst arrays are immutable values, so the per-iteration
+// `let` copies pin each frame's trail).
 #let _search-specs(nodes, nil-flag, key) = {
   let states = nodes.map(_ => "live")
   let links = _heights(nodes)
@@ -388,12 +406,23 @@
       + " from the top-left."
   )
 
+  // Paint every trail box + pointer in `search-stroke`. Returns the styled
+  // snapshot so callers can layer the current-step emphasis on top.
+  let paint-trail(op, boxes, edges) = {
+    let s = core.blank-snapshot()
+    for b in boxes { s = (s.style-node)(b, stroke: op.search-stroke) }
+    for e in edges { s = (s.style-edge)(e, stroke: op.search-stroke) }
+    s
+  }
+
+  // The descent starts on the header's top box.
+  let top = w.levels - 1
+  let trail-boxes = (sl-draw.sl-box-key(0, top),)
+  let trail-edges = ()
+
   let specs = ((
     table: table,
-    build: (op, _rt) => _styled(
-      sl-draw.sl-box-key(0, w.levels - 1),
-      stroke: op.search-stroke,
-    ),
+    build: (op, _rt) => paint-trail(op, (sl-draw.sl-box-key(0, top),), ()),
     caption: [search #key],
     step: (kind: "init", levels: w.levels),
     alt: base-alt,
@@ -405,14 +434,17 @@
       let from-col = _col(mv.from)
       let to-col = _col(mv.to)
       let to-key = nodes.at(mv.to).key
+      // Follow the pointer and land on the next box: both join the trail.
+      trail-edges.push(sl-draw.sl-forward-key(from-col, L))
+      trail-boxes.push(sl-draw.sl-box-key(to-col, L))
+      let f-boxes = trail-boxes
+      let f-edges = trail-edges
+      let cur = sl-draw.sl-box-key(to-col, L)
       specs.push((
         table: table,
         build: (op, _rt) => {
-          let s = core.blank-snapshot()
-          s = (s.style-node)(sl-draw.sl-box-key(from-col, L), stroke: op.search-stroke)
-          s = (s.style-node)(sl-draw.sl-box-key(to-col, L), stroke: op.attention-stroke)
-          s = (s.style-edge)(sl-draw.sl-forward-key(from-col, L), stroke: op.search-stroke)
-          s
+          let s = paint-trail(op, f-boxes, f-edges)
+          (s.style-node)(cur, stroke: op.attention-stroke)
         },
         caption: [#to-key < #key #sym.arrow right],
         step: (kind: "advance", level: L),
@@ -430,16 +462,16 @@
       }
       let nxt-col = if nxt == none { none } else { _col(nxt) }
       let lvl = L
+      // Dropping a level adds the box directly below to the trail.
+      if lvl > 0 { trail-boxes.push(sl-draw.sl-box-key(at-col, lvl - 1)) }
+      let f-boxes = trail-boxes
+      let f-edges = trail-edges
       specs.push((
         table: table,
         build: (op, _rt) => {
-          let s = core.blank-snapshot()
-          s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl), stroke: op.search-stroke)
+          let s = paint-trail(op, f-boxes, f-edges)
           if nxt-col != none {
             s = (s.style-node)(sl-draw.sl-box-key(nxt-col, lvl), stroke: op.attention-stroke)
-          }
-          if lvl > 0 {
-            s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl - 1), stroke: op.search-stroke)
           }
           s
         },
@@ -454,7 +486,10 @@
     }
   }
 
-  // Terminal frame: found (ring the whole tower) or miss (danger).
+  // Terminal frame: keep the trail lit, then found (ring the whole tower)
+  // or miss (danger on the successor box).
+  let final-boxes = trail-boxes
+  let final-edges = trail-edges
   if w.found {
     let cand = w.cand
     let cand-col = _col(cand)
@@ -462,7 +497,7 @@
     specs.push((
       table: table,
       build: (op, _rt) => {
-        let s = core.blank-snapshot()
+        let s = paint-trail(op, final-boxes, final-edges)
         for L in range(h) {
           s = (s.style-node)(
             sl-draw.sl-box-key(cand-col, L),
@@ -470,6 +505,7 @@
             stroke: op.settled-stroke,
           )
         }
+        s = (s.style-node)(sl-draw.sl-data-key(cand-col), fill: op.success-fill, stroke: op.settled-stroke)
         s
       },
       caption: [found #key],
@@ -482,9 +518,9 @@
     specs.push((
       table: table,
       build: (op, _rt) => {
-        let s = core.blank-snapshot()
+        let s = paint-trail(op, final-boxes, final-edges)
         if cand-col != none {
-          s = (s.style-node)(sl-draw.sl-box-key(cand-col, 0), stroke: op.danger-stroke)
+          s = (s.style-node)(sl-draw.sl-data-key(cand-col), stroke: op.danger-stroke)
         }
         s
       },
@@ -500,11 +536,14 @@
 // Insert specs
 // ===================================================================
 
-// `ins-pos` is the index the new node occupies in the union `dnodes`;
-// `height` its tower height. During the search phase the new node is a
-// ghost (link 0), so the walk routes as if it weren't there; then it
-// materializes and its links climb 0 -> height, splicing one level per
-// frame.
+// Interleaved single-pass insert. The descent visits the new node's
+// predecessor on every lane it will occupy, top → bottom, so the splice
+// happens *as the search reaches each lane* — no separate splice phase and
+// no backtracking. The new node stays a ghost (reserved slot, invisible)
+// until the descent first drops onto its top lane (level `height - 1`),
+// where it materializes; then each drop onto a lower lane splices it in
+// there, raising its linked range from the top by lowering `link-min` from
+// `height` (unlinked) toward 0.
 #let _insert-specs(nodes, nil-flag, key, label, height) = {
   // Union node list with the new node inserted at its sorted position.
   let new-node = (key: key, label: label, height: height)
@@ -517,12 +556,16 @@
   if ins-pos == nodes.len() { dnodes.push(new-node) }
   let new-col = _col(ins-pos)
 
-  // Search-phase links: everyone at full height, the new node ghosted (0).
-  let search-links = dnodes.enumerate().map(((j, nd)) => if j == ins-pos { 0 } else { nd.height })
+  // Everyone (incl. the new node) at full height. Walking with the new
+  // node PRESENT lands `update[L]` (the drop's `at`) on its true
+  // predecessor at every lane it occupies — and makes the descent cover
+  // all `height` lanes even when the tower is taller than the current list
+  // — while the frames still render it ghosted until it materializes.
+  let full-links = dnodes.map(nd => nd.height)
   let ghost-states = dnodes.enumerate().map(((j, _nd)) => if j == ins-pos { "ghost" } else { "live" })
   let live-states = dnodes.map(_ => "live")
 
-  let w = _search-walk(dnodes, search-links, key)
+  let w = _search-walk(dnodes, full-links, key)
 
   let base-alt = (
     "Skip list ["
@@ -534,23 +577,41 @@
       + ")."
   )
 
-  // --- search phase (new node ghosted) ---
-  let search-cols = _mk-cols(dnodes, ghost-states, search-links, nil-flag)
-  let search-table = _mk-table(search-cols)
+  // Columns with the new node ghosted (search phase) or live with the
+  // given `link-min` (its linked range is [lmin, height); lmin = height
+  // means materialized-but-unspliced).
+  let ghost-cols = _mk-cols(dnodes, ghost-states, full-links, nil-flag)
+  let live-cols(lmin) = _mk-cols(
+    dnodes,
+    live-states,
+    full-links,
+    nil-flag,
+    mins: dnodes.enumerate().map(((j, _nd)) => if j == ins-pos { lmin } else { 0 }),
+  )
+
+  // The search starts on the header's top drawn box — the *existing* list
+  // height, not `w.levels` (which counts the taller-than-list new node,
+  // whose top lanes aren't drawn until it materializes).
+  let start-top = if nodes.len() == 0 { 0 } else { calc.max(1, ..nodes.map(nd => nd.height)) - 1 }
   let specs = ((
-    table: search-table,
-    build: (op, _rt) => _styled(sl-draw.sl-box-key(0, w.levels - 1), stroke: op.search-stroke),
+    table: _mk-table(ghost-cols),
+    build: (op, _rt) => _styled(sl-draw.sl-box-key(0, start-top), stroke: op.search-stroke),
     caption: [insert #key],
     step: (kind: "init", key: key, height: height),
     alt: base-alt,
   ),)
+
+  let materialized = false
+  let lmin = height // linked range [lmin, height); starts fully unlinked
   for mv in w.path {
     if mv.kind == "advance" {
       let L = mv.level
       let from-col = _col(mv.from)
       let to-col = _col(mv.to)
+      // Below the new node's top lane the node is already materialized.
+      let tbl = if materialized { _mk-table(live-cols(lmin)) } else { _mk-table(ghost-cols) }
       specs.push((
-        table: search-table,
+        table: tbl,
         build: (op, _rt) => {
           let s = core.blank-snapshot()
           s = (s.style-node)(sl-draw.sl-box-key(from-col, L), stroke: op.search-stroke)
@@ -566,75 +627,76 @@
       let L = mv.level
       let at-col = _col(mv.at)
       let lvl = L
-      specs.push((
-        table: search-table,
-        build: (op, _rt) => {
-          let s = core.blank-snapshot()
-          s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl), stroke: op.search-stroke)
-          if lvl > 0 {
-            s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl - 1), stroke: op.search-stroke)
-          }
-          s
-        },
-        caption: if lvl == 0 [record update, level 0] else [record update #sym.arrow drop],
-        step: (kind: "drop", level: lvl, update: _col(mv.at)),
-        alt: "Record the update pointer at level " + str(lvl) + ", then drop down.",
-      ))
+      if lvl < height {
+        // The descent has reached the new node's predecessor on a lane it
+        // occupies — materialize on first contact, then splice here.
+        if not materialized {
+          materialized = true
+          specs.push((
+            table: _mk-table(live-cols(height)),
+            build: (op, _rt) => {
+              let s = core.blank-snapshot()
+              for LL in range(height) {
+                s = (s.style-node)(sl-draw.sl-box-key(new-col, LL), stroke: op.attention-stroke)
+              }
+              s
+            },
+            caption: [new node #key, height #height],
+            step: (kind: "materialize", key: key, height: height),
+            alt: "Create the node "
+              + str(key)
+              + " with a tower of height "
+              + str(height)
+              + "; splice it in from the top lane down as the search descends.",
+          ))
+        }
+        lmin = lvl // linked range now [lvl, height): spliced down to `lvl`
+        let cur-lmin = lmin
+        let upd-col = at-col
+        specs.push((
+          table: _mk-table(live-cols(cur-lmin)),
+          build: (op, _rt) => {
+            let s = core.blank-snapshot()
+            // The two rewired pointers: update[L] -> new, and new -> old next.
+            s = (s.style-node)(sl-draw.sl-box-key(upd-col, lvl), stroke: op.search-stroke)
+            s = (s.style-edge)(sl-draw.sl-forward-key(upd-col, lvl), stroke: op.success-stroke)
+            s = (s.style-edge)(sl-draw.sl-forward-key(new-col, lvl), stroke: op.success-stroke)
+            s = (s.style-node)(sl-draw.sl-box-key(new-col, lvl), fill: op.success-fill, stroke: op.settled-stroke)
+            s
+          },
+          caption: [splice level #lvl],
+          step: (kind: "splice", level: lvl),
+          alt: "Splice the new node into the level-" + str(lvl) + " list as the search reaches it.",
+        ))
+      } else {
+        // Above the new node's tower: just drop (still ghosted).
+        specs.push((
+          table: _mk-table(ghost-cols),
+          build: (op, _rt) => {
+            let s = core.blank-snapshot()
+            s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl), stroke: op.search-stroke)
+            if lvl > 0 {
+              s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl - 1), stroke: op.search-stroke)
+            }
+            s
+          },
+          caption: [level #lvl #sym.arrow drop],
+          step: (kind: "drop", level: lvl),
+          alt: "The new tower does not reach level " + str(lvl) + "; drop down.",
+        ))
+      }
     }
   }
 
-  // --- materialize the new tower (still unlinked: link 0) ---
-  let mat-cols = _mk-cols(dnodes, live-states, dnodes.enumerate().map(((j, nd)) => if j == ins-pos { 0 } else { nd.height }), nil-flag)
+  // --- settled: the whole tower spliced in ---
   specs.push((
-    table: _mk-table(mat-cols),
-    build: (op, _rt) => {
-      let s = core.blank-snapshot()
-      for L in range(height) {
-        s = (s.style-node)(sl-draw.sl-box-key(new-col, L), stroke: op.attention-stroke)
-      }
-      s
-    },
-    caption: [new node #key, height #height],
-    step: (kind: "materialize", key: key, height: height),
-    alt: "Create the node "
-      + str(key)
-      + " with a tower of height "
-      + str(height)
-      + "; now splice it in level by level.",
-  ))
-
-  // --- splice one level per frame (link climbs 0 -> height) ---
-  for L in range(height) {
-    let link = L + 1
-    let cur-links = dnodes.enumerate().map(((j, nd)) => if j == ins-pos { link } else { nd.height })
-    let cols = _mk-cols(dnodes, live-states, cur-links, nil-flag)
-    let upd-col = _col(w.update.at(L))
-    let lvl = L
-    specs.push((
-      table: _mk-table(cols),
-      build: (op, _rt) => {
-        let s = core.blank-snapshot()
-        // The two rewired pointers: update[L] -> new, and new -> old next.
-        s = (s.style-edge)(sl-draw.sl-forward-key(upd-col, lvl), stroke: op.success-stroke)
-        s = (s.style-edge)(sl-draw.sl-forward-key(new-col, lvl), stroke: op.success-stroke)
-        s = (s.style-node)(sl-draw.sl-box-key(new-col, lvl), fill: op.success-fill, stroke: op.settled-stroke)
-        s
-      },
-      caption: [splice level #lvl],
-      step: (kind: "splice", level: lvl),
-      alt: "Splice the new node into the level-" + str(lvl) + " list.",
-    ))
-  }
-
-  // --- settled ---
-  let final-cols = _mk-cols(dnodes, live-states, _heights(dnodes), nil-flag)
-  specs.push((
-    table: _mk-table(final-cols),
+    table: _mk-table(live-cols(0)),
     build: (op, _rt) => {
       let s = core.blank-snapshot()
       for L in range(height) {
         s = (s.style-node)(sl-draw.sl-box-key(new-col, L), fill: op.success-fill, stroke: op.settled-stroke)
       }
+      s = (s.style-node)(sl-draw.sl-data-key(new-col), fill: op.success-fill, stroke: op.settled-stroke)
       s
     },
     caption: [inserted #key],
@@ -648,6 +710,13 @@
 // Delete specs
 // ===================================================================
 
+// Interleaved single-pass delete. The descent lands on the target's
+// predecessor on every lane the target occupies, top → bottom (at level L
+// the first node with key >= K is exactly the target), so each lane is
+// unlinked *as the search reaches it* — no separate unlink phase and no
+// backtracking. The target's `link-height` shrinks from `height` toward 0
+// as its top lanes are bypassed; the tower stays drawn, so the node ends
+// detached in place.
 #let _delete-specs(nodes, nil-flag, key) = {
   let links = _heights(nodes)
   let w = _search-walk(nodes, links, key)
@@ -670,7 +739,7 @@
       build: (op, _rt) => {
         let s = core.blank-snapshot()
         if cand-col != none {
-          s = (s.style-node)(sl-draw.sl-box-key(cand-col, 0), stroke: op.danger-stroke)
+          s = (s.style-node)(sl-draw.sl-data-key(cand-col), stroke: op.danger-stroke)
         }
         s
       },
@@ -684,23 +753,32 @@
   let tgt-col = _col(tgt)
   let height = nodes.at(tgt).height
 
-  // --- search phase ---
-  let search-cols = _mk-cols(nodes, live-states, links, nil-flag)
-  let search-table = _mk-table(search-cols)
+  // Columns with the target linked across [0, tlink): unlinking top-down
+  // lowers `tlink` from `height` to 0.
+  let cols-with(tlink) = _mk-cols(
+    nodes,
+    live-states,
+    links.enumerate().map(((j, h)) => if j == tgt { tlink } else { h }),
+    nil-flag,
+  )
+
   let specs = ((
-    table: search-table,
+    table: _mk-table(cols-with(height)),
     build: (op, _rt) => _styled(sl-draw.sl-box-key(0, w.levels - 1), stroke: op.search-stroke),
     caption: [delete #key],
     step: (kind: "init", key: key),
     alt: base-alt,
   ),)
+
+  let tlink = height // target linked across [0, tlink)
   for mv in w.path {
     if mv.kind == "advance" {
       let L = mv.level
       let from-col = _col(mv.from)
       let to-col = _col(mv.to)
+      let cur-tlink = tlink
       specs.push((
-        table: search-table,
+        table: _mk-table(cols-with(cur-tlink)),
         build: (op, _rt) => {
           let s = core.blank-snapshot()
           s = (s.style-node)(sl-draw.sl-box-key(from-col, L), stroke: op.search-stroke)
@@ -716,56 +794,63 @@
       let L = mv.level
       let at-col = _col(mv.at)
       let lvl = L
-      specs.push((
-        table: search-table,
-        build: (op, _rt) => {
-          let s = core.blank-snapshot()
-          s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl), stroke: op.search-stroke)
-          if lvl > 0 {
-            s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl - 1), stroke: op.search-stroke)
-          }
-          s
-        },
-        caption: if lvl == 0 [found target] else [record update #sym.arrow drop],
-        step: (kind: "drop", level: lvl),
-        alt: "Record the update pointer at level " + str(lvl) + ".",
-      ))
+      if lvl < height {
+        // The descent has reached the target's predecessor on a lane it
+        // occupies — bypass it here, top-down.
+        tlink = lvl // target now linked across [0, lvl)
+        let cur-tlink = tlink
+        let upd-col = at-col
+        specs.push((
+          table: _mk-table(cols-with(cur-tlink)),
+          build: (op, _rt) => {
+            let s = core.blank-snapshot()
+            // The bypass pointer update[L] -> (node after target) lights
+            // up; the target's box at this level is marked for removal.
+            s = (s.style-node)(sl-draw.sl-box-key(upd-col, lvl), stroke: op.search-stroke)
+            s = (s.style-edge)(sl-draw.sl-forward-key(upd-col, lvl), stroke: op.success-stroke)
+            s = (s.style-node)(sl-draw.sl-box-key(tgt-col, lvl), stroke: op.danger-stroke)
+            s
+          },
+          caption: if lvl == height - 1 [found #key #sym.arrow unlink level #lvl] else [unlink level #lvl],
+          step: (kind: "unlink", level: lvl),
+          alt: "Reached "
+            + str(key)
+            + " at level "
+            + str(lvl)
+            + "; bypass it (update["
+            + str(lvl)
+            + "] now points past it).",
+        ))
+      } else {
+        // Above the target's tower: just drop.
+        let cur-tlink = tlink
+        specs.push((
+          table: _mk-table(cols-with(cur-tlink)),
+          build: (op, _rt) => {
+            let s = core.blank-snapshot()
+            s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl), stroke: op.search-stroke)
+            if lvl > 0 {
+              s = (s.style-node)(sl-draw.sl-box-key(at-col, lvl - 1), stroke: op.search-stroke)
+            }
+            s
+          },
+          caption: [level #lvl #sym.arrow drop],
+          step: (kind: "drop", level: lvl),
+          alt: str(key) + " is not on level " + str(lvl) + "; drop down.",
+        ))
+      }
     }
   }
 
-  // --- unlink top-down (link shrinks height -> 0) ---
-  for L in range(height - 1, -1, step: -1) {
-    let link = L
-    let cur-links = links.enumerate().map(((j, h)) => if j == tgt { link } else { h })
-    let cols = _mk-cols(nodes, live-states, cur-links, nil-flag)
-    let upd-col = _col(w.update.at(L))
-    let lvl = L
-    specs.push((
-      table: _mk-table(cols),
-      build: (op, _rt) => {
-        let s = core.blank-snapshot()
-        // The bypass pointer update[L] -> (node after target) lights up;
-        // the target's box at this level is marked for removal.
-        s = (s.style-edge)(sl-draw.sl-forward-key(upd-col, lvl), stroke: op.success-stroke)
-        s = (s.style-node)(sl-draw.sl-box-key(tgt-col, lvl), stroke: op.danger-stroke)
-        s
-      },
-      caption: [unlink level #lvl],
-      step: (kind: "unlink", level: lvl),
-      alt: "Bypass the target at level " + str(lvl) + " (update[" + str(lvl) + "] now points past it).",
-    ))
-  }
-
   // --- settled: target fully detached, shown removed in place ---
-  let detached-links = links.enumerate().map(((j, h)) => if j == tgt { 0 } else { h })
-  let cols = _mk-cols(nodes, live-states, detached-links, nil-flag)
   specs.push((
-    table: _mk-table(cols),
+    table: _mk-table(cols-with(0)),
     build: (op, _rt) => {
       let s = core.blank-snapshot()
       for L in range(height) {
         s = (s.style-node)(sl-draw.sl-box-key(tgt-col, L), stroke: op.danger-stroke)
       }
+      s = (s.style-node)(sl-draw.sl-data-key(tgt-col), stroke: op.danger-stroke)
       s
     },
     caption: [deleted #key],

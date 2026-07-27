@@ -76,39 +76,46 @@ responsibility:
   table.header[*File*][*Role*],
   [`src/anim-core.typ`],
   [The structure-agnostic animation core — defines `Snapshot`,
-   `Frame`, the `Renderer` (with a pluggable draw backend),
-   `make-renderer`, `Op`, and `apply-ops`. Knows nothing about any
-   particular structure.],
+    `Frame`, the `Renderer` (with a pluggable draw backend),
+    `make-renderer`, `Op`, and `apply-ops`. Knows nothing about any
+    particular structure.],
+
   [`src/tree-anim.typ`],
   [The tree backend on the core — `draw-tree`, the cetz-tree
-   builders, `PathId`, `path-anchor`, and the tree-bound
-   `make-renderer` wrapper. Re-exports the core.],
+    builders, `PathId`, `path-anchor`, and the tree-bound
+    `make-renderer` wrapper. Re-exports the core.],
+
   [`src/bst.typ`],
   [The BST class — implements pure operations (`insert`, `delete`,
-   `rotate`) and the `*-display` methods that build animations using
-   the kernel.],
+    `rotate`) and the `*-display` methods that build animations using
+    the kernel.],
+
   [`src/graph-draw.typ`],
   [The graph renderer on the core — `draw-graph`, `edge-key`,
-   `node-anchor`, and the graph-bound `make-graph-renderer` wrapper.
-   The graph analog of `tree-anim.typ`; knows drawing, not algorithms.],
+    `node-anchor`, and the graph-bound `make-graph-renderer` wrapper.
+    The graph analog of `tree-anim.typ`; knows drawing, not algorithms.],
+
   [`src/graph.typ`],
   [The Graph class — data plus the MST / Dijkstra / BFS / DFS
-   `*-display` algorithms. Split from its renderer, like `bst.typ` is
-   from `draw-tree`.],
+    `*-display` algorithms. Split from its renderer, like `bst.typ` is
+    from `draw-tree`.],
+
   [`src/graph-layout.typ`],
   [Optional graphviz auto-layout (`auto-layout`) via `diagraph-layout`.
-   The only file referencing that dependency, and it does so with a
-   lazy import inside `auto-layout`'s body — so the dependency stays
-   optional even though `lib.typ` re-exports the function.],
+    The only file referencing that dependency, and it does so with a
+    lazy import inside `auto-layout`'s body — so the dependency stays
+    optional even though `lib.typ` re-exports the function.],
+
   [`src/git-graph.typ`],
   [The git-graph DSL — a *stateful* cetz builder (`commit`, `branch`,
-   `merge`, `tag`, `branch-pointer`, `head-pointer`, `detached-commit`)
-   for drawing git commit graphs. Deliberately off the `Frame` stack;
-   surfaced under the `starling.git.*` namespace. Carries its own per-DS
-   theme (`default-git-theme` / `set-git-theme`).],
+    `merge`, `tag`, `branch-pointer`, `head-pointer`, `detached-commit`)
+    for drawing git commit graphs. Deliberately off the `Frame` stack;
+    surfaced under the `starling.git.*` namespace. Carries its own per-DS
+    theme (`default-git-theme` / `set-git-theme`).],
+
   [`src/lib.typ`],
   [The public surface — re-exports everything users need, plus the
-   render helpers (`last`, `stacked`, `figures`, `canvases-only`).],
+    render helpers (`last`, `stacked`, `figures`, `canvases-only`).],
 )
 
 This split lets us add a new data structure (e.g. a heap) by writing
@@ -129,29 +136,32 @@ distinct:
   table.header[*Type*][*Role*],
   [`Snapshot`],
   [A _sparse style overlay_ for one moment in time — which nodes are
-   filled what colour, which edges are dashed or hidden, which notes
-   are attached to which nodes. Built up by chaining
-   `style-node` / `style-edge` / `note-node` calls. Pure data; no
-   theme awareness, no content.],
+    filled what colour, which edges are dashed or hidden, which notes
+    are attached to which nodes. Built up by chaining
+    `style-node` / `style-edge` / `note-node` calls. Pure data; no
+    theme awareness, no content.],
+
   [`TreeRenderer`],
   [A tree plus an ordered list of snapshots plus optional caption /
-   step-metadata for each snapshot. The thing you build up while
-   describing an animation.],
+    step-metadata for each snapshot. The thing you build up while
+    describing an animation.],
+
   [`Frame`],
   [The _output_ record: `(render, caption, step, alt)`. `render` is a
-   builder function `(op-theme, render-theme) -> content` — not
-   pre-baked content — so callers can resolve theme state at layout
-   time and reuse the same animation across documents with different
-   themes. `TreeRenderer.render` produces an array of these, one per
-   snapshot. This is what `*-display` methods return.],
+    builder function `(op-theme, render-theme) -> content` — not
+    pre-baked content — so callers can resolve theme state at layout
+    time and reuse the same animation across documents with different
+    themes. `TreeRenderer.render` produces an array of these, one per
+    snapshot. This is what `*-display` methods return.],
+
   [Theme dict],
   [One of three layers, in merge order: `render-theme` (structural
-   defaults like node fill, edge stroke, note colour), `op-theme`
-   (operation strokes/fills shared across data structures, like
-   `search-stroke`, `success-fill`, `traversal-palette`), and an
-   optional per-DS theme (e.g. `rbt-theme`'s red/black palette).
-   Frames are theme-agnostic until a render helper feeds resolved
-   themes into each frame's `render` builder.],
+    defaults like node fill, edge stroke, note colour), `op-theme`
+    (operation strokes/fills shared across data structures, like
+    `search-stroke`, `success-fill`, `traversal-palette`), and an
+    optional per-DS theme (e.g. `rbt-theme`'s red/black palette).
+    Frames are theme-agnostic until a render helper feeds resolved
+    themes into each frame's `render` builder.],
 )
 
 The data flow, end to end:
@@ -355,13 +365,14 @@ Theme overrides come in two flavours:
   table.header[*Form*][*Behaviour*],
   [`set-op-theme((..))` / `set-render-theme((..))` / `set-rbt-theme((..))`],
   [State-based. One declaration at the top of the document propagates
-   through every subsequent `*-display` call. Ergonomic and intent-
-   matching, but participates in Typst's state-convergence machinery
-   — see @theming-perf.],
+    through every subsequent `*-display` call. Ergonomic and intent-
+    matching, but participates in Typst's state-convergence machinery
+    — see @theming-perf.],
+
   [`(t.search-display)(v, theme: (..))`],
   [Per-call. Overrides the theme for one call; ignores state for that
-   call. Verbose if you have many calls, but skips the state-cost
-   path entirely. Run at the no-state baseline.],
+    call. Verbose if you have many calls, but skips the state-cost
+    path entirely. Run at the no-state baseline.],
 )
 
 Both paths exist because there's no single answer. State is right
@@ -412,12 +423,12 @@ question.
   inset: 6pt,
   align: (left, left),
   table.header[*`step.kind`*][*Question answered*],
-  [`init`],     [What's the starting tree?],
-  [`pivots`],   [Which two nodes are rotating?],
-  [`break`],    [Which edges are about to disappear?],
+  [`init`], [What's the starting tree?],
+  [`pivots`], [Which two nodes are rotating?],
+  [`break`], [Which edges are about to disappear?],
   [`restructure`], [What does the new shape look like, edges aside?],
-  [`connect`],  [Where do the new edges go?],
-  [`settle`],   [What does the final, clean tree look like?],
+  [`connect`], [Where do the new edges go?],
+  [`settle`], [What does the final, clean tree look like?],
 )
 
 An earlier draft had a "dashed red" intermediate between
@@ -444,12 +455,12 @@ Two things made me reach for `path-anchor` rather than letting users
 type that out:
 
 1. The user thinks in `"LR"`, not `"0-0-1"`. The translation is
-   mechanical (`L → 0`, `R → 1`, prepend the root `0`) but it's
-   error-prone to do by hand.
+  mechanical (`L → 0`, `R → 1`, prepend the root `0`) but it's
+  error-prone to do by hand.
 2. The naming scheme is a cetz-tree implementation detail. Wrapping
-   it in `path-anchor(path, tree-name:, prefix:)` lets us swap to a
-   different naming scheme later (e.g. if we drop cetz-tree for a
-   custom layout) without churn at every annotation call site.
+  it in `path-anchor(path, tree-name:, prefix:)` lets us swap to a
+  different naming scheme later (e.g. if we drop cetz-tree for a
+  custom layout) without churn at every annotation call site.
 
 Phantom siblings (used to off-centre lone children — see
 `_build-cetz-tree`) also get cetz-tree-internal anchor names like
@@ -559,8 +570,7 @@ root-warm":
 #align(center, grid(
   columns: 2,
   gutter: 1.5em,
-  traversal-panel([In-order], (tour.in-order-display)()),
-  traversal-panel([Pre-order], (tour.pre-order-display)()),
+  traversal-panel([In-order], (tour.in-order-display)()), traversal-panel([Pre-order], (tour.pre-order-display)()),
   traversal-panel([Post-order], (tour.post-order-display)()),
   traversal-panel([Level-order], (tour.level-order-display)()),
 ))
@@ -729,8 +739,7 @@ method as a base layer (off by default; opt in per call).
   columns: 2,
   gutter: 1.5em,
   align: center,
-  starling.last((avl-tour.display)()),
-  starling.last((avl-tour.display)(factors: true)),
+  starling.last((avl-tour.display)()), starling.last((avl-tour.display)(factors: true)),
 )
 
 == Insert
@@ -1124,8 +1133,7 @@ in parentheses:
 #grid(
   columns: (1fr, 1fr),
   align: horizon + center,
-  (g-tour.adjacency-matrix)(weights: true),
-  (g-tour.adjacency-list)(weights: true),
+  (g-tour.adjacency-matrix)(weights: true), (g-tour.adjacency-list)(weights: true),
 )
 
 For a *directed* graph the matrix is asymmetric — row = source, column =
@@ -1146,8 +1154,7 @@ read first.
     columns: (auto, auto),
     column-gutter: 1.5em,
     align: horizon,
-    starling.canvases-only((f,)).first(),
-    starling.aux-strip(f.step),
+    starling.canvases-only((f,)).first(), starling.aux-strip(f.step),
   )),
 )
 
@@ -1236,8 +1243,7 @@ signature:
 #grid(
   columns: (1fr, 1fr),
   align: center,
-  starling.last((g-tour.bfs-display)("A")),
-  starling.last((g-tour.dfs-display)("A")),
+  starling.last((g-tour.bfs-display)("A")), starling.last((g-tour.dfs-display)("A")),
 )
 
 Pass a `target:` node id to either method to turn the traversal into a
@@ -1735,12 +1741,18 @@ hanging-chain look as the hash map's separate chaining.)
 Sorting an @sort-enumerations[enumeration] works here too — the labels ride
 their chains into the sorted output:
 
-#align(center, starling.stacked((starling.sort(
-  (value: 2, label: [Tue]),
-  (value: 0, label: [Sun]),
-  (value: 2, label: [Tue]),
-  (value: 1, label: [Mon]),
-).counting-sort-display)(variant: "buckets")))
+#align(center, starling.stacked(
+  (
+    starling
+      .sort(
+        (value: 2, label: [Tue]),
+        (value: 0, label: [Sun]),
+        (value: 2, label: [Tue]),
+        (value: 1, label: [Mon]),
+      )
+      .counting-sort-display
+  )(variant: "buckets"),
+))
 
 == Radix sort
 
@@ -1767,21 +1779,33 @@ the ordinal the sort buckets on, and `label` is the arbitrary content drawn
 in the cell. The label rides along with its key through placement, so the
 output row shows the reordered labels — not just the sorted ordinals:
 
-#align(center, starling.stacked((starling.sort(
-  (value: 3, label: [Wed]),
-  (value: 1, label: [Mon]),
-  (value: 0, label: [Sun]),
-  (value: 2, label: [Tue]),
-).counting-sort-display)()))
+#align(center, starling.stacked(
+  (
+    starling
+      .sort(
+        (value: 3, label: [Wed]),
+        (value: 1, label: [Mon]),
+        (value: 0, label: [Sun]),
+        (value: 2, label: [Tue]),
+      )
+      .counting-sort-display
+  )(),
+))
 
 Radix works the same way — the digit subscripts read off the integer key
 while the label travels to the sorted output:
 
-#align(center, starling.stacked((starling.sort(
-  (value: 23, label: [23kg]),
-  (value: 4, label: [4kg]),
-  (value: 8, label: [8kg]),
-).radix-sort-display)()))
+#align(center, starling.stacked(
+  (
+    starling
+      .sort(
+        (value: 23, label: [23kg]),
+        (value: 4, label: [4kg]),
+        (value: 8, label: [8kg]),
+      )
+      .radix-sort-display
+  )(),
+))
 
 A bare integer element is shorthand for `(value: n, label: auto)`, where an
 `auto` label draws the key itself — so the all-integer forms above are just
@@ -1848,10 +1872,13 @@ renders the same every time.
 
 == Static display
 
-`display()` renders the current list as a single frame. Every box of a
-node's tower shows its key; the header is the empty tower on the left, and
-all forward pointers terminate at the `NIL` sentinel (pass `nil: false` to
-drop it).
+`display()` renders the current list as a single frame. A node's tower is
+one flush column of *pointer cells* — one per level it reaches — sitting
+above a separate *data box* that holds the key, drawn once below the whole
+tower. Since no forward pointer attaches to the data box, a link never
+crosses the key. The header is the empty tower on the left (with a `head`
+caption), and all forward pointers terminate at the `NIL` sentinel (pass
+`nil: false` to drop it).
 
 #let sl = starling.skiplist(
   (value: 2, height: 1),
@@ -1868,30 +1895,41 @@ drop it).
 
 `search-display(key)` animates the classic top-left descent: at each
 level, move right while the next node's key is below the target, and drop
-down a level the moment it would overshoot. It ends *found* (the whole
-tower ringed) or *not found* (a danger ring on the successor).
+down a level the moment it would overshoot. The whole descent stays lit —
+every box stepped on and pointer followed accumulates into a `search-stroke`
+trail, while the current comparison target is picked out in `attention-stroke`
+— so the finished animation reads as one continuous path. It ends *found*
+(the whole tower ringed) or *not found* (a danger ring on the successor).
 
 #align(center, starling.stacked((sl.search-display)(17)))
 
 == Insert
 
-`insert-display(key, height: ..)` first searches (reserving the new node's
-column as an invisible *ghost* so the grid doesn't shift), then
-materializes the tower, then splices it into the list one level at a time
-— highlighting the two rewired pointers at each level. Omit `height:` to
-take a seeded coin flip (the same one the pure `insert` would pick). The
-final frame:
+`insert-display(key, height: ..)` is a single top-down pass: the new node
+stays an invisible *ghost* (its column reserved so the grid doesn't shift)
+until the descent first reaches its top lane, where it *materializes*, and
+then it is spliced in *as the search descends* — each lane woven in the
+moment the descent lands on that lane's predecessor, from the fastest lane
+down to level 0, highlighting the two rewired pointers. No separate splice
+phase, no backtracking. A lane the node isn't yet linked on is drawn *muted*
+with the list's pointer running *over* it, so it's clear the node isn't part
+of the list at that level yet. Omit `height:` to take a seeded coin flip (the
+same one the pure `insert` would pick). The final frame:
 
-#align(center, starling.last((sl.insert-display)(9, height: 3)))
+#align(center, starling.stacked((sl.insert-display)(9, height: 3)))
 
 == Delete
 
-`delete-display(key)` searches, then unlinks the target top-down — each
-level's predecessor bypasses it — and leaves the node detached in place
-(shown in the danger stroke) so it reads clearly as removed. A miss ends
-on a single danger frame.
+`delete-display(key)` is the symmetric single pass: because the top-down
+descent lands on the target's predecessor on every lane the target
+occupies, each lane is unlinked *as the search reaches it* — the
+predecessor bypasses the target, top→bottom — with no separate unlink
+phase. Each bypassed lane goes *muted* with the bypass pointer running
+*over* the target's box there. The node is left detached in place (shown in
+the danger stroke) so it reads clearly as removed. A miss ends on a single
+danger frame.
 
-#align(center, starling.last((sl.delete-display)(5)))
+#align(center, starling.stacked((sl.delete-display)(5)))
 
 == Theming
 
@@ -2361,7 +2399,8 @@ in the gold note slot (reusing the `g` from the graph tour above):
 #let gop-r = (gop-r.with-caption)([A → C  (+4)])
 #let gop-r = (starling.apply-ops)(gop-r, (
   (starling.Op.StyleEdge.new)(
-    path: starling.edge-key("A", "C"), style: (stroke: blue + 2pt),
+    path: starling.edge-key("A", "C"),
+    style: (stroke: blue + 2pt),
   ),
   (starling.Op.Highlight.new)(path: "C", color: blue),
   (starling.Op.Annotate.new)(path: "C", text: [4]),
@@ -2370,7 +2409,8 @@ in the gold note slot (reusing the `g` from the graph tour above):
 #let gop-r = (gop-r.with-caption)([C → D  (+5)])
 #let gop-r = (starling.apply-ops)(gop-r, (
   (starling.Op.StyleEdge.new)(
-    path: starling.edge-key("C", "D"), style: (stroke: blue + 2pt),
+    path: starling.edge-key("C", "D"),
+    style: (stroke: blue + 2pt),
   ),
   (starling.Op.Highlight.new)(path: "D", color: blue),
   (starling.Op.Annotate.new)(path: "D", text: [9]),
@@ -2455,7 +2495,8 @@ slot and landing the key:
   (starling.Op.Highlight.new)(path: starling.cell-key(1), color: blue),
   (starling.Op.Highlight.new)(path: starling.cell-key(2), color: blue),
   (starling.Op.StyleNode.new)(
-    path: starling.cell-key(2), style: (fill: green.lighten(60%)),
+    path: starling.cell-key(2),
+    style: (fill: green.lighten(60%)),
   ),
   (starling.Op.Alt.new)(text: "Slots 1 (occupied) then 2 (free): land at 2."),
 ))

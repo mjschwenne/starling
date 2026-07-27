@@ -109,8 +109,10 @@
   draw-skiplist,
   sl-box-anchor,
   sl-forward-anchor,
+  sl-data-anchor,
   sl-box-key,
   sl-forward-key,
+  sl-data-key,
   make-skiplist-renderer,
 )
 // Git graph — a stateful cetz DSL (commits, branches, merges, tags,
