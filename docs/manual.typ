@@ -1817,6 +1817,100 @@ with the `theme:` argument (the per-call form skips the state read — see
   ),
 ))
 
+= Skip list tour
+
+A `Skiplist` is a sorted set of integer keys stored as a probabilistic
+multi-level linked list: every key sits at level 0, and each also rises
+through a random tower of "express lanes" that let a search skip ahead.
+It draws as a *sparse grid* — a left header sentinel, one column per key,
+an optional `NIL` tail — with horizontal forward pointers at each level
+skipping over the columns whose towers don't reach that high. Level 0 is
+at the bottom; towers rise. Ordering is by the integer `key`; an optional
+`label` rides along for display (the `value` / `label` split shared with
+the `BST`).
+
+== Construction
+
+Build one with the `skiplist(..)` factory. Each element is a bare integer
+(its own key) or a `(value:, label:, height:)` dict. Tower heights come
+from one of two sources: an *explicit* `height`, or a *deterministic coin
+flip* seeded off `seed:` (grown with probability `p`, default `1/2`,
+capped at `max-level`). The seeded flips are reproducible, so a document
+renders the same every time.
+
+```typ
+#let s = skiplist(3, 1, 4, 7, 5, seed: 7)          // random towers
+#let s = skiplist(                                   // pinned towers
+  (value: 2, height: 1), (value: 5, height: 3),
+  (value: 8, height: 1), (value: 12, height: 2),
+)
+```
+
+== Static display
+
+`display()` renders the current list as a single frame. Every box of a
+node's tower shows its key; the header is the empty tower on the left, and
+all forward pointers terminate at the `NIL` sentinel (pass `nil: false` to
+drop it).
+
+#let sl = starling.skiplist(
+  (value: 2, height: 1),
+  (value: 5, height: 3),
+  (value: 8, height: 1),
+  (value: 12, height: 2),
+  (value: 17, height: 1),
+  (value: 20, height: 2),
+)
+
+#align(center, starling.last((sl.display)()))
+
+== Search
+
+`search-display(key)` animates the classic top-left descent: at each
+level, move right while the next node's key is below the target, and drop
+down a level the moment it would overshoot. It ends *found* (the whole
+tower ringed) or *not found* (a danger ring on the successor).
+
+#align(center, starling.stacked((sl.search-display)(17)))
+
+== Insert
+
+`insert-display(key, height: ..)` first searches (reserving the new node's
+column as an invisible *ghost* so the grid doesn't shift), then
+materializes the tower, then splices it into the list one level at a time
+— highlighting the two rewired pointers at each level. Omit `height:` to
+take a seeded coin flip (the same one the pure `insert` would pick). The
+final frame:
+
+#align(center, starling.last((sl.insert-display)(9, height: 3)))
+
+== Delete
+
+`delete-display(key)` searches, then unlinks the target top-down — each
+level's predecessor bypasses it — and leaves the node detached in place
+(shown in the danger stroke) so it reads clearly as removed. A miss ends
+on a single danger frame.
+
+#align(center, starling.last((sl.delete-display)(5)))
+
+== Theming
+
+Skip lists reuse the render theme (structural colours) and the op theme
+(search / splice / unlink strokes) unchanged, and add their own palette,
+`default-skiplist-theme`: `header-fill` / `-stroke` / `-text-fill`,
+`nil-fill` / `-stroke` / `-text-fill`, `index-fill` (the `head` caption),
+and `pointer-stroke` (the default forward-pointer colour). Override it
+document-wide with `set-skiplist-theme(..)` or per call with the `theme:`
+argument (the per-call form skips the state read — see @theming-perf).
+
+#align(center, starling.last(
+  (sl.display)(theme: (
+    header-fill: rgb("#e8f7ee"),
+    header-stroke: rgb("#2f855a"),
+    pointer-stroke: rgb("#3355aa"),
+  )),
+))
+
 = Git graph
 
 The `git-graph` DSL draws git commit graphs — commits, branches, merges,
@@ -2501,6 +2595,20 @@ by the `tidy` package from doc-comments in the source.
   scope: (starling: starling, cetz: cetz),
 )
 
+#let skiplist-docs = tidy.parse-module(
+  read("/src/skiplist.typ"),
+  name: "Skip list",
+  label-prefix: "skiplist-",
+  scope: (starling: starling, cetz: cetz),
+)
+
+#let sldraw-docs = tidy.parse-module(
+  read("/src/skiplist-draw.typ"),
+  name: "Skip list renderer",
+  label-prefix: "sldraw-",
+  scope: (starling: starling, cetz: cetz),
+)
+
 == Render helpers
 
 #tidy.show-module(lib-docs, style: tidy.styles.default, show-module-name: false)
@@ -2536,3 +2644,11 @@ by the `tidy` package from doc-comments in the source.
 == Hash map renderer
 
 #tidy.show-module(hdraw-docs, style: tidy.styles.default, show-module-name: false)
+
+== Skip list
+
+#tidy.show-module(skiplist-docs, style: tidy.styles.default, show-module-name: false)
+
+== Skip list renderer
+
+#tidy.show-module(sldraw-docs, style: tidy.styles.default, show-module-name: false)

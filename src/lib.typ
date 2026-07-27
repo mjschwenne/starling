@@ -92,6 +92,27 @@
   array-arrow-key,
   make-array-renderer,
 )
+// Skip list — a sorted set stored as a probabilistic multi-level linked
+// list, drawn as a sparse grid of node towers with horizontal forward
+// pointers. Rides its own backend. The public helpers are `sl-`-prefixed
+// so they don't collide with the graph/hash-map/array `node-anchor` /
+// `cell-*` / `entry-*` / `array-*` names under `import starling: *`.
+#import "./skiplist.typ": (
+  Skiplist,
+  skiplist,
+  default-skiplist-theme,
+  set-skiplist-theme,
+  SkiplistTheme,
+  _skiplist-theme-state,
+)
+#import "./skiplist-draw.typ": (
+  draw-skiplist,
+  sl-box-anchor,
+  sl-forward-anchor,
+  sl-box-key,
+  sl-forward-key,
+  make-skiplist-renderer,
+)
 // Git graph — a stateful cetz DSL (commits, branches, merges, tags,
 // HEAD/branch pointers). Unlike the tree/graph structures it does NOT
 // ride the `Frame` stack, so the frame helpers below (`last`, `stacked`,
