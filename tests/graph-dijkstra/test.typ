@@ -17,4 +17,13 @@
   directed: true,
 )
 
+= Default (distances on nodes, instant path)
 #starling.stacked((dg.dijkstra-display)("S", target: "T"))
+
+// `node-distances: false` drops the on-canvas distance notes (they live
+// in the `dist` aux map instead); `reconstruct: true` appends the
+// ConstructShortestPath phase — the route is built one hop at a time
+// back from the end (settled stroke over the tree, the prepended node
+// ringed) rather than highlighted all at once.
+= node-distances: false + reconstruct: true
+#starling.stacked((dg.dijkstra-display)("S", target: "T", node-distances: false, reconstruct: true))

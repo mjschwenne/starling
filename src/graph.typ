@@ -401,6 +401,15 @@
   [#lu–#lv (#item.weight)]
 }
 
+// Format a `(node, dist)` priority-queue element as `node: d` content,
+// honoring the `labels` id -> content map. The Dijkstra PQ analog of
+// `_edge-body` (a node keyed by its tentative distance rather than an
+// edge keyed by its weight).
+#let _node-dist-body(item, labels) = {
+  let ln = labels.at(item.node, default: item.node)
+  [#ln: #item.dist]
+}
+
 // A tall, narrow variant of `_edge-body`: the endpoints stacked over a
 // short connector with the weight beneath, so a long horizontal edge
 // list stays compact.
@@ -462,13 +471,15 @@
   )
 }
 
-// Prim priority-queue view: crossing (candidate) edges sorted ascending
-// by weight, min at the front. Each `items` entry is
-// `(u, v, weight, status)` with status `candidate` or `chosen` (the min
-// about to be popped, drawn with an attention ring). Rendered as a
-// vertical column (a priority queue's natural orientation, and it stays
-// narrow when the frontier is wide) with the `min` marked at the top.
-#let _aux-pq-content(items, labels, op, rt) = {
+// Priority-queue view: entries sorted ascending by priority, min at the
+// front. Rendered as a vertical column (a priority queue's natural
+// orientation, and it stays narrow when the frontier is wide) with the
+// `min` marked at the top. Each `items` entry carries a `status`
+// (`candidate` / `chosen` / `added` / `rejected`) driving its ring
+// (see `_status-box`). `body-fn(item, labels)` formats one entry — the
+// Prim frontier uses `_edge-body` (crossing edges `u–v (w)`), the
+// Dijkstra queue `_node-dist-body` (nodes keyed by distance `node: d`).
+#let _aux-pq-content(items, labels, op, rt, body-fn: _edge-body) = {
   if items.len() == 0 {
     return grid(
       columns: (auto, auto),
@@ -481,7 +492,7 @@
   let cells = ()
   for (i, it) in items.enumerate() {
     cells.push(if i == 0 { _strip-end-label(rt, "min") } else { [] })
-    cells.push(_status-box(_edge-body(it, labels), it.status, op, rt))
+    cells.push(_status-box(body-fn(it, labels), it.status, op, rt))
   }
   grid(
     columns: (auto, auto),
@@ -553,14 +564,61 @@
   )
 }
 
-// A short heading shown above each strip when a step carries more than
-// one view (Kruskal's edge-list + partition), so the two are labeled.
-#let _view-title(kind) = if kind == "edge-list" {
+// Node-keyed map view (Dijkstra `dist` / `prev`): a two-row strip with a
+// node-styled header per key over a value cell. `items` is an ordered
+// array of `(key, value, status)` — one per node — where `value` is the
+// already-formatted cell content (a distance, `∞`, a predecessor id, or
+// `∅`) and `status` colors the cell like the other MST/queue kinds
+// (`current` rings the node just polled, `added` fills a value just
+// updated). Rendered as a grid of boxes (not a bordered table) to match
+// the queue/stack/partition strips.
+#let _aux-map-content(items, labels, op, rt) = {
+  if items.len() == 0 {
+    return _strip-box("(empty)", rt.node-fill, 0.5pt + rt.node-stroke, _muted(rt.node-text-fill))
+  }
+  let headers = items.map(it => _strip-box(
+    text(weight: "bold", labels.at(it.key, default: it.key)),
+    rt.node-fill,
+    0.5pt + rt.node-stroke,
+    rt.node-text-fill,
+  ))
+  let values = items.map(it => _status-box(it.value, it.status, op, rt))
+  grid(
+    columns: items.len(),
+    column-gutter: 0.4em,
+    row-gutter: 0.3em,
+    align: center,
+    ..headers,
+    ..values,
+  )
+}
+
+/// The human-readable name of one `aux-strip` view `kind` — the same
+/// heading `aux-strip` stamps above each view when it stacks several.
+/// Exposed so a slide that places views separately (via
+/// #raw("aux-strip(step, view: ..)")) can recover and render each view's
+/// title itself (e.g. #raw("aux-view-title(\"dist-map\")") -> "Distances").
+/// The `kind`s a `step` carries are the `kind` fields of
+/// #raw("step.aux-views") (or the single #raw("step.aux-kind")).
+/// -> str
+#let aux-view-title(
+  /// A view kind: #raw("\"queue\"") / #raw("\"stack\"") / #raw("\"pq\"") /
+  /// #raw("\"edge-list\"") / #raw("\"partition\"") / #raw("\"dist-pq\"") /
+  /// #raw("\"dist-map\"") / #raw("\"prev-map\"").
+  /// -> str
+  kind,
+) = if kind == "edge-list" {
   "Sorted edges"
 } else if kind == "partition" {
   "Components"
 } else if kind == "pq" {
   "Frontier"
+} else if kind == "dist-pq" {
+  "Priority queue"
+} else if kind == "dist-map" {
+  "Distances"
+} else if kind == "prev-map" {
+  "Predecessors"
 } else if kind == "queue" {
   "Queue"
 } else if kind == "stack" {
@@ -573,6 +631,10 @@
   _aux-nodes-content(items, kind, labels, rt)
 } else if kind == "pq" {
   _aux-pq-content(items, labels, op, rt)
+} else if kind == "dist-pq" {
+  _aux-pq-content(items, labels, op, rt, body-fn: _node-dist-body)
+} else if kind == "dist-map" or kind == "prev-map" {
+  _aux-map-content(items, labels, op, rt)
 } else if kind == "edge-list" {
   _aux-edge-list-content(items, labels, op, rt)
 } else if kind == "partition" {
@@ -596,6 +658,10 @@
 /// - #raw("mst-kruskal-display") — two stacked views (an #raw("aux-views")
 ///   list): the sorted edge list with a cursor and per-edge status, plus
 ///   the disjoint-set partition (one group per component).
+/// - #raw("dijkstra-display") — three stacked views (an #raw("aux-views")
+///   list): the priority queue of #raw("(node, dist)") entries (min first,
+///   the entry just polled ringed), and the #raw("dist") and #raw("prev")
+///   maps (one node-keyed cell each, the value just updated highlighted).
 ///
 /// Returns plain Typst content (not a #raw("Frame")), so it drops
 /// anywhere — e.g. beside #raw("canvases-only(frames)") in a touying
@@ -606,7 +672,8 @@
 #let aux-strip(
   /// One frame's #raw("step") metadata dict, as produced by
   /// #raw("bfs-display") / #raw("dfs-display") /
-  /// #raw("mst-prim-display") / #raw("mst-kruskal-display").
+  /// #raw("mst-prim-display") / #raw("mst-kruskal-display") /
+  /// #raw("dijkstra-display").
   /// -> dictionary
   step,
   /// Optional #raw("id -> content") map giving each node a display label
@@ -619,6 +686,15 @@
   /// sets). #raw("auto") renders every view the step holds, stacked.
   /// -> auto | str
   view: auto,
+  /// Whether to stamp each view's title (e.g. "Distances") above it.
+  /// #raw("auto") shows titles only when several views are stacked
+  /// (the default) — so a single #raw("view:") is untitled. Pass
+  /// #raw("true") to force the title on (useful when placing one view on
+  /// its own but still wanting its name) or #raw("false") to suppress it
+  /// even for a stack. For a custom-styled heading, read the name with
+  /// #raw("aux-view-title(kind)") instead.
+  /// -> auto | bool
+  title: auto,
   /// Op-theme override, used to color MST elements by status
   /// (attention / success / danger). #raw("auto") reads the active
   /// #raw("set-op-theme") state; a dict bakes it in. Unused by the
@@ -635,7 +711,7 @@
       and (step.at("aux-views", default: none) != none or step.at("aux-kind", default: none) != none),
     message: "aux-strip: expected a `step` dict carrying `aux`/`aux-kind` (from "
       + "`bfs-display` / `dfs-display` / `mst-prim-display`) or `aux-views` "
-      + "(from `mst-kruskal-display`); got "
+      + "(from `mst-kruskal-display` / `dijkstra-display`); got "
       + repr(step),
   )
   // Normalize to a list of `(kind, items)` views: the multi-view
@@ -646,12 +722,15 @@
     ((kind: step.aux-kind, items: step.at("aux", default: ())),)
   }
   if view != auto { views = views.filter(v => v.kind == view) }
+  // `auto` keeps the historical behavior: titles only when >1 view is
+  // stacked. `true`/`false` force them on/off (e.g. `true` to name a
+  // single `view:`-selected strip).
+  let show-titles = if title == auto { views.len() > 1 } else { title }
   _with-strip-themes(theme, render-theme, (op, rt) => {
-    let multi = views.len() > 1
     let rendered = views.map(v => {
       let body = _aux-view(v.kind, v.items, labels, op, rt)
-      if multi {
-        stack(dir: ttb, spacing: 0.25em, _strip-end-label(rt, _view-title(v.kind)), body)
+      if show-titles {
+        stack(dir: ttb, spacing: 0.25em, _strip-end-label(rt, aux-view-title(v.kind)), body)
       } else { body }
     })
     if rendered.len() == 1 { rendered.first() } else { stack(dir: ttb, spacing: 0.7em, ..rendered) }
@@ -1362,14 +1441,21 @@
     },
     // ---- Dijkstra's shortest paths ----
     // Every node carries its tentative distance in the gold note slot
-    // (∞ until reached). Two frames per round: "select" (the unvisited
-    // node with smallest distance gets attention-stroke and is
-    // finalized), then "relax" (its outgoing edges are tried in
-    // search-stroke and improved distances update). The shortest-path
-    // tree (predecessor edges) accumulates in success-stroke. With a
-    // `target`, the search stops early and the path is highlighted in
-    // settled-stroke.
-    dijkstra-display: (self, source, target: none, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
+    // (∞ until reached). The priority queue is modeled explicitly with
+    // the add-as-you-go, new-instance semantics students implement (see
+    // `pq-view` below): the queue starts with the source alone, each
+    // improving relaxation adds a fresh `(node, dist)` entry (never a
+    // decrease-key), and a polled entry for an already-visited node is a
+    // stale duplicate discarded on a "skip" frame. Frame kinds: "visit"
+    // (the polled minimum is marked visited, attention-stroke), "update"
+    // (its unvisited neighbours are tried in search-stroke and improved
+    // distances re-added to the queue), "skip" (a stale duplicate, ringed
+    // in danger-stroke). The shortest-path tree (predecessor edges)
+    // accumulates in success-stroke. With a `target`, the search stops
+    // early and the path is highlighted in settled-stroke. Every frame's
+    // `step` carries three `aux-views` for `aux-strip` — the priority
+    // queue plus the `dist` and `prev` maps.
+    dijkstra-display: (self, source, target: none, node-distances: true, reconstruct: false, positions: auto, scale: 1, node-style: (:), layout: none, layout-unit: 36pt, theme: auto, render-theme: auto) => {
       let positions = _resolve-positions(self, positions, layout, layout-unit)
       let pg = (self.positioned)(positions: positions, scale: scale)
       let all-ids = self.nodes.keys()
@@ -1377,39 +1463,130 @@
         source in self.nodes,
         message: "dijkstra-display: source node '" + source + "' not in graph.",
       )
+      // `reconstruct` animates the `ConstructShortestPath` phase (walking
+      // `prev` back from the end), so it needs an endpoint to walk from.
+      assert(
+        not reconstruct or target != none,
+        message: "dijkstra-display: reconstruct: true requires a `target:` (the path's end).",
+      )
       let dlabel(d) = if d == none { "∞" } else { str(d) }
       let tree-keys-of(prev) = prev.pairs().map(((v, u)) => graph-draw.edge-key(u, v, directed: self.directed))
+      // Nodes read by their string label when they have one, else by id.
+      let label-of = id => {
+        let l = self.nodes.at(id).at("label", default: auto)
+        if type(l) == str { l } else { id }
+      }
+
+      // The priority queue holds `(node, dist)` entries and follows the
+      // add-as-you-go, new-instance model (the form students implement):
+      // it starts with the source alone; each improving relaxation
+      // *adds a fresh entry* instead of decreasing an existing key, so a
+      // node can appear several times with different distances. Poll =
+      // the min by `(dist, node)` — distance first, node id alphabetically
+      // to break ties. A polled entry for an already-visited node is a
+      // stale duplicate and is discarded (the "skip" moment), which is
+      // exactly why the loop guards with `if u is not visited`.
+      let sort-pq(entries) = entries.sorted(key: e => (e.dist, e.node))
+      // One priority-queue snapshot for `aux-strip`: the sorted entries,
+      // each tagged for `_status-box`. `head-status` rings the front
+      // (min) entry; `added` (a set of `(node, dist)` pairs) marks the
+      // freshly enqueued entries on an update moment.
+      let pq-view(entries, head-status: none, added: ()) = {
+        let sorted = sort-pq(entries)
+        sorted.enumerate().map(((i, e)) => (
+          node: e.node,
+          dist: e.dist,
+          status: if head-status != none and i == 0 { head-status } else if added.contains((e.node, e.dist)) { "added" } else { "candidate" },
+        ))
+      }
+
       let dist = (:)
       for id in all-ids { dist.insert(id, none) }
       dist.insert(source, 0)
       let prev = (:)
       let visited = ()
+      let pq = ((node: source, dist: 0),)
       let moments = (
-        (kind: "init", dist: dist, visited: (), u: none, relaxed: (), tree-keys: ()),
+        (
+          kind: "init",
+          dist: dist,
+          prev: prev,
+          visited: (),
+          u: none,
+          relaxed: (),
+          updated: (),
+          tree-keys: (),
+          pq-view: pq-view(pq, added: ((source, 0),)),
+        ),
       )
       let stop = false
-      while not stop {
-        let cand = all-ids.filter(id => not visited.contains(id) and dist.at(id) != none)
-        if cand.len() == 0 {
-          stop = true
+      while pq.len() > 0 and not stop {
+        let sorted = sort-pq(pq)
+        let head = sorted.first()
+        let u = head.node
+        // Remove the polled entry; the rest carries forward.
+        pq = sorted.slice(1)
+        if visited.contains(u) {
+          // Stale duplicate: the entry that put `u` here has been beaten
+          // by an earlier, cheaper poll. Discard it and move on.
+          moments.push((
+            kind: "skip",
+            dist: dist,
+            prev: prev,
+            visited: visited,
+            u: u,
+            du: head.dist,
+            relaxed: (),
+            updated: (),
+            tree-keys: tree-keys-of(prev),
+            pq-view: pq-view(sorted, head-status: "rejected"),
+          ))
         } else {
-          let u = cand.fold(cand.first(), (m, id) => if dist.at(id) < dist.at(m) { id } else { m })
           visited = visited + (u,)
-          moments.push((kind: "select", dist: dist, visited: visited, u: u, relaxed: (), tree-keys: tree-keys-of(prev)))
-          let relaxed = ()
-          for nb in (self.neighbors)(u) {
-            let v = nb.id
-            if not visited.contains(v) {
-              let nd = dist.at(u) + nb.weight
-              if dist.at(v) == none or nd < dist.at(v) {
-                dist.insert(v, nd)
-                prev.insert(v, u)
-                relaxed.push(graph-draw.edge-key(u, v, directed: self.directed))
+          moments.push((
+            kind: "visit",
+            dist: dist,
+            prev: prev,
+            visited: visited,
+            u: u,
+            du: head.dist,
+            relaxed: (),
+            updated: (),
+            tree-keys: tree-keys-of(prev),
+            pq-view: pq-view(sorted, head-status: "chosen"),
+          ))
+          if target != none and u == target {
+            stop = true
+          } else {
+            let relaxed = ()
+            let updated = ()
+            let added = ()
+            for nb in (self.neighbors)(u) {
+              let v = nb.id
+              if not visited.contains(v) {
+                let nd = dist.at(u) + nb.weight
+                if dist.at(v) == none or nd < dist.at(v) {
+                  dist.insert(v, nd)
+                  prev.insert(v, u)
+                  pq.push((node: v, dist: nd))
+                  relaxed.push(graph-draw.edge-key(u, v, directed: self.directed))
+                  updated.push(v)
+                  added.push((v, nd))
+                }
               }
             }
+            moments.push((
+              kind: "update",
+              dist: dist,
+              prev: prev,
+              visited: visited,
+              u: u,
+              relaxed: relaxed,
+              updated: updated,
+              tree-keys: tree-keys-of(prev),
+              pq-view: pq-view(pq, added: added),
+            ))
           }
-          moments.push((kind: "relax", dist: dist, visited: visited, u: u, relaxed: relaxed, tree-keys: tree-keys-of(prev)))
-          if target != none and u == target { stop = true }
         }
       }
       let path-keys = ()
@@ -1424,54 +1601,188 @@
           cur = p
         }
       }
+      // When `reconstruct` is on and the end is reachable, the `done`
+      // frame does NOT highlight the whole path — the reconstruction
+      // frames below build it up one hop at a time instead.
+      let recon-active = reconstruct and target != none and dist.at(target) != none
       moments.push((
         kind: "done",
         dist: dist,
+        prev: prev,
         visited: visited,
         u: none,
         relaxed: (),
+        updated: (),
         tree-keys: tree-keys-of(prev),
-        path-keys: path-keys,
-        path-nodes: path-nodes,
+        pq-view: pq-view(pq),
+        path-keys: if recon-active { () } else { path-keys },
+        path-nodes: if recon-active { () } else { path-nodes },
+        reconstruct: recon-active,
       ))
+      // ConstructShortestPath: walk `prev` back from the end, inserting
+      // each node at the front of the path. Each frame prepends one hop —
+      // `full-path` is source→end, so the partial after k inserts is its
+      // last k nodes ([end], [prev, end], …, whole path). The freshly
+      // prepended node rings in the attention stroke; the growing route
+      // lights up in the settled stroke; the `prev` map traces the chain.
+      if recon-active {
+        let full-path = path-nodes.rev()
+        let n = full-path.len()
+        for k in range(1, n + 1) {
+          let partial = full-path.slice(n - k)
+          let pkeys = range(partial.len() - 1).map(i => graph-draw.edge-key(
+            partial.at(i),
+            partial.at(i + 1),
+            directed: self.directed,
+          ))
+          moments.push((
+            kind: "recon",
+            dist: dist,
+            prev: prev,
+            visited: visited,
+            u: none,
+            relaxed: (),
+            updated: (),
+            tree-keys: tree-keys-of(prev),
+            pq-view: pq-view(pq),
+            path-nodes: partial,
+            path-keys: pkeys,
+            new-node: partial.first(),
+            complete: k == n,
+          ))
+        }
+      }
 
       let pfx = "Shortest paths (Dijkstra) on " + (self.describe)() + ". "
-      // Nodes read by their string label when they have one, else by id.
-      let label-of = id => {
-        let l = self.nodes.at(id).at("label", default: auto)
-        if type(l) == str { l } else { id }
+      // A compact "Distances: A=0, B=2, …" listing appended to alt text.
+      let dist-note(d) = " Distances: " + all-ids.map(k => label-of(k) + "=" + dlabel(d.at(k))).join(", ") + "."
+      // Build the three aux views (priority queue, dist map, prev map)
+      // from a moment's snapshots. `u` is highlighted "current" and nodes
+      // in `updated` are marked "added" (a value just improved).
+      let map-items(m, values) = all-ids.map(k => (
+        key: k,
+        value: values.at(k),
+        status: if m.updated.contains(k) {
+          "added"
+        } else if (m.kind == "visit" or m.kind == "update") and m.u == k {
+          "current"
+        } else {
+          "candidate"
+        },
+      ))
+      // During reconstruction the search is over; the relevant structure
+      // is `prev`, read back from the end. Mark the cell read on this
+      // frame (`prev[path[1]]`, which yielded the new front) "current"
+      // and the cells read on earlier frames (`path.slice(2)`) "added",
+      // so the chain lights up as it is traced. dist stays neutral.
+      let recon-map-items(m, values, trace) = {
+        let read-now = if m.path-nodes.len() >= 2 { m.path-nodes.at(1) } else { none }
+        let read-before = if m.path-nodes.len() > 2 { m.path-nodes.slice(2) } else { () }
+        all-ids.map(k => (
+          key: k,
+          value: values.at(k),
+          status: if not trace {
+            "candidate"
+          } else if k == read-now {
+            "current"
+          } else if read-before.contains(k) {
+            "added"
+          } else {
+            "candidate"
+          },
+        ))
       }
+      let views-of(m) = {
+        let dvals = (:)
+        for k in all-ids { dvals.insert(k, dlabel(m.dist.at(k))) }
+        let pvals = (:)
+        for k in all-ids {
+          let p = m.prev.at(k, default: none)
+          pvals.insert(k, if p == none { "∅" } else { label-of(p) })
+        }
+        if m.kind == "recon" {
+          (
+            (kind: "dist-pq", items: m.pq-view),
+            (kind: "dist-map", items: recon-map-items(m, dvals, false)),
+            (kind: "prev-map", items: recon-map-items(m, pvals, true)),
+          )
+        } else {
+          (
+            (kind: "dist-pq", items: m.pq-view),
+            (kind: "dist-map", items: map-items(m, dvals)),
+            (kind: "prev-map", items: map-items(m, pvals)),
+          )
+        }
+      }
+
       let captions = ()
       let steps-meta = ()
       let alts = ()
       for m in moments {
+        let views = views-of(m)
         if m.kind == "init" {
-          captions.push([Initialize: #source = 0])
-          steps-meta.push((kind: "init", source: source))
-          alts.push(pfx + "Initialize tentative distances: " + label-of(source) + " = 0, all others infinity.")
-        } else if m.kind == "select" {
-          captions.push([Visit #(m.u) (#(dlabel(m.dist.at(m.u))))])
-          steps-meta.push((kind: "select", node: m.u, dist: m.dist.at(m.u)))
+          captions.push([Add #source to queue])
+          steps-meta.push((kind: "init", source: source, aux-views: views))
           alts.push(
-            "Selecting " + label-of(m.u) + ", the unvisited node with the smallest tentative distance ("
-              + dlabel(m.dist.at(m.u)) + "); finalizing it.",
+            pfx + "Add " + label-of(source) + " to the priority queue with distance 0; every other distance is "
+              + "infinity and every predecessor undefined." + dist-note(m.dist),
           )
-        } else if m.kind == "relax" {
-          captions.push([Relax from #(m.u)])
-          steps-meta.push((kind: "relax", node: m.u, relaxed: m.relaxed))
-          alts.push("Relaxing edges out of " + label-of(m.u) + "; " + str(m.relaxed.len()) + " distance(s) improved.")
+        } else if m.kind == "visit" {
+          captions.push([Visit #(m.u) (#(dlabel(m.du)))])
+          steps-meta.push((kind: "visit", node: m.u, dist: m.du, aux-views: views))
+          alts.push(
+            "Poll " + label-of(m.u) + " (distance " + dlabel(m.du) + "), the queue's minimum; mark it visited." + dist-note(m.dist),
+          )
+        } else if m.kind == "update" {
+          captions.push([Update neighbors of #(m.u)])
+          steps-meta.push((kind: "update", node: m.u, updated: m.updated, aux-views: views))
+          alts.push(
+            "Update the unvisited neighbors of " + label-of(m.u) + "; " + str(m.updated.len())
+              + " distance(s) improved and re-added to the queue." + dist-note(m.dist),
+          )
+        } else if m.kind == "skip" {
+          captions.push([Skip #(m.u) — already visited])
+          steps-meta.push((kind: "skip", node: m.u, aux-views: views))
+          alts.push(
+            "Poll " + label-of(m.u) + ", but it is already visited; discard this stale queue entry and poll again." + dist-note(m.dist),
+          )
+        } else if m.kind == "recon" {
+          let path-str = m.path-nodes.map(label-of).join(" → ")
+          if m.complete {
+            captions.push([Shortest path: #path-str (#(dlabel(m.dist.at(target))))])
+            steps-meta.push((kind: "recon", path: m.path-nodes, complete: true, aux-views: views))
+            alts.push(
+              "Reconstruction complete; the shortest path from " + label-of(source) + " to " + label-of(target)
+                + " is " + m.path-nodes.map(label-of).join(" to ") + ", total distance " + dlabel(m.dist.at(target)) + ".",
+            )
+          } else {
+            captions.push([Path: #path-str])
+            steps-meta.push((kind: "recon", path: m.path-nodes, complete: false, aux-views: views))
+            alts.push(
+              "Reconstructing the path: prepend " + label-of(m.new-node) + " (its predecessor), giving "
+                + m.path-nodes.map(label-of).join(" to ") + " so far.",
+            )
+          }
         } else {
-          if target != none {
+          if recon-active {
+            captions.push([Reached #target (#(dlabel(m.dist.at(target))))])
+            steps-meta.push((kind: "done", target: target, dist: m.dist.at(target), reconstruct: true, aux-views: views))
+            alts.push(
+              "Search complete; shortest distance from " + label-of(source) + " to " + label-of(target) + " is "
+                + dlabel(m.dist.at(target)) + ". Now reconstruct the path from " + label-of(target) + " back through prev."
+                + dist-note(m.dist),
+            )
+          } else if target != none {
             captions.push([Shortest path to #target: #(dlabel(m.dist.at(target)))])
-            steps-meta.push((kind: "done", target: target, dist: m.dist.at(target)))
+            steps-meta.push((kind: "done", target: target, dist: m.dist.at(target), aux-views: views))
             alts.push(
               "Dijkstra complete; shortest distance from " + label-of(source) + " to " + label-of(target) + " is "
-                + dlabel(m.dist.at(target)) + ".",
+                + dlabel(m.dist.at(target)) + "." + dist-note(m.dist),
             )
           } else {
             captions.push([Done])
-            steps-meta.push((kind: "done"))
-            alts.push("Dijkstra complete; all reachable nodes finalized.")
+            steps-meta.push((kind: "done", aux-views: views))
+            alts.push("Dijkstra complete; all reachable nodes visited." + dist-note(m.dist))
           }
         }
       }
@@ -1480,8 +1791,13 @@
         let r = graph-draw.make-graph-renderer(pg, sticky: false)
         for (i, m) in moments.enumerate() {
           if i > 0 { r = (r.push-frame)() }
-          for id in all-ids {
-            r = (r.patch)(f => (f.style-node)(id, note: dlabel(m.dist.at(id))))
+          // The tentative distance in each node's note slot. Suppressed
+          // with `node-distances: false` (e.g. when the `dist` aux map
+          // already carries it, so the canvas stays uncluttered).
+          if node-distances {
+            for id in all-ids {
+              r = (r.patch)(f => (f.style-node)(id, note: dlabel(m.dist.at(id))))
+            }
           }
           for id in m.visited {
             r = (r.patch)(f => (f.style-node)(id, stroke: op.settled-stroke, fill: op.success-fill))
@@ -1490,9 +1806,12 @@
             r = (r.patch)(f => (f.style-edge)(k, stroke: op.success-stroke))
           }
           if m.u != none {
-            r = (r.patch)(f => (f.style-node)(m.u, stroke: op.attention-stroke))
+            // The polled node: attention on a fresh visit/update, danger
+            // on a "skip" (a stale duplicate being discarded).
+            let ring = if m.kind == "skip" { op.danger-stroke } else { op.attention-stroke }
+            r = (r.patch)(f => (f.style-node)(m.u, stroke: ring))
           }
-          if m.kind == "relax" {
+          if m.kind == "update" {
             for k in m.relaxed {
               r = (r.patch)(f => (f.style-edge)(k, stroke: op.search-stroke))
             }
@@ -1503,6 +1822,20 @@
             }
             for id in m.at("path-nodes", default: ()) {
               r = (r.patch)(f => (f.style-node)(id, stroke: op.settled-stroke, fill: op.success-fill))
+            }
+          }
+          if m.kind == "recon" {
+            // Overlay the partial path (settled stroke over the success
+            // tree edges) and ring the just-prepended node in attention,
+            // so the route grows one hop at a time back from the end.
+            for k in m.path-keys {
+              r = (r.patch)(f => (f.style-edge)(k, stroke: op.settled-stroke))
+            }
+            for id in m.path-nodes {
+              r = (r.patch)(f => (f.style-node)(id, stroke: op.settled-stroke, fill: op.success-fill))
+            }
+            if not m.complete {
+              r = (r.patch)(f => (f.style-node)(m.new-node, stroke: op.attention-stroke))
             }
           }
         }

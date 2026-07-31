@@ -1210,12 +1210,18 @@ Pass `view:` to render just one of them for separate placement — e.g.
 == Dijkstra's shortest paths
 
 `(g.dijkstra-display)(source, target: ..)` carries each node's
-tentative distance in its note slot (∞ until reached). Each round
-finalizes the nearest unvisited node (attention stroke, then settled),
-relaxes its outgoing edges (search stroke, updating distances), and
-grows the shortest-path tree in the success stroke. With a `target`
-the search stops early and the path is highlighted. It works on
-directed graphs:
+tentative distance in its note slot (∞ until reached). It models the
+*priority queue* explicitly, the way students implement it: the queue
+starts with the `source` alone and each improving relaxation *adds a
+fresh `(node, dist)` entry* rather than decreasing an existing key — so
+a node can sit in the queue several times. Each round *polls* the
+queue's minimum (`Visit`, attention stroke, then settled), *updates* its
+unvisited neighbours (`Update neighbors of …`, search stroke), and grows
+the shortest-path tree in the success stroke. Polling a stale duplicate
+for an already-visited node produces a `Skip` frame (ringed in the
+danger stroke) — the reason the `if u is not visited` guard exists.
+Ties are broken alphabetically by node id. With a `target` the search
+stops early and the path is highlighted. It works on directed graphs:
 
 #let dg-tour = starling.graph(
   (("S", 0, 0), ("A", 2.5, 1.2), ("B", 2.5, -1.2), ("T", 5, 0)),
@@ -1230,6 +1236,34 @@ directed graphs:
 )
 
 #align(center, starling.stacked((dg-tour.dijkstra-display)("S", target: "T")))
+
+Dijkstra carries *three* auxiliary structures, and `aux-strip(frame.step)`
+stacks all three: the priority queue of `(node, dist)` entries (min on
+top, the polled entry ringed — chosen on a visit, discarded on a skip,
+and freshly added entries in the success fill), and the `dist` and `prev`
+maps (one node-keyed cell each, the value just updated highlighted).
+Pass `view:` — `"dist-pq"`, `"dist-map"`, or `"prev-map"` — to place one
+on its own. A single view is untitled by default (the "Distances" /
+"Predecessors" headings only appear when views are stacked); pass
+`title: true` to keep the heading, or recover the string yourself with
+`aux-view-title("dist-map")` for a custom-styled label. Here a full run
+(no `target`, so the terminal skip frames show) over its first update
+rounds:
+
+#align(center, aux-rows((dg-tour.dijkstra-display)("S").slice(2, 5)))
+
+Two flags tailor the canvas. `node-distances: false` drops the on-canvas
+distance notes — useful when the `dist` aux map already carries them and
+you want the graph itself uncluttered. `reconstruct: true` (which needs a
+`target`) appends the `ConstructShortestPath` phase: instead of lighting
+the whole path up at once, it walks `prev` back from the end, prepending
+one node per frame (the newcomer ringed in the attention stroke, the
+route growing in the settled stroke) while the `prev` aux map traces the
+chain it reads. The reconstruction of the `S`–`T` path, distances off:
+
+#align(center, aux-rows(
+  (dg-tour.dijkstra-display)("S", target: "T", node-distances: false, reconstruct: true).slice(-4),
+))
 
 == Traversals
 
@@ -1295,7 +1329,8 @@ frame records that structure's state in its `step` metadata, and
 `aux-strip(frame.step)` renders it as a placeable strip of boxes (the
 front and rear ends marked on a queue, the `top` push/pop end on a
 stack). The same `aux-strip` helper also serves the MST displays (the
-Prim frontier and the two Kruskal views, above); it dispatches on the
+Prim frontier and the two Kruskal views) and Dijkstra (its priority
+queue plus the `dist` and `prev` maps), above; it dispatches on the
 kind of auxiliary state each `step` carries. It returns
 ordinary content, not a `Frame`, so you lay it out wherever you want —
 this is deliberately decoupled from the graph canvas so a touying slide

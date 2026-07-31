@@ -38,7 +38,7 @@
   paint-trie,
   _trie-theme-state,
 )
-#import "./graph.typ": Graph, graph, aux-strip
+#import "./graph.typ": Graph, graph, aux-strip, aux-view-title
 // `auto-layout` carries its `diagraph-layout` import inside its own body
 // (see graph-layout.typ), so re-exporting it here does NOT make
 // `import starling` pull that dependency — it resolves only when the
