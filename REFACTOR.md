@@ -232,15 +232,26 @@ field.
 ```
 
 Port the fold semantics of `apply-ops` from `anim-core.typ` verbatim (pending
-snapshot, sticky mode, commit pushes a frame). Old `Op.Highlight` and
-`Op.ClearNotes` had zero uses in the lecture corpus — grep `src/` and `tests/`;
-if they are also unused internally, drop them; if used internally, keep
-equivalents but do not export them.
+snapshot, sticky mode, commit pushes a frame).
+
+**Settled in Phase 1** (was: grep and decide):
+
+- `Op.Highlight` — dropped, no replacement. Its only uses were old tests and
+  the manual; `style-node(key, stroke: blue + 2pt)` says the same thing. When
+  migrating `bst-op-stream`, `bst-cetz-anchors`, `hashmap-anchors`, and
+  `graph-anchors`, rewrite it that way.
+- `Op.ClearNotes` — dropped from the op vocabulary, but `bst.delete-display`
+  (`search: true`) genuinely needs it, so the capability survives as
+  `snapshot.clear-notes(snap)`. Call that from a spec's `build` closure; do
+  not re-add an op for it, and do not export it from lib.typ.
+- `commit(caption:, step:, alt:)` assigns only the arguments that are not
+  `none`, so an earlier `set-alt` is not wiped by a bare `commit()`.
 
 ### 3.4 Frame
 
 ```typ
 (
+  make:    (theme, extra) => content,   // the real builder (see below)
   builder: (theme) => content,   // theme = the FULL resolved nested theme dict (§7)
   caption: none | content,       // always content, never str (normalize sort/trie)
   step:    dict,                 // step.kind per §5; final frame carries step.result
@@ -248,6 +259,16 @@ equivalents but do not export them.
   extra:   (),                   // array of cetz command blocks appended inside the canvas
 )
 ```
+
+**`make` was added in Phase 1** and is not optional. `overlay` appends to
+`extra` *after* the frame exists, but a one-argument builder has already
+captured the extras it was constructed with — the first cut of this silently
+dropped every overlay. So the frame keeps the two-argument `make`, and
+`builder` is just `make` partially applied to the frame's current `extra`;
+`overlay` rebuilds `builder` from `make` when it appends. Callers still use
+`(frame.builder)(theme)` and never touch `make`. Build frames through
+`frame.typ`'s `frame(make, caption:, step:, alt:, extra:)` constructor rather
+than writing the dict by hand, and this stays consistent.
 
 ### 3.5 Renderer
 
@@ -264,6 +285,20 @@ old `_draw-*-backend` wrapper constants are deleted; pass the draw function
 directly. The old `default-node-style:`/`default-edge-style:` parameter names
 shrink to `node-style:`/`edge-style:` everywhere (renderers, displays, draw
 backends).
+
+⚠️ **`sticky` now defaults to `false`** (it was `true` in `anim-core.typ`). It
+governs only the `make-renderer` + `apply-ops` path, and accumulation is the
+idiom that path exists for, so **the four op-stream tests must pass
+`sticky: true` explicitly when they migrate** — `bst-op-stream`,
+`bst-cetz-anchors` (Phase 3), `hashmap-anchors` (Phase 3), `graph-anchors`
+(Phase 5). Their refs are pixel-identical with that one argument added; without
+it the highlights stop accumulating and the refs change. Same for any DS
+`renderer()` whose animation expects accumulation.
+
+`core/frame.typ` also exports the renderer mutators `push-frame`, `patch`,
+`with-caption`, `with-step`, `with-alt` (unprefixed, because `core/ops.typ`
+folds through them). They are deliberately **absent from lib.typ's export
+list** — the public way to drive a renderer is the op stream.
 
 ---
 
@@ -366,7 +401,10 @@ Rules:
 #let render(renderer)                                // -> array of Frame
 #let make-frames(specs, draw, theme: (:), node-style: (:), edge-style: (:))
      // THE one frame builder. spec: (structure:, build: (theme) => snapshot,
-     //                               caption:, step:, alt:, node-style: auto, edge-style: auto)
+     //                               caption:, step:, alt:, node-style: auto,
+     //                               edge-style: auto, extra: ())
+     // Every spec key except `structure` and `build` is optional and defaults as
+     // shown (`caption: none`, `step: (:)`, `alt: ""`).
      // Replaces all 13 old _make-frames* variants.
 #let make-canvas(structure, snapshot, node-style, edge-style, theme, draw, extra: ())
      // resolves theme-refs in the snapshot (style.resolve-refs), calls draw, appends
@@ -398,20 +436,39 @@ builders.
 
 - `alt-label`, `alt-key-label` — moved from `tree-anim.typ:62,72` (they are
   string helpers, not drawing code; they were in the wrong module).
-- `display-value(elem)` — the "label if str, else str(value)" rule, currently
-  reimplemented a fourth time as `sort.typ:_disp`. One copy now.
+- `display-value(elem, value-key: "value")` — the "label if str, else
+  str(value)" rule, currently reimplemented a fourth time as `sort.typ:_disp`.
+  One copy now. The `value-key:` parameter is how the one copy serves both
+  families: the trees pass the default, **sort and skiplist pass
+  `value-key: "key"`** (their element dicts are `(key:, label:)`).
+  `alt-label(node)` is the binary-tree case with the default applied.
 - `alt-intro(ds-name, describe-text, action)` →
   `"<ds-name>: <describe>. About to <action>."` Every display's first-frame alt
   goes through this (fixes `hashmap.typ:1112` and `sort.typ:1022`, which
-  silently drop the DS-name prefix today).
+  silently drop the DS-name prefix today). Its sibling
+  `alt-describe(ds-name, describe-text)` → `"<ds-name>: <describe>."` is the
+  static-`display()` form (added in Phase 1; every `display()` uses it, so
+  don't hand-build that string either).
 
 ### 4.7 `core/draw-util.typ`
 
-- `stroke-paint(stroke)` (4 copies today), `haloed(body, theme)` (3 copies),
-  `text-fill-for(…)` (4 copies) — one copy each, byte-identical behavior.
-- `resolve-dims(...)` — ONE implementation serving hashmap/array/skiplist "fit"
-  sizing, parameterized on the body-builder and floor constants, **always**
-  accepting a `measure-cells` superset. This closes the hashmap gap (§1). The
+- `stroke-paint(stroke)` (4 copies today), `haloed(draw, pos, body, theme,
+  anchor: "center")` (3 copies), `text-fill-for(…)` (4 copies) — one copy each,
+  byte-identical behavior. Note `haloed` takes the **full nested theme** and
+  reads `theme.render.note-bg` itself; backends pass their `theme` straight
+  through.
+- `resolve-dims(cells, body-fn, cell-width, floor-w:, floor-h:, pad-x:, pad-y:,
+  measure-cells:)` → `(w, h)` — ONE implementation serving hashmap/array/skiplist
+  "fit" sizing, parameterized on the body-builder and floor constants,
+  **always** accepting a `measure-cells` superset. Each backend renames `(w, h)`
+  to its own field names (`cw/ch`, `bw/bh`) and derives its extras (the array's
+  `row-gap`, the skiplist's pitches) itself. The hash map has **two** box
+  families with different floors: call `resolve-dims` for the array cells, and
+  the companion `measure-max(cells, body-fn, measure-cells:)` for the chain
+  entries, whose `ehw`/`ehh` are *half*-extents (`max(_EHW, w / 2 + PAD-X)`) —
+  padding is applied after halving, so they cannot go through `resolve-dims`
+  directly. `PAD-X`/`PAD-Y` (0.22 / 0.15, identical in all three backends
+  today) are the shared defaults. This closes the hashmap gap (§1). The
   `hashmap-frame-stability` test is the acceptance check; if hashmap cell sizes
   legitimately change, that test's refs (and other `hashmap-*` refs) may change
   — inspect diffs, confirm the new sizing is *correct* (stable across an
@@ -495,10 +552,11 @@ helpers (`path-anchor`, `node-anchor`, `cell-anchor`, `entry-anchor`,
 identity function) is deleted with no replacement — arrow ids are already the
 keys.
 
-⚠️ Verify early (Phase 2, first backend): that cetz accepts these names and that
-sub-anchor access (`"el-01.key-1"`, compass anchors like
-`anchor("c3") + ".north"`) resolves. If a character class issue appears, adjust
-the sanitizer in ONE place and move on. Since only names change (not positions),
+✅ **Verified in Phase 1** (was: "verify early in Phase 2"). The `core-ops`
+test's rendered page draws a callout between two sanitized names, one of them
+via a compass sub-anchor (`anchor("a")` → `"el-a"`, `anchor("c->d") + ".north"`
+→ `"el-c--d.north"`). cetz accepts the names and resolves the sub-anchor, so
+the sanitizer needs no adjustment. Since only names change (not positions),
 all existing refs must stay pixel-identical — anchor renames are invisible to
 the renderer; only tests that *reference* anchors need their source updated.
 
@@ -774,7 +832,9 @@ All helpers open one `context`, resolve the one theme state once via
 | `(t.insert-display)(5)` then `(t.insert)(5)` | `let f = bst.insert-display(t, 5); t = result(f)` |
 | `(Op.StyleNode.new)(path: p, style: (fill: red))` | `style-node(p, fill: red)` |
 | `(Op.Commit.new)(alt: a)` | `commit(alt: a)` |
-| `starling.make-renderer(t)` (tree-bound) | `bst.renderer(t)` (etc. per DS) |
+| `(Op.Highlight.new)(path: p, color: c)` | `style-node(p, stroke: c + 2pt)` |
+| `(Op.ClearNotes.new)()` | `snapshot.clear-notes(snap)` — internal only, no op, not exported |
+| `starling.make-renderer(t)` (tree-bound; sticky by default) | `bst.renderer(t, sticky: true)` (etc. per DS) — `sticky` now defaults to `false`, see §3.5 |
 | `starling.make-renderer(structure, draw: …)` (generic, was unreachable) | `make-renderer(structure, draw, …)` |
 | `(r.render)()` | `render(r)` |
 | `paint-rbt(make-renderer(t), t, bits: true, theme: …)` | `rbt.renderer(t, bits: true)` |
@@ -824,7 +884,7 @@ against accidental exports).
 
 ## 12. Phases
 
-### Phase 0 — Setup (Small)
+### Phase 0 — Setup (Small) — ✅ DONE (commit `Phase 0: prefix the BST-era test directories`)
 
 1. Branch `refactor/v1`.
 2. Rename the 15 BST-era unprefixed test dirs (`insert`→`bst-insert`,
@@ -842,7 +902,14 @@ against accidental exports).
 
 **Done when:** suite green on the branch; one commit.
 
-### Phase 1 — the Core (New Code Only; Nothing Existing Changes)
+### Phase 1 — the Core (New Code Only; Nothing Existing Changes) — ✅ DONE (commit `Phase 1: the animation core, on plain dicts`)
+
+Decisions made while implementing it are folded into §§3-4, 6.2, 8, 11.1 and
+14 above, each marked "Phase 1". The load-bearing ones for later phases:
+`Frame.make` (§3.4), `sticky: false` (§3.5), the `Op.Highlight`/`ClearNotes`
+resolution (§3.3), `display-value`'s `value-key:` (§4.6), the
+`resolve-dims` / `measure-max` split (§4.7), and the deferred `git:` theme
+section (§4.4 → Phase 6).
 
 1. Write `core/style.typ`, `core/snapshot.typ`, `core/ops.typ`,
    `core/theme.typ`, `core/frame.typ`, `core/text.typ`, `core/draw-util.typ`,
@@ -872,7 +939,8 @@ against accidental exports).
    the new core, including one `ghost` element, one `name:` + `anchor()`
    callout, and one theme-ref style. These get NEW refs (that's what
    `just update draw-…` is for — they're new tests).
-4. Verify the anchor sanitizer against cetz early (§6.2 warning).
+4. ~~Verify the anchor sanitizer against cetz early (§6.2 warning).~~ Done in
+   Phase 1 — see §6.2.
 
 **Done when:** suite green; 5 new smoke tests with refs; no old test's ref
 changed.
@@ -1003,8 +1071,10 @@ test).
 
 ## 14. Known Risks / Verify-at-Implementation-Time
 
-1. **cetz anchor charset** (§6.2) — verify in Phase 2 step 4; the sanitizer is
-   the single point of adjustment.
+1. ~~**cetz anchor charset** (§6.2)~~ — **RESOLVED in Phase 1.** cetz accepts
+   the sanitized `el-` names and resolves their compass sub-anchors; the
+   `core-ops` test's rendered page is the standing check. Phase 2 step 4 is
+   already done.
 2. **hashmap "fit" sizing refs** (§4.7) — the only intentional ref change;
    inspect diffs.
 3. **Theme resolution perf** — one state read per `last`/`figures`/`subslides`
