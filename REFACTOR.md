@@ -323,7 +323,7 @@ One nested dict, one state, one setter, one resolution rule.
                    // attention-stroke; `pivot-stroke` exists only in stale docs
   rbt:      (…),   // from default-rbt-theme (rbt.typ)
   trie:     (…), hashmap: (…), sort: (…), skiplist: (…),
-  git:      (…),   // from default-git-theme (git-graph.typ)
+  // git: DEFERRED TO PHASE 6 — see the note below.
 )
 #let _theme-state = state("starling-theme", (:))   // stores PARTIAL overrides only
 #let set-theme(overrides)        // validates section names + keys, deep-merges one level
@@ -331,6 +331,19 @@ One nested dict, one state, one setter, one resolution rule.
 #let resolve-theme(override)     // default-theme <- state <- override; NEEDS context
                                  // (only the slides.typ helpers call this)
 ```
+
+> **Deferred (decided during Phase 1, mjs):** the `git:` section is NOT
+> written in Phase 1. Its default values include the branch color palette and
+> three decorator *functions* (`default-colors`, `color-boxed`,
+> `_default-branch-pointer-decorator`, `_default-head-pointer-decorator`) that
+> live in `git-graph.typ`, and `core/*` may not import `git-graph.typ`. **Phase 6
+> must**: (a) move those four bindings into `core/theme.typ` (they are plain
+> `box`/`text` content builders — no cetz needed), (b) add the `git:` section to
+> `default-theme` with the values from `default-git-theme` verbatim, (c) delete
+> `default-git-theme` / `set-git-theme` / `GitTheme` / `_git-theme-state` from
+> `git-graph.typ`, and (d) point `git-graph`'s deferred `d.set-ctx` theme read at
+> the one theme state. Until then `set-theme((git: …))` panics with an
+> unknown-section error, which is correct — there is nothing to theme yet.
 
 Rules:
 
@@ -634,6 +647,10 @@ the reference implementation to match):
 #let success(..keys)     // fill: role("success-fill"), stroke: role("settled-stroke")
 #let danger(..keys)      // node stroke: role("danger-stroke")
 #let subtree(..keys)     // shape: "triangle", child-anchor: "north"  (elided-subtree idiom)
+                         //   + tag: none and a gray fill/stroke from the new render-theme
+                         //   keys `elided-fill`/`elided-stroke`, so an elided subtree does
+                         //   not read as a real node (matches the lecture helper, but
+                         //   themeable). [decided during Phase 1, mjs]
 #let nullify(..keys)     // materialize: true, label: ∅  (null-sentinel idiom)
 #let ghost(..keys)       // node ghost: true  +  edge hide: true, same keys
 #let hidden(..keys)      // node hide: true   +  edge hide: true
@@ -661,7 +678,10 @@ Names deliberately avoid colliding with Typst/cetz builtins (`hidden` not `hide`
   rename: `git-graph`, `commit`, `branch`, `merge`, `tag`, `checkout`,
   `branch-pointer`, `head-pointer`, `detached-commit`, `git-highlight`,
   `background-lanes`.
-- Theme: the git palette becomes the `git:` section of `default-theme`;
+- Theme: the git palette becomes the `git:` section of `default-theme` — which
+  Phase 1 deliberately left out, so **this phase adds it**, moving
+  `default-colors` / `color-boxed` / the two pointer decorators into
+  `core/theme.typ` first (see the deferral note in §4.4);
   `set-git-theme` and its private state die. `git-graph(theme: auto)` reads the
   ONE theme state inside its deferred `d.set-ctx` closure (same mechanism as
   today — cetz supplies context there); `theme: (…)` per-call bypasses state
