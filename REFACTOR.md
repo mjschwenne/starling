@@ -1070,15 +1070,31 @@ resize, all three `cell-width` modes, theming). All byte-identical. Do the same
 for each module in Phases 4-5 — it catches an accumulation off-by-one that a
 whole-suite ref check would let through if no test happens to cover it.
 
-**Keep the shared-closure pattern when porting an accumulating animation.** The
-pre-1.0 code built a phase's snapshots in ONE closure and let every frame index
-into the result, so Typst's call cache made an n-frame animation cost one
-accumulation pass. `make-frames` takes a per-spec `build`, which invites
-rebuilding from scratch per frame — O(n²). Write `let build-all = th => {..}`
-once per phase and give each spec `build: th => build-all(th).at(i)`, exactly as
-`ds/bst.typ` and `ds/tree-common.typ` do. Note also that a Typst closure cannot
-mutate a captured variable, so the accumulation must be written as straight-line
-`cur = ..; out.push(cur)` inside the closure body, not via a helper.
+**Use the shared-closure pattern for an accumulating animation whose length
+scales with the structure.** The pre-1.0 code built a phase's snapshots in ONE
+closure and let every frame index into the result, so Typst's call cache made an
+n-frame animation cost one accumulation pass. `make-frames` takes a per-spec
+`build`, which invites rebuilding the prefix from scratch per frame — n²/2 steps
+where n suffice. Write `let build-all = th => {..}` once per phase and give each
+spec `build: th => build-all(th).at(i)`, exactly as `ds/bst.typ` and
+`ds/tree-common.typ` do. The cache is doing the work here, and it is easy to
+lose: adding one *ignored* argument to `build-all` (so each call is a distinct
+memo key) measured 8x slower on a 255-node traversal.
+
+**But not for a walk of bounded length.** `ds/hashmap.typ` deliberately keeps
+the per-frame rebuild for its probe and chain walks, because those are bounded
+by the table's capacity — a number chosen to fit on a slide, not to scale.
+Measured over 200 walks with a stub backend, rebuilding costs about 0.1 ms more
+per animation at m = 11-13, and at m = 7 it is *faster* than the shared
+closure, whose up-front array allocation never pays off over so short a walk.
+The rule of thumb: reach for the shared closure when the frame count follows the
+data (tree traversals, sort passes, a skip-list search trail), and leave the
+straightforward version alone when it follows a small structural constant.
+
+Note also that a Typst closure cannot mutate a captured variable — it is a hard
+compile error, not a silent slowdown — so the accumulation must be written as
+straight-line `cur = ..; out.push(cur)` inside the closure body, not factored
+into a helper.
 
 **Watch for `import cetz.draw: *`.** Now that the sanitizer is called `anchor`,
 a glob import of cetz's draw module shadows it — cetz has its own `anchor(name,
