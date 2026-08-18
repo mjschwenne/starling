@@ -82,7 +82,7 @@
 
 // A stub backend: asserts nothing, draws nothing measurable. The core never
 // interprets the structure, so a string is a perfectly good one.
-#let noop-draw = (structure, snapshot, node-style, edge-style, theme) => ()
+#let noop-draw(structure, snapshot, node-style: (:), edge-style: (:), theme: (:)) = ()
 
 #let stream = (
   style-node("", fill: red)
@@ -185,7 +185,7 @@
 // This backend asserts what the core hands a draw function: theme references
 // already resolved (in the snapshot and in both base style layers), and the
 // full nested theme with the display's per-call override applied.
-#let checking-draw = (structure, snapshot, node-style, edge-style, theme) => {
+#let checking-draw(structure, snapshot, node-style: (:), edge-style: (:), theme: (:)) = {
   assert.eq(snapshot.nodes.at("a"), (stroke: theme.op.search-stroke))
   assert.eq(edge-style, (stroke: theme.op.danger-stroke))
   assert.eq(theme.op.attention-stroke, (paint: purple))
@@ -282,7 +282,7 @@
 // sanitized `el-` names must be legal cetz element names and resolvable
 // (including a sub-anchor) from the `extra` commands drawn in the same
 // canvas.
-#let dot-draw(keys, snapshot, node-style, edge-style, theme) = {
+#let dot-draw(keys, snapshot, node-style: (:), edge-style: (:), theme: (:)) = {
   import cetz.draw: circle, content
   for (i, key) in keys.enumerate() {
     let style = snapshot.nodes.at(key, default: (:))

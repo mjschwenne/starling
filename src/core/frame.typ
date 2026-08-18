@@ -9,11 +9,14 @@
 //
 // A draw backend is just a function
 //
-//   (structure, snapshot, node-style, edge-style, theme) -> cetz commands
+//   (structure, snapshot, node-style: .., edge-style: .., theme: ..) -> cetz cmds
 //
-// so this module never knows what it is drawing. Trees pass `draw-tree`,
-// graphs `draw-graph`, and a user with their own backend passes their own —
-// `make-renderer` is the documented extension point.
+// called with the two structural arguments positionally and the three style
+// arguments by name — so a backend can carry defaults for them and stay
+// callable by hand inside a plain `cetz.canvas`. This module never knows what
+// it is drawing. Trees pass `draw-tree`, graphs `draw-graph`, and a user with
+// their own backend passes their own — `make-renderer` is the documented
+// extension point.
 //
 // PERF: everything a display computes (traces, walks, the spec list) must be
 // computed once at display-call time, OUTSIDE the builder closures. A builder
@@ -59,7 +62,7 @@
     edges: _style.resolve-refs-map(snapshot.edges, theme),
   )
   cetz.canvas({
-    draw(structure, snap, ns, es, theme)
+    draw(structure, snap, node-style: ns, edge-style: es, theme: theme)
     for e in extra {
       if type(e) == function { e(theme) } else { e }
     }

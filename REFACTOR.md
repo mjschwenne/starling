@@ -280,11 +280,20 @@ than writing the dict by hand, and this stays consistent.
 ```
 
 `draw` is a bare function
-`(structure, snapshot, node-style, edge-style, theme) => cetz cmds`. The five
-old `_draw-*-backend` wrapper constants are deleted; pass the draw function
-directly. The old `default-node-style:`/`default-edge-style:` parameter names
-shrink to `node-style:`/`edge-style:` everywhere (renderers, displays, draw
-backends).
+`(structure, snapshot, node-style: .., edge-style: .., theme: ..) => cetz cmds`.
+The five old `_draw-*-backend` wrapper constants are deleted; pass the draw
+function directly. The old `default-node-style:`/`default-edge-style:` parameter
+names shrink to `node-style:`/`edge-style:` everywhere (renderers, displays,
+draw backends).
+
+⚠️ **Amended in Phase 2:** `make-canvas` passes the two structural arguments
+positionally and the three style arguments **by name**, which is what lets a
+backend carry the defaults §6.1 gives it (`node-style: (:)`, `edge-style: (:)`,
+`theme: default-theme`) and still be callable by hand inside a plain
+`cetz.canvas`. Phase 1 wrote the call as five positionals, which no function
+with named parameters can accept; `core/frame.typ` and the `core-ops` stub
+backends were updated. A custom backend must therefore declare
+`(structure, snapshot, node-style: (:), edge-style: (:), theme: ..)`.
 
 ⚠️ **`sticky` now defaults to `false`** (it was `true` in `anim-core.typ`). It
 governs only the `make-renderer` + `apply-ops` path, and accumulation is the
@@ -473,6 +482,17 @@ builders.
   legitimately change, that test's refs (and other `hashmap-*` refs) may change
   — inspect diffs, confirm the new sizing is *correct* (stable across an
   animation's frames), then `just update`.
+
+  **Split across Phases 2 and 3** (decided in Phase 2). `draw/hashmap.typ` now
+  sizes through `resolve-dims` + `measure-max` and *accepts* a `measure-cells`
+  key on the table dict, defaulting to `()` — so Phase 2 changed no refs at all.
+  Phase 3's `ds/hashmap.typ` supplies the superset, and that is when the sizing
+  (and possibly the refs) actually moves. One thing to carry over: the hash map's
+  two box families are never populated at once — open addressing labels the array
+  cells and has no chain entries, chaining labels the entries and leaves the array
+  cells as keyless bucket headers — so the backend routes `measure-cells` to
+  whichever family the strategy actually uses. Feeding it to both would inflate
+  chaining's array pitch to the entry labels' width for no reason.
 - `anchor(key, canvas: none)` — the ONE anchor sanitizer (§6.2).
 
 ---
@@ -552,6 +572,22 @@ helpers (`path-anchor`, `node-anchor`, `cell-anchor`, `entry-anchor`,
 identity function) is deleted with no replacement — arrow ids are already the
 keys.
 
+✅ **Done in Phase 2.** One wrinkle worth knowing before touching `draw/tree.typ`
+again: cetz-tree names each node's group *positionally* ("0", "0-1", …), because
+it lays the tree out long before it knows our paths, and there is no hook to
+change that. `draw/tree.typ` therefore draws the tree inside a private group and
+then republishes each node group's anchors under its `el-<path>` name, with a
+local `_alias-anchors` element built the same way cetz's own
+`draw.copy-anchors` is (insert into `ctx.nodes` an entry whose `anchors` closure
+delegates to the source element's). It is the one place in starling that reaches
+into a cetz context; it is pinned to cetz 0.5.2 along with the rest of the
+drawing code, and it preserves point *and* compass sub-anchor resolution
+(`anchor("LR") + ".north"`), qualified or not. The other four backends name
+their elements directly and need none of this.
+
+`draw-graph` now names its **edges** too (it named only nodes before), so
+`anchor(edge-key(u, v))` resolves — the missing half of §6.2's edge examples.
+
 ✅ **Verified in Phase 1** (was: "verify early in Phase 2"). The `core-ops`
 test's rendered page draws a callout between two sanitized names, one of them
 via a compass sub-anchor (`anchor("a")` → `"el-a"`, `anchor("c->d") + ".north"`
@@ -575,6 +611,16 @@ label.
   `ghost` key must also work so users can ghost any element from the Op stream.
 - Edges: `hide: true` already exists and is the edge-side story;
   `styles.ghost(..keys)` (§8) emits node-ghost + edge-hide for the same keys.
+
+✅ **Done in Phase 2**, uniformly: every backend draws the element normally and
+wraps the result in `draw.hide(.., bounds: true)`. cetz's `hidden` tag skips
+painting but still contributes bounds (only its `no-bounds` tag suppresses
+them), so the footprint is exact by construction rather than by re-deriving each
+backend's geometry, and the element's `name:` still registers — ghosted elements
+keep their anchors. A tree node's ghost also survives cetz-tree's
+measure-the-node pass, so the *layout* is unchanged too: measured on a 3-node
+tree, ghosting a whole subtree left the canvas at 255.12pt against 255.12pt
+undisturbed and 153.07pt with the subtree genuinely absent.
 
 ### 6.4 Draw Modules Also Export
 
@@ -925,7 +971,26 @@ section (§4.4 → Phase 6).
 
 **Done when:** `just test` green (old suite + core-ops). No old file modified.
 
-### Phase 2 — Draw Backends
+### Phase 2 — Draw Backends — ✅ DONE (commit `Phase 2: the five draw backends`)
+
+Decisions made while implementing it are folded into §§3.5, 4.7, 6.2 and 6.3
+above, each marked "Phase 2". The load-bearing ones for later phases: the
+backend calling convention (§3.5 — two positionals, three named), the tree's
+`_alias-anchors` workaround for cetz-tree's positional group names (§6.2), the
+uniform `draw.hide(.., bounds: true)` implementation of `ghost` (§6.3), and the
+hashmap `measure-cells` split that defers the only intended ref change to
+Phase 3 (§4.7).
+
+Each backend was checked against its predecessor by rendering the same
+structures through both and comparing PNG hashes — 29 configurations across the
+five, all byte-identical (trees: binary, force-show phantoms, B24, trie,
+grow/spread; graphs: directed and undirected, self-loops, bends, label-offsets,
+autosize, every node shape; hash maps: both orientations x chaining and open
+addressing, tombstones, phantom cell, real/ghost/double hash boxes, all three
+sizing modes; arrays: data/count/buckets rows, arrows, chains, all sizing modes;
+skip lists: ghost columns, both link-range forms, all sizing modes). That is
+what "verbatim drawing logic" was held to, and it is the cheapest way to keep
+Phases 3-5 honest as the DS modules move over — do the same when porting them.
 
 1. Port the five backends to `draw/` per §6 (verbatim drawing logic; new
    signature; `name:`; shared draw-util helpers; `el-` anchors; `ghost` key).
@@ -1076,7 +1141,8 @@ test).
    `core-ops` test's rendered page is the standing check. Phase 2 step 4 is
    already done.
 2. **hashmap "fit" sizing refs** (§4.7) — the only intentional ref change;
-   inspect diffs.
+   inspect diffs. Deferred to Phase 3: the Phase-2 backend port defaults
+   `measure-cells` to `()` and changed nothing.
 3. **Theme resolution perf** — one state read per `last`/`figures`/`subslides`
    call is the design; if a deck with hundreds of calls regresses, memoize
    `resolve-theme((:))` via a module-level pre-merged constant for the
