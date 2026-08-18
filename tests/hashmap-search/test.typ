@@ -5,13 +5,13 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#let l = hashmap(7, strategy: "linear", entries: (14, 21, 7))
-#let l1 = (l.delete)(21) // tombstone at slot 1
+#let l = hashmap.new(7, strategy: "linear", entries: (14, 21, 7))
+#let l1 = hashmap.delete(l, 21) // tombstone at slot 1
 
 // Hit — must probe past the tombstone at slot 1 to find 7 at slot 2.
-#starling.stacked((l1.search-display)(7))
+#starling.stacked(hashmap.search-display(l1, 7))
 
 #v(1.5em)
 
 // Miss — probe runs off into an empty slot.
-#starling.stacked((l1.search-display)(99))
+#starling.stacked(hashmap.search-display(l1, 99))

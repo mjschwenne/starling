@@ -66,6 +66,15 @@
 /// trailing frame, which has no following `commit` to carry its text.
 #let set-alt(text) = ((op: "alt", text: text),)
 
+/// Set the in-progress frame's caption without committing — the caption
+/// counterpart of `set-alt`, for the same trailing frame.
+#let set-caption(caption) = ((op: "caption", caption: caption),)
+
+/// Set the in-progress frame's step metadata without committing. A
+/// hand-driven renderer needs this on its last frame, since `result(frames)`
+/// reads `step.result` from there.
+#let set-step(step) = ((op: "step", step: step),)
+
 /// Close the in-progress frame — attaching any caption, step metadata, and
 /// alt text given here — and open a fresh one. Arguments left `none` leave
 /// whatever the frame already has.
@@ -82,6 +91,10 @@
     _frame.patch(r, s => _snap.note-node(s, op.key, op.note))
   } else if op.op == "alt" {
     _frame.with-alt(r, op.text)
+  } else if op.op == "caption" {
+    _frame.with-caption(r, op.caption)
+  } else if op.op == "step" {
+    _frame.with-step(r, op.step)
   } else if op.op == "commit" {
     let out = r
     if op.caption != none { out = _frame.with-caption(out, op.caption) }

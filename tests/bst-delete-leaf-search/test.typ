@@ -1,12 +1,6 @@
 #import "/src/lib.typ" as starling
-#import starling: BST
+#import starling: bst
 
-#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
-#let t = (t.insert)(1)
-#let t = (t.insert)(0)
-#let t = (t.insert)(7)
-#let t = (t.insert)(3)
-#let t = (t.insert)(6)
-#let t = (t.insert)(8)
+#let t = bst.new(4, 1, 0, 7, 3, 6, 8)
 
-#starling.stacked((t.delete-display)(0, search: true))
+#starling.stacked(bst.delete-display(t, 0, search: true))

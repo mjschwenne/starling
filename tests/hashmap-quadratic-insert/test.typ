@@ -2,5 +2,5 @@
 #import "/src/lib.typ" as starling
 #import starling: hashmap
 
-#let q = hashmap(7, strategy: "quadratic", entries: (0, 7, 14))
-#starling.stacked((q.insert-display)(21))
+#let q = hashmap.new(7, strategy: "quadratic", entries: (0, 7, 14))
+#starling.stacked(hashmap.insert-display(q, 21))

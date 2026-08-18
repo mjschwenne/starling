@@ -3,5 +3,5 @@
 #import "/src/lib.typ" as starling
 #import starling: hashmap
 
-#let c = hashmap(5, strategy: "chaining", entries: (5, 10, 7))
-#starling.stacked((c.insert-display)(20))
+#let c = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7))
+#starling.stacked(hashmap.insert-display(c, 20))

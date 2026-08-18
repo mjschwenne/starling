@@ -7,22 +7,22 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#let c = hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8))
+#let c = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3, 8))
 
 // Search miss: 15 -> bucket 0 (holds 5, 10); phantom past 10.
-#starling.stacked((c.search-display)(15))
+#starling.stacked(hashmap.search-display(c, 15))
 
 #v(1.5em)
 
 // Search miss into an empty bucket: 4 -> bucket 4 (empty); phantom at depth 0.
-#starling.last((c.search-display)(4))
+#starling.last(hashmap.search-display(c, 4))
 
 #v(1.5em)
 
 // Delete miss: same phantom treatment.
-#starling.last((c.delete-display)(15))
+#starling.last(hashmap.delete-display(c, 15))
 
 #v(1.5em)
 
 // Vertical orientation miss.
-#starling.last((c.search-display)(15, orientation: "vertical"))
+#starling.last(hashmap.search-display(c, 15, orientation: "vertical"))

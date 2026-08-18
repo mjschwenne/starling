@@ -5,16 +5,14 @@
 // (init + hash + probe/compare walk) renders at identical canvas dimensions.
 // This asserts that equality directly (independent of pixel refs).
 #import "/src/lib.typ" as starling
-#import starling: hashmap
+#import starling: default-theme, hashmap
 
 #set page(width: auto, height: auto, margin: 2pt)
 
-#let ot = starling.default-op-theme
-#let rt = starling.default-render-theme
 
 // Dimensions of a frame's rendered canvas.
 #let dims-of(f) = {
-  let m = measure((f.render)(ot, rt))
+  let m = measure((f.builder)(default-theme))
   (w: m.width, h: m.height)
 }
 
@@ -52,35 +50,35 @@
 }
 
 // Open addressing (linear) — a multi-probe insert.
-#let l = hashmap(7, strategy: "linear", entries: (14, 21, 7))
-#check-stable((l.insert-display)(28), ("insert", "update", "full"))
+#let l = hashmap.new(7, strategy: "linear", entries: (14, 21, 7))
+#check-stable(hashmap.insert-display(l, 28), ("insert", "update", "full"))
 
 // Chaining — insert that walks the bucket, both orientations.
-#let c = hashmap(5, strategy: "chaining", entries: (5, 10, 7))
-#check-stable((c.insert-display)(20), ("insert", "update"))
-#check-stable((c.insert-display)(20, orientation: "vertical"), ("insert", "update"))
+#let c = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7))
+#check-stable(hashmap.insert-display(c, 20), ("insert", "update"))
+#check-stable(hashmap.insert-display(c, 20, orientation: "vertical"), ("insert", "update"))
 
 // Search and delete share the same leading walk.
-#check-stable((l.search-display)(7), ("found", "not-found"))
-#check-stable(((l.delete)(21).search-display)(7), ("found", "not-found"))
+#check-stable(hashmap.search-display(l, 7), ("found", "not-found"))
+#check-stable(hashmap.search-display(hashmap.delete(l, 21), 7), ("found", "not-found"))
 
 // Open-addressing delete is pinned end-to-end: the terminal tombstone frame
 // (and the naive `cleared` variant) fills the existing cell and carries a ghost
 // hash box, so the WHOLE animation renders at one canvas size — no jump up when
 // the box vanishes, no slide sideways when it sat over an end cell.
-#check-stable((l.delete-display)(21), ())
-#check-stable((l.delete-display)(21, tombstone: false), ())
+#check-stable(hashmap.delete-display(l, 21), ())
+#check-stable(hashmap.delete-display(l, 21, tombstone: false), ())
 
 // Chaining delete: the chain retracts along its own axis (height when
 // horizontal, width when vertical), but the ghost hash box pins the cross axis
 // so the table never slides there — the end-cell jump this bug fix removed.
-#check-axis-stable((c.delete-display)(10), "w")
-#check-axis-stable((c.delete-display)(10, orientation: "vertical"), "h")
+#check-axis-stable(hashmap.delete-display(c, 10), "w")
+#check-axis-stable(hashmap.delete-display(c, 10, orientation: "vertical"), "h")
 
 // A large (touying-like) font must stay stable too.
 #[
   #set text(size: 24pt)
-  #check-stable((c.insert-display)(20), ("insert", "update"))
+  #check-stable(hashmap.insert-display(c, 20), ("insert", "update"))
 ]
 
 // Placeholder page so tytanic has something to compare.

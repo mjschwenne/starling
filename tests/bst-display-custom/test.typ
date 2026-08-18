@@ -1,22 +1,16 @@
-// Visual regression for custom node labels. Keys are int (so ordering
-// still works); the `label` field is a mix of `auto` (renders the key),
-// strings, and arbitrary content. The tree is hand-built so each node
-// can carry a different label.
+// Visual regression for custom node labels. Keys are ints (so ordering still
+// works); the `label` field is a mix of `auto` (which draws the key), strings,
+// and arbitrary content. The tree is hand-built with the literal builders so
+// each node can carry a different label.
 
 #import "/src/lib.typ" as starling
-#import starling: BST
+#import starling: bst
 
-#let leaf(v, l) = (BST.new)(value: v, label: l, left: none, right: none)
-#let t = (BST.new)(
-  value: 4,
+#let t = bst.node(
+  4,
+  bst.node(2, bst.leaf(1), bst.leaf(3), label: "two"),
+  bst.leaf(7, label: [#text(fill: red)[seven]]),
   label: [*four*],
-  left: (BST.new)(
-    value: 2,
-    label: "two",
-    left: leaf(1, auto),
-    right: leaf(3, auto),
-  ),
-  right: leaf(7, [#text(fill: red)[seven]]),
 )
 
-#starling.last((t.display)())
+#starling.last(bst.display(t))

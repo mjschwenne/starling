@@ -10,19 +10,19 @@
 #set text(size: 24pt)
 
 // Horizontal chaining, numeric labels: several buckets with head arrows.
-#let c = hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13))
-#starling.last((c.display)())
+#let c = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13))
+#starling.last(hashmap.display(c))
 
 #v(1.5em)
 
 // Horizontal chaining, wide string labels: entry boxes must fit the text.
-#let w = hashmap(3, strategy: "chaining")
-#let w = (w.insert)(1, label: "apple")
-#let w = (w.insert)(4, label: "grape")
-#let w = (w.insert)(7, label: "fig")
-#starling.last((w.display)())
+#let w = hashmap.new(3, strategy: "chaining")
+#let w = hashmap.insert(w, 1, label: "apple")
+#let w = hashmap.insert(w, 4, label: "grape")
+#let w = hashmap.insert(w, 7, label: "fig")
+#starling.last(hashmap.display(w))
 
 #v(1.5em)
 
 // Vertical (memory-diagram) chaining at the same large font.
-#starling.last((w.display)(orientation: "vertical"))
+#starling.last(hashmap.display(w, orientation: "vertical"))

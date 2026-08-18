@@ -1,39 +1,42 @@
 #import "/src/lib.typ" as starling
-#import starling: BST, Op, apply-ops, make-renderer
-
-#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
-#let t = (t.insert-many)(2, 6, 1, 7)
-
-// Exercise every Op variant:
-//   Highlight, Annotate, StyleNode, StyleEdge, Commit, Alt, ClearNotes.
-// Captions are not ops — they're set directly on the renderer between
-// Op batches via `r.with-caption(...)`. `Op.Commit(alt: ...)` closes
-// the current frame with alt text and opens a fresh one; `Op.Alt(text)`
-// sets alt on the trailing in-progress frame.
-#let frame1-ops = (
-  (Op.Highlight.new)(path: "", color: blue),
-  (Op.Annotate.new)(path: "", text: [root]),
-  (Op.StyleNode.new)(path: "L", style: (fill: yellow)),
-  (Op.StyleEdge.new)(path: "L", style: (stroke: red + 2pt)),
-  (Op.Commit.new)(alt: "Highlighted root and left edge."),
-)
-#let frame2-ops = (
-  (Op.ClearNotes.new)(),
-  (Op.StyleNode.new)(path: "R", style: (fill: aqua)),
-  (Op.StyleEdge.new)(path: "R", style: (stroke: green + 2pt)),
-  (Op.Annotate.new)(path: "R", text: [right]),
-  (Op.Alt.new)(text: "Highlighted right edge and styled right child."),
+#import starling: (
+  annotate, apply-ops, bst, commit, render, set-alt, set-caption, style-edge,
+  style-node,
 )
 
-#let r = make-renderer(t, sticky: true)
-#let r = (r.with-caption)([frame 1])
-#let r = apply-ops(r, frame1-ops)
-#let r = (r.with-caption)([frame 2])
-#let r = apply-ops(r, frame2-ops)
+#let t = bst.insert-many(bst.leaf(4), 2, 6, 1, 7)
 
-#let frames = (r.render)()
+// Exercise the whole op vocabulary: style-node, style-edge, annotate, commit
+// (which carries the caption and alt of the frame it closes), and the two
+// trailing-frame setters (`set-caption` / `set-alt`), which the last frame
+// needs because no `commit` follows it.
+//
+// `sticky: true` makes each frame start from the previous one's styling, which
+// is what the accumulate-as-you-go path exists for — note that frame 2 keeps
+// frame 1's blue root ring and yellow left child. A note is transient, though,
+// so frame 2 clears the root's with an explicit `note: none`.
+#let frame1 = (
+  style-node("", stroke: blue + 2pt)
+    + annotate("", [root])
+    + style-node("L", fill: yellow)
+    + style-edge("L", stroke: red + 2pt)
+    + commit(caption: [frame 1], alt: "Highlighted root and left edge.")
+)
+#let frame2 = (
+  style-node("", note: none)
+    + style-node("R", fill: aqua)
+    + style-edge("R", stroke: green + 2pt)
+    + annotate("R", [right])
+    + set-caption([frame 2])
+    + set-alt("Highlighted right edge and styled right child.")
+)
+
+#let frames = render(apply-ops(bst.renderer(t, sticky: true), frame1 + frame2))
+
 #assert.eq(frames.len(), 2)
+#assert.eq(frames.at(0).caption, [frame 1])
 #assert.eq(frames.at(0).alt, "Highlighted root and left edge.")
+#assert.eq(frames.at(1).caption, [frame 2])
 #assert.eq(frames.at(1).alt, "Highlighted right edge and styled right child.")
 
 #starling.stacked(frames)

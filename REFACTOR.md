@@ -244,6 +244,18 @@ snapshot, sticky mode, commit pushes a frame).
   (`search: true`) genuinely needs it, so the capability survives as
   `snapshot.clear-notes(snap)`. Call that from a spec's `build` closure; do
   not re-add an op for it, and do not export it from lib.typ.
+  **Phase 3 footnote:** a *user-driven* op stream can't reach that helper, and
+  a sticky frame does sometimes need to drop a note it inherited. The answer
+  there is `style-node(key, note: none)` — the backends only draw a note when
+  it is non-`none`, so an explicit `none` clears one slot. `bst-op-stream`
+  demonstrates it. Still no op.
+- **Added in Phase 3: `set-caption(c)` and `set-step(s)`**, siblings of
+  `set-alt`. The trailing in-progress frame has no closing `commit`, which is
+  exactly why `set-alt` exists — and the argument applies verbatim to the other
+  two pieces of frame metadata. Without `set-caption` a hand-driven stream
+  cannot caption its last frame, and without `set-step` it cannot stamp the
+  `step.result` that `result(frames)` reads. Both are one line each in
+  `core/ops.typ` and one dispatch arm in `apply-ops`.
 - `commit(caption:, step:, alt:)` assigns only the arguments that are not
   `none`, so an earlier `set-alt` is not wiped by a bare `commit()`.
 
@@ -348,6 +360,8 @@ against the allowlists on entry.
 #let style-edge(..args)  // same shape
 #let annotate(key, note)
 #let set-alt(text)
+#let set-caption(caption)          // added in Phase 3, see §3.3
+#let set-step(step)                // added in Phase 3, see §3.3
 #let commit(caption: none, step: none, alt: none)
 #let apply-ops(renderer, ops)   // accepts nested arrays; flatten first
 ```
@@ -394,6 +408,17 @@ Rules:
 - Display methods take `theme: (:)` — a partial nested dict. They never read
   state themselves; the override is captured in the frame builders and merged
   over the ambient theme the builder receives (see 4.5).
+
+  ⚠️ **This is a behaviour change, confirmed in Phase 3.** A pre-1.0 per-call
+  `theme:` *replaced* the palette — it merged the override onto the DEFAULTS
+  and skipped `set-*-theme` state entirely (a deliberate escape hatch from the
+  state-convergence cost). Under the rule above, a per-call override now layers
+  on TOP of the state, so naming two keys changes those two and leaves the rest
+  of the document's theme alone. It is the only intended ref change in Phase 3:
+  `hashmap-theming`'s second panel now keeps the state's blue index labels and
+  pink tombstone while overriding `empty-fill` and `hash-box-stroke`. The test
+  was rewritten to assert that precedence rather than just exercise the
+  argument.
 - The `slides.typ` consumers (`last`, `figures`, `subslides`, …) open **one**
   `context`, read the **one** state once, and pass the resolved theme into every
   builder. Eight states collapse to one; the state-convergence 2× layout cost is
@@ -493,6 +518,15 @@ builders.
   cells as keyless bucket headers — so the backend routes `measure-cells` to
   whichever family the strategy actually uses. Feeding it to both would inflate
   chaining's array pitch to the entry labels' width for no reason.
+
+  ✅ **Landed in Phase 3, with no ref change after all.** `ds/hashmap.typ` now
+  computes the superset and `draw/hashmap.typ` consumes it. None of the
+  `hashmap-*` refs moved: every one either shows a single static table (where
+  the superset is the table itself) or uses numeric labels, which measure below
+  the `_CW` / `_EHW` floors, so the fit never engaged. The gap was real all the
+  same — inserting a wide label into a table of short ones took the canvas from
+  198.43pt to 481.08pt on the final frame before, and holds 481.08pt throughout
+  now.
 - `anchor(key, canvas: none)` — the ONE anchor sanitizer (§6.2).
 
 ---
@@ -507,7 +541,15 @@ Canonical `step.kind` values, enforced during each DS port:
   graph algorithm terminal `done` → `settled`; trie `miss` → `not-found`;
   hashmap's four miss kinds (`not-found`/`absent`/`empty`/`exhausted`) →
   `not-found` with the detail preserved as
-  `step.reason: "empty" | "exhausted" | …`.
+  `step.reason: "empty" | "exhausted" | "chain-end"`.
+
+  Three more settled in Phase 3, all "pure synonym" cases the list above did
+  not spell out. BST's search terminal was `compare` with a `found:` flag; it
+  is now `found` / `not-found`, matching the universal vocabulary (the flag
+  stays). The hash map's open-addressing insert-onto-an-existing-key was
+  `insert` with `updated: true` while chaining already called it `update`; both
+  are `update` now. And the resize terminal `done` is `settled`, for the same
+  reason the graph terminals are — it is the terminal success of a mutation.
 - **DS-specific kinds stay** where the semantics genuinely differ (`descend`,
   `probe`, `advance`, `visit`, `compare`, `split-done`, `splice`, `rehash`, …) —
   list each module's set in a comment block at the top of the module.
@@ -810,7 +852,8 @@ Namespaced modules (via `#import "ds/bst.typ" as bst` etc. — same mechanism
 Flat (the convenience layer lectures actually destructure):
 
 ```text
-blank-snapshot, style-node, style-edge, annotate, set-alt, commit, apply-ops,
+blank-snapshot, style-node, style-edge, annotate, set-alt, set-caption,
+set-step, commit, apply-ops,
 apply-snapshot, make-renderer, render, overlay, result, theme-ref, role,
 last, stacked, figures, subslides, canvas,
 default-theme, set-theme,
@@ -1010,7 +1053,37 @@ Phases 3-5 honest as the DS modules move over — do the same when porting them.
 **Done when:** suite green; 5 new smoke tests with refs; no old test's ref
 changed.
 
-### Phase 3 — Pilot: Bst + Hashmap (One Tree DS, One Table DS)
+### Phase 3 — Pilot: Bst + Hashmap (One Tree DS, One Table DS) — ✅ DONE (commit `Phase 3: BST and the hash map, on the new core`)
+
+Decisions made while implementing it are folded into §§3.3, 4.4, 4.7, 5 and
+10.1 above, each marked "Phase 3". The load-bearing ones for Phase 4: the two
+new trailing-frame ops (§3.3), the per-call-over-state theme precedence (§4.4),
+and the shared-closure snapshot pattern described below.
+
+**The port was validated frame by frame, not just by refs.** Old and new were
+rendered side by side and compared by PNG hash: 121 BST frames across 20
+display calls (static, search hit and miss, insert, all three delete branches
+with and without `search:`, three rotations, four traversals, both theme
+override forms) and 115 hash-map frames across 25 (four strategies, both
+orientations, hit/miss/phantom, tombstone and naive delete, correct and naive
+resize, all three `cell-width` modes, theming). All byte-identical. Do the same
+for each module in Phases 4-5 — it catches an accumulation off-by-one that a
+whole-suite ref check would let through if no test happens to cover it.
+
+**Keep the shared-closure pattern when porting an accumulating animation.** The
+pre-1.0 code built a phase's snapshots in ONE closure and let every frame index
+into the result, so Typst's call cache made an n-frame animation cost one
+accumulation pass. `make-frames` takes a per-spec `build`, which invites
+rebuilding from scratch per frame — O(n²). Write `let build-all = th => {..}`
+once per phase and give each spec `build: th => build-all(th).at(i)`, exactly as
+`ds/bst.typ` and `ds/tree-common.typ` do. Note also that a Typst closure cannot
+mutate a captured variable, so the accumulation must be written as straight-line
+`cur = ..; out.push(cur)` inside the closure body, not via a helper.
+
+**Watch for `import cetz.draw: *`.** Now that the sanitizer is called `anchor`,
+a glob import of cetz's draw module shadows it — cetz has its own `anchor(name,
+position)`. Import selectively in tests and examples, and say so in the manual
+(Phase 8).
 
 1. Write `ds/tree-common.typ` and `ds/bst.typ` per §7. Port algorithms from
    `bst.typ` verbatim (the traces/specs logic is fine; only the class
@@ -1040,9 +1113,25 @@ changed.
    under ~60 (was ~360). If it's much higher, fix the core before migrating
    seven more modules.
 
+**Checkpoint result: 33 lines, of which 18 are a new capability.** Counting
+non-blank non-comment lines of pure framework glue — the code that exists only
+to plug the structure into the animation machinery — `hashmap.typ` had 118
+(70 of theme scaffolding, 22 of `_rebuild`/`_rebuild-cap`, 26 of
+`_hm-make-frames-multi` + `_styled`) and `ds/hashmap.typ` has 33: a 12-line
+`make-frames` call, the 18-line `measure-cells` superset the old code did not
+have at all, and 3 lines of signature and `_styled`. The theme block and the
+structure-rebuild helpers are gone outright — one is the unified theme, the
+other is `(..hm, slots: slots)`. The core is carrying its weight; proceed.
+
+(Two caveats on the raw file size, which fell only 1270 → 1122. First, the new
+file carries much fuller doc comments. Second, a naive count of everything
+outside the algorithms — including `_table`, `_hash-box`, `positioned`,
+`renderer`, and the five display signatures — comes to 144, but those are
+DS-specific data shaping and public API, not framework tax, and they have no
+pre-1.0 equivalent to shrink against.)
+
 **Done when:** suite green; bst/hashmap tests pass on the new API; conformance
 test passes; scaffolding measured and acceptable.
-
 ### Phase 4 — Remaining Trees: Rbt, Avl, B24, Trie
 
 Per module, in this order (each is one commit): port to `ds/`, wire tree-common
@@ -1140,9 +1229,11 @@ test).
    the sanitized `el-` names and resolves their compass sub-anchors; the
    `core-ops` test's rendered page is the standing check. Phase 2 step 4 is
    already done.
-2. **hashmap "fit" sizing refs** (§4.7) — the only intentional ref change;
-   inspect diffs. Deferred to Phase 3: the Phase-2 backend port defaults
-   `measure-cells` to `()` and changed nothing.
+2. ~~**hashmap "fit" sizing refs** (§4.7)~~ — **RESOLVED.** Phase 2 wired the
+   backend with `measure-cells` defaulting to `()`; Phase 3 supplied the
+   superset. No hashmap ref moved (see §4.7 for why). The one intentional ref
+   change in Phase 3 turned out to be `hashmap-theming`, from the per-call /
+   state precedence rule instead (§4.4).
 3. **Theme resolution perf** — one state read per `last`/`figures`/`subslides`
    call is the design; if a deck with hundreds of calls regresses, memoize
    `resolve-theme((:))` via a module-level pre-merged constant for the

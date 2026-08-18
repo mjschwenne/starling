@@ -1,10 +1,9 @@
 #import "/src/lib.typ" as starling
-#import starling: BST
+#import starling: bst
 
 #set page(width: auto, height: auto, margin: 0.5in)
 
-#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
-#let t = (t.insert-many)(1, 0, 7, 3, 6, 8)
+#let t = bst.new(4, 1, 0, 7, 3, 6, 8)
 
 #let panel(label, frames) = stack(
   dir: ttb,
@@ -16,8 +15,8 @@
 #grid(
   columns: 2,
   gutter: 1.5em,
-  panel([In-order], (t.in-order-display)()),
-  panel([Pre-order], (t.pre-order-display)()),
-  panel([Post-order], (t.post-order-display)()),
-  panel([Level-order], (t.level-order-display)()),
+  panel([In-order], bst.in-order-display(t)),
+  panel([Pre-order], bst.pre-order-display(t)),
+  panel([Post-order], bst.post-order-display(t)),
+  panel([Level-order], bst.level-order-display(t)),
 )

@@ -6,7 +6,11 @@
 // A->B keeps the default (above the rightward edge), C->D flips below,
 // E->F flips below with a wider gap.
 #import "/src/lib.typ" as starling
-#import starling: graph, Op, apply-ops, make-graph-renderer, edge-key
+#import starling: graph
+// TRANSITIONAL (until the graph moves to ds/ in Phase 5): the pre-1.0 op
+// kernel, taken from its own modules now that lib.typ carries the 1.0 one.
+#import "/src/anim-core.typ": Op, apply-ops
+#import "/src/graph-draw.typ": edge-key, make-graph-renderer
 
 #let d = graph(
   (

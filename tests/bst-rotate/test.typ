@@ -1,17 +1,10 @@
 #import "/src/lib.typ" as starling
-#import starling: BST
+#import starling: bst
 
-#let t = (BST.new)(value: 4, label: auto, left: none, right: none)
-#let t = (t.insert)(1)
-#let t = (t.insert)(0)
-#let t = (t.insert)(7)
-#let t = (t.insert)(3)
-#let t = (t.insert)(6)
-#let t = (t.insert)(8)
+#let t = bst.new(4, 1, 0, 7, 3, 6, 8)
 
-#starling.stacked((t.rotate-display)((t.resolve)("L")))
+#starling.stacked(bst.rotate-display(t, bst.resolve(t, "L")))
 
-// Rotation around a non-root parent — verifies `rotate-display`
-// can rotate any parent/child pair, not just direct children of
-// the root.
-#starling.stacked((t.rotate-display)((t.resolve)("RL")))
+// Rotation around a non-root parent — verifies `rotate-display` can rotate any
+// parent/child pair, not just direct children of the root.
+#starling.stacked(bst.rotate-display(t, bst.resolve(t, "RL")))
