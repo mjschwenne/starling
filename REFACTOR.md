@@ -731,7 +731,7 @@ hand-rolled three times):
 bst.node(v, ..children, label: auto)    // children sink: () = leaf, or (left, right);
 bst.leaf(v, label: auto)                //   none is a valid child
 rbt.red(v, ..children, label: auto)     // rbt.black(...) likewise
-avl.node(v, ..children, label: auto)    // height COMPUTED from children — never a parameter
+avl.node(v, ..children, label: auto, height: auto)   // height COMPUTED by default
 b24.node(keys, ..children, labels: auto)  // keys: int or array of ints; parses like new()
 b24.leaf(..keys)
 ```
@@ -739,6 +739,14 @@ b24.leaf(..keys)
 - `rbt` finally gets the displays it's missing: `search-display` and the four
   `*-order-display`s come nearly free from tree-common + `_paint`. (The stale
   "will land in a follow-up stage" comment dies.) `fixup-display` stays.
+- ⚠️ **Amended in Phase 4:** `avl.node` / `avl.leaf` take `height: auto`.
+  Computing the height is still the default and still the point — nobody
+  should reimplement that recursion, which is what the lecture helpers kept
+  getting wrong. But `fixup-display` exists precisely to animate a tree caught
+  *mid-operation*, with a stale spine ("a leaf was just grafted on and nothing
+  has been recomputed"), and with the height computed there is no way to write
+  one down. `avl-fixup`'s two fixtures are exactly that, and its refs are
+  unchanged because the escape hatch exists.
 - `bst` gains `check-invariants` (the only DS missing it).
 - Path alphabets, `PathId` semantics, and the `#<int>` compartment suffix are
   unchanged.

@@ -1,33 +1,19 @@
 // Visual regression for AVL `fixup-display`. Hand-built imbalanced
-// trees with deliberately-incorrect heights exercise the fix-up climb
-// in isolation, including configurations that can't arise from a
-// single insert.
+// trees with deliberately-stale heights exercise the fix-up climb in
+// isolation, including configurations that can't arise from a single
+// insert. `height:` on the literal builders is what expresses "caught
+// mid-operation": the spine has not been recomputed yet.
 
 #import "/src/lib.typ" as starling
-#import starling: AVL
+#import starling: avl
 
 #set page(width: auto, height: auto, margin: 1em)
-
-#let leaf(v, h: 1) = (AVL.new)(
-  value: v,
-  label: auto,
-  height: h,
-  left: none,
-  right: none,
-)
-#let node(v, h, l, r) = (AVL.new)(
-  value: v,
-  label: auto,
-  height: h,
-  left: l,
-  right: r,
-)
 
 == LR fix-up at the root
 // Pre-insertion shape: root 4 with a left subtree (2) and a fresh leaf
 // 3 grafted as 2's right child — the LR configuration. Heights stale.
-#let t-lr = node(4, 2, node(2, 1, none, leaf(3)), none)
-#starling.stacked((t-lr.fixup-display)("LR", factors: true))
+#let t-lr = avl.node(4, avl.node(2, none, avl.leaf(3), height: 1), none, height: 2)
+#starling.stacked(avl.fixup-display(t-lr, "LR", factors: true))
 
 #pagebreak()
 
@@ -35,10 +21,10 @@
 // Two imbalances on one spine: rotating the inner one restores enough
 // of the structure that the outer one *also* becomes balanced after
 // its own recompute. This shape can't come from a single insert.
-#let t-mm = node(
+#let t-mm = avl.node(
   5,
-  3,
-  node(3, 2, node(2, 1, leaf(1), none), none),
+  avl.node(3, avl.node(2, avl.leaf(1), none, height: 1), none, height: 2),
   none,
+  height: 3,
 )
-#starling.stacked((t-mm.fixup-display)("LLL", factors: true))
+#starling.stacked(avl.fixup-display(t-mm, "LLL", factors: true))

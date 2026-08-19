@@ -24,6 +24,7 @@
 #import "ds/bst.typ" as bst
 #import "ds/hashmap.typ" as hashmap
 #import "ds/rbt.typ" as rbt
+#import "ds/avl.typ" as avl
 
 // The semantic style vocabulary — `styles.attention(..)`, `styles.ghost(..)`
 // and friends, each returning an op array that follows the active theme.
@@ -78,12 +79,11 @@
 // TRANSITIONAL — the pre-1.0 surface for the not-yet-migrated structures
 // ===================================================================
 //
-// AVL, B24, Trie, Graph, Sort, Skiplist and the git DSL still ride the
+// B24, Trie, Graph, Sort, Skiplist and the git DSL still ride the
 // old typsy stack. Their exports below are unchanged and keep working; each
 // block disappears as its structure moves into `ds/` (Phases 4-6). Nothing
 // here is part of the 1.0 surface.
 
-#import "./avl.typ": AVL, avl
 #import "./b24.typ": B24, b24
 #import "./trie.typ": (
   Trie,

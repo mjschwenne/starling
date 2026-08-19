@@ -13,6 +13,7 @@
 #import "/src/ds/bst.typ"
 #import "/src/ds/hashmap.typ"
 #import "/src/ds/rbt.typ"
+#import "/src/ds/avl.typ"
 
 // ===================================================================
 // The per-module contract
@@ -97,6 +98,40 @@
     ),
   ),
   (
+    name: "avl",
+    module: avl,
+    verbs: (
+      "node",
+      "leaf",
+      "insert",
+      "insert-many",
+      "delete",
+      "contains",
+      "rotate",
+      "by-value",
+      "path-to",
+      "resolve",
+      "in-order",
+      "pre-order",
+      "post-order",
+      "level-order",
+      "imbalance-case",
+      "balance-factor",
+      "unbalanced",
+    ),
+    displays: (
+      "search-display",
+      "insert-display",
+      "delete-display",
+      "rotate-display",
+      "fixup-display",
+      "in-order-display",
+      "pre-order-display",
+      "post-order-display",
+      "level-order-display",
+    ),
+  ),
+  (
     name: "hashmap",
     module: hashmap,
     verbs: (
@@ -163,6 +198,7 @@
   // Namespaced data structures and vocabularies.
   "bst",
   "rbt",
+  "avl",
   "hashmap",
   "styles",
   "git",
@@ -217,6 +253,7 @@
 #let retired = (
   "BST",
   "RBT",
+  "AVL",
   "paint-rbt",
   "set-rbt-theme",
   "default-rbt-theme",
