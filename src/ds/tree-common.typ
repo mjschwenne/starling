@@ -14,7 +14,7 @@
 // B24 and the trie are n-ary and keep their own path utilities.
 
 #import "../core/frame.typ": make-frames
-#import "../core/snapshot.typ": blank-snapshot, with-node
+#import "../core/snapshot.typ": blank-snapshot, note-node, with-node
 #import "../core/text.typ": alt-intro, alt-label
 #import "../draw/tree.typ": draw-tree
 
@@ -377,4 +377,119 @@
     node-style: node-style,
     edge-style: edge-style,
   )
+}
+
+// ===================================================================
+// Search animation
+// ===================================================================
+
+/// Animate a search for `v`: one frame per comparison along the search path,
+/// each ringing the visited node in the theme's `search-stroke` and drawing
+/// the comparison beside it. The walk ends at a match, or where the search
+/// runs off the tree.
+///
+/// `base` is the DS's structural painting — `(theme) => snapshot` — laid down
+/// beneath the search highlights (the RBT palette, AVL's factor and height
+/// tags); `none` leaves the tree unpainted, which is the BST case.
+///
+/// `step.kind` is `"init"` on the opening frame, `"compare"` along the way,
+/// and `"found"` / `"not-found"` on the last one; that frame also carries
+/// `step.result` (the unchanged tree).
+///
+/// -> array
+#let render-search(
+  tree,
+  v,
+  ds-name,
+  describe-text,
+  base: none,
+  node-style: (:),
+  edge-style: (:),
+  theme: (:),
+) = {
+  let steps = search-walk(tree, v)
+  let n = steps.len()
+
+  // One shared closure builds every snapshot, each frame indexing into the
+  // result; Typst memoizes the call, so the accumulation runs once.
+  let build-all = th => {
+    let cur = if base == none { blank-snapshot() } else { base(th) }
+    let out = (cur,)
+    for s in steps {
+      cur = with-node(cur, s.path, (stroke: th.op.search-stroke))
+      cur = note-node(cur, s.path, s.cmp)
+      out.push(cur)
+    }
+    out
+  }
+
+  let specs = (
+    (
+      structure: tree,
+      build: th => build-all(th).at(0),
+      caption: none,
+      step: (kind: "init"),
+      alt: alt-intro(ds-name, describe-text, "search for " + str(v)),
+    ),
+  )
+  for (i, s) in steps.enumerate() {
+    let at = i + 1
+    let node-value = alt-label(resolve(tree, s.path))
+    specs.push((
+      structure: tree,
+      build: th => build-all(th).at(at),
+      caption: s.cmp,
+      step: (
+        kind: if s.found { "found" } else if at == n { "not-found" } else {
+          "compare"
+        },
+        path: s.path,
+        cmp: s.cmp,
+        found: s.found,
+        ..if at == n { (result: tree) },
+      ),
+      alt: if s.found {
+        "Match found at node " + node-value + "."
+      } else if at == n {
+        ("Comparing "
+          + s.cmp
+          + " at node "
+          + node-value
+          + "; search ends here, "
+          + str(v)
+          + " is not in the tree.")
+      } else {
+        "Comparing " + s.cmp + " at node " + node-value + "; continuing search."
+      },
+    ))
+  }
+
+  make-frames(
+    specs,
+    draw-tree,
+    theme: theme,
+    node-style: node-style,
+    edge-style: edge-style,
+  )
+}
+
+// ===================================================================
+// Result stamping
+// ===================================================================
+
+/// Stamp `step.result` onto the last spec in `specs` — the post-operation
+/// structure a display's final frame carries, so a caller can advance their
+/// variable from the frames instead of writing the operation twice.
+///
+/// -> array
+#let stamp-result(specs, after) = {
+  assert(
+    specs.len() > 0,
+    message: "stamp-result: a display always produces at least one frame.",
+  )
+  let out = specs
+  let i = out.len() - 1
+  let s = out.at(i)
+  out.at(i) = (..s, step: (..s.at("step", default: (:)), result: after))
+  out
 }

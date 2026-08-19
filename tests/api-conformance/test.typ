@@ -12,6 +12,7 @@
 #import "/src/lib.typ" as starling
 #import "/src/ds/bst.typ"
 #import "/src/ds/hashmap.typ"
+#import "/src/ds/rbt.typ"
 
 // ===================================================================
 // The per-module contract
@@ -55,6 +56,40 @@
       "insert-display",
       "delete-display",
       "rotate-display",
+      "in-order-display",
+      "pre-order-display",
+      "post-order-display",
+      "level-order-display",
+    ),
+  ),
+  (
+    name: "rbt",
+    module: rbt,
+    verbs: (
+      "node",
+      "red",
+      "black",
+      "insert",
+      "insert-many",
+      "delete",
+      "contains",
+      "rotate",
+      "by-value",
+      "path-to",
+      "resolve",
+      "in-order",
+      "pre-order",
+      "post-order",
+      "level-order",
+      "paint-red",
+      "paint-black",
+      "double-black",
+    ),
+    displays: (
+      "search-display",
+      "insert-display",
+      "delete-display",
+      "fixup-display",
       "in-order-display",
       "pre-order-display",
       "post-order-display",
@@ -127,6 +162,7 @@
 #let expected = (
   // Namespaced data structures and vocabularies.
   "bst",
+  "rbt",
   "hashmap",
   "styles",
   "git",
@@ -180,6 +216,11 @@
 // that the names Phase 3 deliberately retired have in fact gone.
 #let retired = (
   "BST",
+  "RBT",
+  "paint-rbt",
+  "set-rbt-theme",
+  "default-rbt-theme",
+  "RbtTheme",
   "bst-factory",
   "HashMap",
   "concat-frames",

@@ -804,10 +804,22 @@ the reference implementation to match):
 #let force-show(..keys)  // edge force-show: true
 ```
 
-DS-specific vocabulary lives in the DS module: `rbt.red(..keys)` /
-`rbt.black(..keys)` (fill/stroke/text from `theme-ref("rbt", …)`, tag [0]/[1]
-matching the lecture `disp_red`/ `disp_black`), `rbt.double-black(..keys)` (tag
-[2] + edge mark "o", per the lecture helper), `avl.unbalanced(..keys)`.
+DS-specific vocabulary lives in the DS module: `rbt.paint-red(..keys)` /
+`rbt.paint-black(..keys)` (fill/stroke/text from `theme-ref("rbt", …)`, tag
+[0]/[1] matching the lecture `disp_red`/ `disp_black`),
+`rbt.double-black(..keys)` (tag [2] + edge mark "o", per the lecture helper),
+`avl.unbalanced(..keys)`.
+
+⚠️ **Renamed in Phase 4.** This section originally called the first two
+`rbt.red` / `rbt.black`, which collide head-on with §7.2's literal builders of
+the same names (`rbt.red(5, l, r)`). The literals keep the short names — they
+are constructors, sitting beside `bst.node` / `bst.leaf`, and they are the item
+§7.2 exists to ship — and the style helpers take the `paint-` prefix, which
+also echoes the "paint black" language the delete fix-up's own step kinds
+already use (`paint-black-promoted`, `paint-black-db`). One function cannot
+serve both: the positional arguments are values-and-children in one case and
+path strings in the other. `double-black` collides with nothing and keeps its
+name.
 
 Names deliberately avoid colliding with Typst/cetz builtins (`hidden` not `hide`
 — the lecture helper named `hide` shadowed both `std.hide` and
@@ -1152,11 +1164,20 @@ test passes; scaffolding measured and acceptable.
 
 Per module, in this order (each is one commit): port to `ds/`, wire tree-common
 (rbt/avl), literal builders, style vocabulary
-(`rbt.red`/`rbt.black`/`rbt.double-black`, `avl.unbalanced`), step-kind renames
+(`rbt.paint-red`/`rbt.paint-black`/`rbt.double-black`, `avl.unbalanced` — see
+the §8 rename note), step-kind renames
 (§5), `result` stamping, lib.typ export swap, migrate that DS's tests. RBT
 additionally gains `search-display` + the four `*-order-display`s via
 tree-common (new tests: `tt new rbt-search`, `tt new rbt-traversals` — new
 refs).
+
+The search walk is now shared too. `tree-common.render-search` is the
+`render-traversal` sibling the plan implied but did not name: same `base:`
+hook (`(theme) => snapshot`, the DS's structural painting laid down under the
+highlights), same shared-closure accumulation. BST was rewritten onto it in
+Phase 4 with no ref change, RBT and AVL get their search animation from it
+outright, and `tree-common.stamp-result(specs, after)` stamps §5's
+`step.result` onto a spec list's last entry so no display hand-writes it.
 
 **Done when:** suite green after each module; all five tree DSs on the new API;
 old `bst.typ`/`rbt.typ`/`avl.typ`/`b24.typ`/`trie.typ`/`tree-anim.typ` deleted

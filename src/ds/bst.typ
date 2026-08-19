@@ -372,65 +372,15 @@
   /// Partial theme override for this call.
   /// -> dictionary
   theme: (:),
-) = {
-  let steps = tc.search-walk(tree, v)
-  let n = steps.len()
-
-  // One shared closure builds every snapshot, each frame indexing into the
-  // result; Typst memoizes the call, so the accumulation runs once.
-  let build-all = th => {
-    let cur = blank-snapshot()
-    let out = (cur,)
-    for s in steps {
-      cur = with-node(cur, s.path, (stroke: th.op.search-stroke))
-      cur = note-node(cur, s.path, s.cmp)
-      out.push(cur)
-    }
-    out
-  }
-
-  let specs = (
-    (
-      structure: tree,
-      build: _ => blank-snapshot(),
-      caption: none,
-      step: (kind: "init"),
-      alt: alt-intro(_DS, describe(tree), "search for " + str(v)),
-    ),
-  )
-  for (i, s) in steps.enumerate() {
-    let at = i + 1
-    let node-value = alt-label(resolve(tree, s.path))
-    specs.push((
-      structure: tree,
-      build: th => build-all(th).at(at),
-      caption: s.cmp,
-      step: (
-        kind: if s.found { "found" } else if at == n { "not-found" } else {
-          "compare"
-        },
-        path: s.path,
-        cmp: s.cmp,
-        found: s.found,
-        ..if at == n { (result: tree) },
-      ),
-      alt: if s.found {
-        "Match found at node " + node-value + "."
-      } else if at == n {
-        ("Comparing "
-          + s.cmp
-          + " at node "
-          + node-value
-          + "; search ends here, "
-          + str(v)
-          + " is not in the tree.")
-      } else {
-        "Comparing " + s.cmp + " at node " + node-value + "; continuing search."
-      },
-    ))
-  }
-  _frames(specs, theme, node-style, edge-style)
-}
+) = tc.render-search(
+  tree,
+  v,
+  _DS,
+  describe(tree),
+  node-style: node-style,
+  edge-style: edge-style,
+  theme: theme,
+)
 
 /// Animate inserting `v`: the descent to the insertion point, then the new
 /// leaf appearing on the grown tree.
