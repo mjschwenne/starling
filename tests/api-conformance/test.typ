@@ -14,6 +14,7 @@
 #import "/src/ds/hashmap.typ"
 #import "/src/ds/rbt.typ"
 #import "/src/ds/avl.typ"
+#import "/src/ds/b24.typ"
 
 // ===================================================================
 // The per-module contract
@@ -132,6 +133,34 @@
     ),
   ),
   (
+    name: "b24",
+    module: b24,
+    verbs: (
+      "node",
+      "leaf",
+      "insert",
+      "insert-many",
+      "delete",
+      "contains",
+      "by-value",
+      "path-to",
+      "resolve",
+      "in-order",
+      "pre-order",
+      "post-order",
+      "level-order",
+    ),
+    displays: (
+      "search-display",
+      "insert-display",
+      "delete-display",
+      "in-order-display",
+      "pre-order-display",
+      "post-order-display",
+      "level-order-display",
+    ),
+  ),
+  (
     name: "hashmap",
     module: hashmap,
     verbs: (
@@ -199,6 +228,7 @@
   "bst",
   "rbt",
   "avl",
+  "b24",
   "hashmap",
   "styles",
   "git",
@@ -254,6 +284,7 @@
   "BST",
   "RBT",
   "AVL",
+  "B24",
   "paint-rbt",
   "set-rbt-theme",
   "default-rbt-theme",

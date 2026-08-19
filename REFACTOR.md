@@ -703,6 +703,11 @@ Signature rules, uniform across all modules:
   which today lack it). `delete-display` takes `search: true|false` wherever a
   search phase makes sense (BST/RBT/AVL have it today; add to
   B24/Trie/HashMap/Skiplist for uniformity, default matching current behavior).
+
+  B24's landed in Phase 4 and defaults to `true`, since its delete always
+  narrated the descent. `false` drops the comparison frames *and* the trail
+  they left on the structural frames that follow — the frames replay the
+  descent's history, and half a search reads worse than none.
 - DS-specific flags keep their current names where semantics differ: `bits:`
   (rbt), `factors:`/`heights:` (avl), `strategy:` (b24, hashmap),
   `variant:`/`separate-counts:` (sort), `tombstone:`/`rehash:` (hashmap),
@@ -748,6 +753,12 @@ b24.leaf(..keys)
   one down. `avl-fixup`'s two fixtures are exactly that, and its refs are
   unchanged because the escape hatch exists.
 - `bst` gains `check-invariants` (the only DS missing it).
+- ⚠️ **Amended in Phase 4:** `b24.check-invariants` returns `true` or panics,
+  like every other module's. Pre-1.0 it returned `none` on success and an
+  explanatory *string* on failure, so the only way to use it was
+  `assert.eq(check-invariants(t), none)` — which reads backwards and, worse,
+  is a different contract from its four siblings for no reason. Uniformity is
+  the whole point of §7.1.
 - Path alphabets, `PathId` semantics, and the `#<int>` compartment suffix are
   unchanged.
 

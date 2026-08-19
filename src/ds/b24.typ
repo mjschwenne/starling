@@ -1,55 +1,81 @@
-#import "@preview/typsy:0.2.2": Any, Array, Int, Union, class
-#import "./tree-anim.typ" as tree-anim
-#import "./op-theme.typ": _resolve-op-theme-arg
-
-// ===================================================================
-// B24 — 2-3-4 tree (B-tree of order 4)
-// ===================================================================
+// 2-3-4 tree (a B-tree of order 4).
 //
-// A B-tree where every internal node holds 1, 2, or 3 keys (so 2, 3,
-// or 4 children) and every leaf sits at the same depth. The four
-// invariants enforced by every public operation:
+// Every node holds 1, 2, or 3 keys — so 2, 3, or 4 children — and every leaf
+// sits at the same depth. The invariants every public operation preserves:
 //
-//   1. 1 ≤ keys.len() ≤ 3 (root may have 1..3; transient 4-key states
-//      live only inside split helpers, never escape).
-//   2. keys are strictly increasing.
-//   3. Either children.len() == 0 (leaf) or children.len() == keys.len() + 1.
+//   1. 1 <= keys.len() <= 3. (Transient 4-key states live inside the split
+//      helpers and never escape.)
+//   2. Keys are strictly increasing.
+//   3. Either children.len() == 0 (a leaf) or children.len() == keys.len() + 1.
 //   4. All leaves are at the same depth.
 //
-// Two rebalancing algorithms are exposed via `strategy:` on
-// `insert` / `delete`:
+// A node is `(kind: "b24", keys, labels, children)`: `keys` orders the tree,
+// `labels` runs parallel to it (`auto` falls back to `str(key)`), and
+// `children` is empty for a leaf.
 //
-//   "top-down"  (default) — preventive: split any 3-key (full) node on
-//               the way down for insert; refill any 1-key node on the
-//               way down for delete. Single-pass recursion. Top-down
-//               splits promote the middle key (index 1) of the 3-key
-//               node *before* the new key is inserted.
-//   "bottom-up" — reactive: walk to the leaf first; allow a transient
-//               4-key (overflowed) leaf or internal node, then split
-//               on the way back up. Bottom-up splits promote the
-//               upper-middle key (index 2) of the 4-key overflow.
+// Two rebalancing algorithms, chosen with `strategy:`:
 //
-// Both produce valid 2-3-4 trees containing the same keys, but the
-// SHAPES may differ. The two algorithms agree whenever the inserted
-// key falls in the lower half of an about-to-be-split node; they
-// diverge when it falls in the upper half (because the bottom-up
-// split sees the inserted key as a candidate for promotion while the
-// top-down split doesn't). The `*-display` methods honour the choice
-// so the two algorithms can be compared frame-by-frame.
+//   "top-down"  (default) preventive — split any 3-key node on the way down
+//               for an insert, refill any 1-key node on the way down for a
+//               delete. One pass. A top-down split promotes the middle key
+//               (index 1) of the 3-key node, decided *before* the new key is
+//               inserted.
+//   "bottom-up" reactive — walk to the leaf first, allow a transient 4-key
+//               node, then split back up. A bottom-up split promotes the
+//               upper-middle key (index 2) of the 4-key overflow, so the key
+//               just inserted is itself a candidate for promotion.
 //
-// Per-key addressability: a key compartment is identified by its
-// node-path followed by `"#" + str(i)`, where `i` is the 0-indexed
-// compartment within that node. So "1#2" is the third key of the
-// second child of the root. Edges are keyed by their child's
-// node-path (no `#` suffix). This drives `path-anchor` and the
-// `key-styles` slot on `NodeStyle`.
+// Both produce valid trees holding the same keys, but the SHAPES may
+// legitimately differ: they agree whenever the inserted key falls in the
+// lower half of an about-to-be-split node and diverge when it falls in the
+// upper half. Both displays honour the choice, so the two can be compared
+// frame by frame — which is the reason both exist.
+//
+// Element identity: a key compartment is `"<node-path>#<key-idx>"`, so
+// `"1#2"` is the third key of the root's second child. `node-path` uses the
+// n-ary digit alphabet (`""` the root, `"0"` its leftmost child, `"012"`
+// leftmost then middle then right-of-middle). Edges are keyed by their
+// child's node-path, with no `#` suffix. That is what `anchor` and the
+// `key-styles` node-style slot address.
+//
+// step.kind vocabulary
+// --------------------
+//   static                     the one frame of `display`
+//   init                       the opening frame of every animation
+//   compare                    one comparison along a descent
+//   found / not-found          how a search ended
+//   td-pre-split-attention     a full node, about to be split preventively
+//   split-done                 the promoted key now sits in its parent
+//   bu-overflow                a transient 4-key node, about to split
+//   settled                    terminal success of a mutation
+//   td-pre-fix-attention       an under-full descent target
+//   td-borrow-left / td-borrow-right / td-merge
+//                              the three ways to refill it
+//   td-target                  the key to delete, found
+//   td-pred-swap / td-succ-swap
+//                              its value replaced by a neighbour's, which is
+//                              then deleted from a leaf instead
+//   td-remove                  the key is gone from the leaf
+//   td-root-collapse           the root's last key was merged away
+//   visit                      one key of a traversal
+// The final frame of every display carries `step.result` — the tree the
+// operation produced (the unchanged input, for a search or traversal).
 
+#import "../core/draw-util.typ": anchor
+#import "../core/frame.typ": make-frames, make-renderer
+#import "../core/snapshot.typ": blank-snapshot, with-edge, with-node
+#import "../core/text.typ": alt-describe, alt-intro, alt-key-label
+#import "../draw/tree.typ": draw-tree
+
+#let _DS = "2-4 tree"
+
+// Every B24 renderer needs this so the tree backend picks the subdivided
+// rectangle rather than a circle.
+#let _NODE-STYLE = (shape: "btree-node")
 // --- node-construction & shape helpers -----------------------------
-//
-// Every helper takes `cls` first so it can call `cls.new` without
-// referring to `B24` (not yet in scope while helpers are defined).
 
-#let _node(cls, keys, labels, children) = (cls.new)(
+#let _mk(keys, labels, children) = (
+  kind: "b24",
   keys: keys,
   labels: labels,
   children: children,
@@ -68,13 +94,13 @@
 
 // Replace the subtree at `path` with `new`, rebuilding the spine
 // above. Spine nodes' keys/labels/other-children are preserved.
-#let _replace-at(cls, node, path, new) = if path == "" {
+#let _replace-at(node, path, new) = if path == "" {
   new
 } else {
   let idx = int(path.first())
   let new-children = node.children
-  new-children.at(idx) = _replace-at(cls, node.children.at(idx), path.slice(1), new)
-  _node(cls, node.keys, node.labels, new-children)
+  new-children.at(idx) = _replace-at(node.children.at(idx), path.slice(1), new)
+  _mk(node.keys, node.labels, new-children)
 }
 
 // --- split / merge primitives --------------------------------------
@@ -97,7 +123,7 @@
 // Split a node into a record (left, mid-key, mid-label, right). `node`
 // may transiently have 3 or 4 keys. Children are partitioned to track
 // the key partition — leaf nodes split cleanly with no child arrays.
-#let _split(cls, node) = {
+#let _split(node) = {
   let k = node.keys.len()
   let mid = _split-mid(k)
   let mid-key = node.keys.at(mid)
@@ -112,10 +138,10 @@
     (node.children.slice(0, mid + 1), node.children.slice(mid + 1))
   }
   (
-    left: _node(cls, left-keys, left-labels, left-children),
+    left: _mk(left-keys, left-labels, left-children),
     mid-key: mid-key,
     mid-label: mid-label,
-    right: _node(cls, right-keys, right-labels, right-children),
+    right: _mk(right-keys, right-labels, right-children),
   )
 }
 
@@ -147,8 +173,7 @@
 // Merge two adjacent children with a separator key/label. The
 // separator slides down from the parent and becomes the middle key
 // of the merged node. Used by delete fixup.
-#let _merge(cls, left, sep-key, sep-label, right) = _node(
-  cls,
+#let _merge(left, sep-key, sep-label, right) = _mk(
   left.keys + (sep-key,) + right.keys,
   left.labels + (sep-label,) + right.labels,
   left.children + right.children,
@@ -158,14 +183,14 @@
 
 // Recursive helper. Returns either ("ok", node) or
 // ("split", left, mid-key, mid-label, right).
-#let _bu-insert-rec(cls, node, v, label) = {
+#let _bu-insert-rec(node, v, label) = {
   if _is-leaf(node) {
     let (new-keys, new-labels, _) = _insert-sorted(node.keys, node.labels, v, label)
-    let tmp = _node(cls, new-keys, new-labels, ())
+    let tmp = _mk(new-keys, new-labels, ())
     if new-keys.len() <= 3 {
       (kind: "ok", node: tmp)
     } else {
-      let s = _split(cls, tmp)
+      let s = _split(tmp)
       (
         kind: "split",
         left: s.left,
@@ -176,19 +201,19 @@
     }
   } else {
     let i = _scan(node.keys, v)
-    let res = _bu-insert-rec(cls, node.children.at(i), v, label)
+    let res = _bu-insert-rec(node.children.at(i), v, label)
     if res.kind == "ok" {
       let nc = node.children
       nc.at(i) = res.node
-      (kind: "ok", node: _node(cls, node.keys, node.labels, nc))
+      (kind: "ok", node: _mk(node.keys, node.labels, nc))
     } else {
       let (nk, nl) = _splice-key(node.keys, node.labels, i, res.mid-key, res.mid-label)
       let nc = _splice-children(node.children, i, res.left, res.right)
-      let tmp = _node(cls, nk, nl, nc)
+      let tmp = _mk(nk, nl, nc)
       if nk.len() <= 3 {
         (kind: "ok", node: tmp)
       } else {
-        let s = _split(cls, tmp)
+        let s = _split(tmp)
         (
           kind: "split",
           left: s.left,
@@ -201,60 +226,59 @@
   }
 }
 
-#let _insert-bu(cls, root, v, label) = {
-  let res = _bu-insert-rec(cls, root, v, label)
+#let _insert-bu(root, v, label) = {
+  let res = _bu-insert-rec(root, v, label)
   if res.kind == "ok" {
     res.node
   } else {
-    _node(cls, (res.mid-key,), (res.mid-label,), (res.left, res.right))
+    _mk((res.mid-key,), (res.mid-label,), (res.left, res.right))
   }
 }
 
 // --- insert: top-down ----------------------------------------------
 
-#let _td-descend-insert(cls, node, v, label) = {
+#let _td-descend-insert(node, v, label) = {
   // Precondition: `node` has < 3 keys (i.e., it was not full when its
   // parent decided to descend into it).
   if _is-leaf(node) {
     let (nk, nl, _) = _insert-sorted(node.keys, node.labels, v, label)
-    _node(cls, nk, nl, ())
+    _mk(nk, nl, ())
   } else {
     let i = _scan(node.keys, v)
     let child = node.children.at(i)
     if child.keys.len() == 3 {
       // Preemptive split before descending.
-      let s = _split(cls, child)
+      let s = _split(child)
       let (nk, nl) = _splice-key(node.keys, node.labels, i, s.mid-key, s.mid-label)
       let nc = _splice-children(node.children, i, s.left, s.right)
-      let updated = _node(cls, nk, nl, nc)
+      let updated = _mk(nk, nl, nc)
       // Re-decide which side v belongs to after the split.
       let target = if v < s.mid-key { i } else if v > s.mid-key { i + 1 } else { i }
-      let new-target = _td-descend-insert(cls, updated.children.at(target), v, label)
+      let new-target = _td-descend-insert(updated.children.at(target), v, label)
       let final-children = updated.children
       final-children.at(target) = new-target
-      _node(cls, updated.keys, updated.labels, final-children)
+      _mk(updated.keys, updated.labels, final-children)
     } else {
-      let new-child = _td-descend-insert(cls, child, v, label)
+      let new-child = _td-descend-insert(child, v, label)
       let nc = node.children
       nc.at(i) = new-child
-      _node(cls, node.keys, node.labels, nc)
+      _mk(node.keys, node.labels, nc)
     }
   }
 }
 
-#let _insert-td(cls, root, v, label) = {
+#let _insert-td(root, v, label) = {
   if root.keys.len() == 3 {
     // Pre-split root so descent invariants hold from frame one.
-    let s = _split(cls, root)
-    let new-root = _node(
-      cls,
+    let s = _split(root)
+    let new-root = _mk(
       (s.mid-key,),
       (s.mid-label,),
       (s.left, s.right),
     )
-    _td-descend-insert(cls, new-root, v, label)
+    _td-descend-insert(new-root, v, label)
   } else {
-    _td-descend-insert(cls, root, v, label)
+    _td-descend-insert(root, v, label)
   }
 }
 
@@ -279,15 +303,14 @@
 // Rotate a key from the left sibling of children[i] into children[i].
 // Used by top-down delete when the descent target is a 1-key node and
 // its left sibling has ≥ 2 keys. Returns the updated parent node.
-#let _rotate-from-left(cls, node, i) = {
+#let _rotate-from-left(node, i) = {
   let parent = node
   let target = parent.children.at(i)
   let left = parent.children.at(i - 1)
   let borrowed-key = left.keys.last()
   let borrowed-label = left.labels.last()
   let borrowed-child = if _is-leaf(left) { none } else { left.children.last() }
-  let new-left = _node(
-    cls,
+  let new-left = _mk(
     left.keys.slice(0, left.keys.len() - 1),
     left.labels.slice(0, left.labels.len() - 1),
     if _is-leaf(left) {
@@ -296,8 +319,7 @@
   )
   let sep-key = parent.keys.at(i - 1)
   let sep-label = parent.labels.at(i - 1)
-  let new-target = _node(
-    cls,
+  let new-target = _mk(
     (sep-key,) + target.keys,
     (sep-label,) + target.labels,
     if _is-leaf(target) { () } else { (borrowed-child,) + target.children },
@@ -309,27 +331,25 @@
   let nc = parent.children
   nc.at(i - 1) = new-left
   nc.at(i) = new-target
-  _node(cls, nk, nl, nc)
+  _mk(nk, nl, nc)
 }
 
 // Mirror of the above, rotating from the right sibling.
-#let _rotate-from-right(cls, node, i) = {
+#let _rotate-from-right(node, i) = {
   let parent = node
   let target = parent.children.at(i)
   let right = parent.children.at(i + 1)
   let borrowed-key = right.keys.first()
   let borrowed-label = right.labels.first()
   let borrowed-child = if _is-leaf(right) { none } else { right.children.first() }
-  let new-right = _node(
-    cls,
+  let new-right = _mk(
     right.keys.slice(1),
     right.labels.slice(1),
     if _is-leaf(right) { () } else { right.children.slice(1) },
   )
   let sep-key = parent.keys.at(i)
   let sep-label = parent.labels.at(i)
-  let new-target = _node(
-    cls,
+  let new-target = _mk(
     target.keys + (sep-key,),
     target.labels + (sep-label,),
     if _is-leaf(target) { () } else { target.children + (borrowed-child,) },
@@ -341,14 +361,13 @@
   let nc = parent.children
   nc.at(i) = new-target
   nc.at(i + 1) = new-right
-  _node(cls, nk, nl, nc)
+  _mk(nk, nl, nc)
 }
 
 // Merge children[i] and children[i+1] using parent.keys[i] as the
 // separator. Returns the updated parent (which loses one key).
-#let _merge-siblings(cls, node, i) = {
+#let _merge-siblings(node, i) = {
   let merged = _merge(
-    cls,
     node.children.at(i),
     node.keys.at(i),
     node.labels.at(i),
@@ -357,7 +376,7 @@
   let nk = node.keys.slice(0, i) + node.keys.slice(i + 1)
   let nl = node.labels.slice(0, i) + node.labels.slice(i + 1)
   let nc = node.children.slice(0, i) + (merged,) + node.children.slice(i + 2)
-  _node(cls, nk, nl, nc)
+  _mk(nk, nl, nc)
 }
 
 // --- delete: top-down ----------------------------------------------
@@ -366,7 +385,7 @@
 // rotating from a sibling or merging if necessary. Returns
 // (new-parent, new-child-index) since merging may shift the
 // child's index by 1.
-#let _td-ensure-rich(cls, parent, i) = {
+#let _td-ensure-rich(parent, i) = {
   let child = parent.children.at(i)
   if child.keys.len() >= 2 {
     (parent: parent, i: i)
@@ -377,22 +396,22 @@
     let left-rich = has-left and parent.children.at(i - 1).keys.len() >= 2
     let right-rich = has-right and parent.children.at(i + 1).keys.len() >= 2
     if left-rich {
-      (parent: _rotate-from-left(cls, parent, i), i: i)
+      (parent: _rotate-from-left(parent, i), i: i)
     } else if right-rich {
-      (parent: _rotate-from-right(cls, parent, i), i: i)
+      (parent: _rotate-from-right(parent, i), i: i)
     } else if has-left {
       // Merge with left sibling.
-      let new-parent = _merge-siblings(cls, parent, i - 1)
+      let new-parent = _merge-siblings(parent, i - 1)
       (parent: new-parent, i: i - 1)
     } else {
       // Merge with right sibling.
-      let new-parent = _merge-siblings(cls, parent, i)
+      let new-parent = _merge-siblings(parent, i)
       (parent: new-parent, i: i)
     }
   }
 }
 
-#let _td-delete-rec(cls, node, v) = {
+#let _td-delete-rec(node, v) = {
   // Precondition: `node` has ≥ 2 keys (or is the root from
   // `_delete-td`, which handles the root specially).
   let key-idx = {
@@ -404,8 +423,7 @@
     if key-idx == -1 {
       panic("B24.delete: value not found: " + repr(v))
     }
-    _node(
-      cls,
+    _mk(
       node.keys.slice(0, key-idx) + node.keys.slice(key-idx + 1),
       node.labels.slice(0, key-idx) + node.labels.slice(key-idx + 1),
       (),
@@ -418,47 +436,47 @@
     let right-c = node.children.at(key-idx + 1)
     if left-c.keys.len() >= 2 {
       let pred = _max-entry(left-c)
-      let new-left = _td-delete-rec(cls, left-c, pred.value)
+      let new-left = _td-delete-rec(left-c, pred.value)
       let nk = node.keys
       let nl = node.labels
       nk.at(key-idx) = pred.value
       nl.at(key-idx) = pred.label
       let nc = node.children
       nc.at(key-idx) = new-left
-      _node(cls, nk, nl, nc)
+      _mk(nk, nl, nc)
     } else if right-c.keys.len() >= 2 {
       let succ = _min-entry(right-c)
-      let new-right = _td-delete-rec(cls, right-c, succ.value)
+      let new-right = _td-delete-rec(right-c, succ.value)
       let nk = node.keys
       let nl = node.labels
       nk.at(key-idx) = succ.value
       nl.at(key-idx) = succ.label
       let nc = node.children
       nc.at(key-idx + 1) = new-right
-      _node(cls, nk, nl, nc)
+      _mk(nk, nl, nc)
     } else {
       // Both flanking children are 1-key. Merge them with v in the
       // middle, then descend into the merged child to remove v.
-      let merged-parent = _merge-siblings(cls, node, key-idx)
-      let new-merged = _td-delete-rec(cls, merged-parent.children.at(key-idx), v)
+      let merged-parent = _merge-siblings(node, key-idx)
+      let new-merged = _td-delete-rec(merged-parent.children.at(key-idx), v)
       let nc = merged-parent.children
       nc.at(key-idx) = new-merged
-      _node(cls, merged-parent.keys, merged-parent.labels, nc)
+      _mk(merged-parent.keys, merged-parent.labels, nc)
     }
   } else {
     // v not in this node — descend into the appropriate child,
     // refilling it first if it's a 1-key node.
     let i = _scan(node.keys, v)
-    let fix = _td-ensure-rich(cls, node, i)
+    let fix = _td-ensure-rich(node, i)
     let target = fix.parent.children.at(fix.i)
-    let new-target = _td-delete-rec(cls, target, v)
+    let new-target = _td-delete-rec(target, v)
     let nc = fix.parent.children
     nc.at(fix.i) = new-target
-    _node(cls, fix.parent.keys, fix.parent.labels, nc)
+    _mk(fix.parent.keys, fix.parent.labels, nc)
   }
 }
 
-#let _delete-td(cls, root, v) = {
+#let _delete-td(root, v) = {
   // Root is allowed to have 1 key. If it does and both children are
   // 1-key nodes, merge them into a new root.
   let prepared = if (
@@ -467,14 +485,13 @@
       and root.children.at(1).keys.len() == 1
   ) {
     _merge(
-      cls,
       root.children.at(0),
       root.keys.at(0),
       root.labels.at(0),
       root.children.at(1),
     )
   } else { root }
-  let after = _td-delete-rec(cls, prepared, v)
+  let after = _td-delete-rec(prepared, v)
   // If the root ended up empty (only possible if `prepared` was a
   // freshly merged 3-key node that subsequently merged again — rare
   // but possible), pull up the sole remaining child.
@@ -488,11 +505,33 @@
   } else { after }
 }
 
+// Fix an underflow at children[i] of `parent`. Returns
+// (new-parent, underflow: bool). The returned parent may itself be
+// underflowing (only if it now has 0 keys — i.e. the merge consumed
+// its last separator), in which case the caller propagates.
+#let _bu-fixup(parent, i) = {
+  let n-children = parent.children.len()
+  let has-left = i > 0
+  let has-right = i < n-children - 1
+  let left-rich = has-left and parent.children.at(i - 1).keys.len() >= 2
+  let right-rich = has-right and parent.children.at(i + 1).keys.len() >= 2
+  let new-parent = if left-rich {
+    _rotate-from-left(parent, i)
+  } else if right-rich {
+    _rotate-from-right(parent, i)
+  } else if has-left {
+    _merge-siblings(parent, i - 1)
+  } else {
+    _merge-siblings(parent, i)
+  }
+  (node: new-parent, underflow: new-parent.keys.len() == 0)
+}
+
 // --- delete: bottom-up ---------------------------------------------
 
 // Returns (node, underflow: bool). Underflow when the returned node
 // has fewer keys than the per-node minimum (0 keys for a non-root).
-#let _bu-delete-rec(cls, node, v) = {
+#let _bu-delete-rec(node, v) = {
   if _is-leaf(node) {
     let idx = {
       let i = 0
@@ -504,7 +543,7 @@
     }
     let new-keys = node.keys.slice(0, idx) + node.keys.slice(idx + 1)
     let new-labels = node.labels.slice(0, idx) + node.labels.slice(idx + 1)
-    let new-node = _node(cls, new-keys, new-labels, ())
+    let new-node = _mk(new-keys, new-labels, ())
     (node: new-node, underflow: new-keys.len() == 0)
   } else {
     let key-idx = {
@@ -522,24 +561,24 @@
       let nl = node.labels
       nk.at(key-idx) = pred.value
       nl.at(key-idx) = pred.label
-      let res = _bu-delete-rec(cls, left-c, pred.value)
+      let res = _bu-delete-rec(left-c, pred.value)
       let nc = node.children
       nc.at(key-idx) = res.node
-      let new-parent = _node(cls, nk, nl, nc)
+      let new-parent = _mk(nk, nl, nc)
       if res.underflow {
-        _bu-fixup(cls, new-parent, key-idx)
+        _bu-fixup(new-parent, key-idx)
       } else {
         (node: new-parent, underflow: false)
       }
     } else {
       // Descend into the appropriate child.
       let i = _scan(node.keys, v)
-      let res = _bu-delete-rec(cls, node.children.at(i), v)
+      let res = _bu-delete-rec(node.children.at(i), v)
       let nc = node.children
       nc.at(i) = res.node
-      let new-parent = _node(cls, node.keys, node.labels, nc)
+      let new-parent = _mk(node.keys, node.labels, nc)
       if res.underflow {
-        _bu-fixup(cls, new-parent, i)
+        _bu-fixup(new-parent, i)
       } else {
         (node: new-parent, underflow: false)
       }
@@ -547,30 +586,8 @@
   }
 }
 
-// Fix an underflow at children[i] of `parent`. Returns
-// (new-parent, underflow: bool). The returned parent may itself be
-// underflowing (only if it now has 0 keys — i.e. the merge consumed
-// its last separator), in which case the caller propagates.
-#let _bu-fixup(cls, parent, i) = {
-  let n-children = parent.children.len()
-  let has-left = i > 0
-  let has-right = i < n-children - 1
-  let left-rich = has-left and parent.children.at(i - 1).keys.len() >= 2
-  let right-rich = has-right and parent.children.at(i + 1).keys.len() >= 2
-  let new-parent = if left-rich {
-    _rotate-from-left(cls, parent, i)
-  } else if right-rich {
-    _rotate-from-right(cls, parent, i)
-  } else if has-left {
-    _merge-siblings(cls, parent, i - 1)
-  } else {
-    _merge-siblings(cls, parent, i)
-  }
-  (node: new-parent, underflow: new-parent.keys.len() == 0)
-}
-
-#let _delete-bu(cls, root, v) = {
-  let res = _bu-delete-rec(cls, root, v)
+#let _delete-bu(root, v) = {
+  let res = _bu-delete-rec(root, v)
   // If the root ended up empty but has a single child, that child
   // becomes the new root (the tree's height decreased by one).
   if res.node.keys.len() == 0 {
@@ -628,182 +645,459 @@
 }
 
 // ===================================================================
-// Frame-building helpers (display-side)
+// Construction
 // ===================================================================
 
-#let _resolve-render-theme-arg(theme) = if theme == auto {
-  auto
-} else { tree-anim._merge-render-theme(theme) }
+// Parse one factory argument into a `(value, label)` pair.
+#let _parse-value(x, who) = if type(x) == array {
+  assert(
+    x.len() == 2,
+    message: who + ": expected a (key, label) 2-tuple, got " + repr(x) + ".",
+  )
+  (value: x.at(0), label: x.at(1))
+} else {
+  (value: x, label: auto)
+}
 
-// All B24 renderers share `shape: "btree-node"` as the default node
-// style so `draw-tree` picks the subdivided-rectangle renderer.
-#let _b24-default-node-style = (shape: "btree-node")
+/// A node holding `keys`, with either no children (a leaf) or exactly
+/// `keys.len() + 1` of them.
+///
+/// `keys` is one key or an array of them; each entry is a bare key or a
+/// `(key, label)` pair, so labels can be mixed in exactly as `new` allows.
+///
+/// ```typ
+/// b24.node((10, 20), b24.leaf(3, 7), b24.leaf(15), b24.leaf(25, 30))
+/// ```
+///
+/// -> dictionary
+#let node(
+  /// One key, or an array of keys / `(key, label)` pairs.
+  /// -> int | array
+  keys,
+  /// Nothing (a leaf) or exactly `keys.len() + 1` children.
+  /// -> dictionary
+  ..children,
+) = {
+  let ks = if type(keys) == array { keys } else { (keys,) }
+  let parsed = ks.map(k => _parse-value(k, "b24.node"))
+  let cs = children.pos()
+  assert(
+    parsed.len() >= 1 and parsed.len() <= 3,
+    message: "b24.node: a node holds 1 to 3 keys, got " + str(parsed.len()) + ".",
+  )
+  assert(
+    cs.len() == 0 or cs.len() == parsed.len() + 1,
+    message: "b24.node: expected no children or "
+      + str(parsed.len() + 1)
+      + " (one more than the "
+      + str(parsed.len())
+      + " keys), got "
+      + str(cs.len())
+      + ".",
+  )
+  _mk(parsed.map(p => p.value), parsed.map(p => p.label), cs)
+}
 
-// Pick a readable text fill for a given background color by inspecting
-// the oklab L component. Same heuristic as BST traversals — keeps
-// per-compartment labels legible against gradient fills.
+/// A childless node — `node(keys)` with the intent spelled out. Keys are
+/// variadic here, since a leaf has no children to disambiguate them from.
+///
+/// ```typ
+/// b24.leaf(3, 7)
+/// b24.leaf((3, [three]), 7)
+/// ```
+///
+/// -> dictionary
+#let leaf(
+  /// The keys, each a bare key or a `(key, label)` pair.
+  /// -> int | array
+  ..keys,
+) = node(keys.pos())
+
+// ===================================================================
+// Pure operations
+// ===================================================================
+
+/// The subtree at a node-path (no `#` suffix).
+/// -> dictionary
+#let resolve(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The digit path.
+  /// -> str
+  path,
+) = _resolve-at(tree, path)
+
+/// Whether `v` is in the tree.
+/// -> bool
+#let contains(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to look for.
+  /// -> int
+  v,
+) = {
+  let walk(n) = {
+    let i = _scan(n.keys, v)
+    if i < n.keys.len() and n.keys.at(i) == v {
+      true
+    } else if _is-leaf(n) { false } else { walk(n.children.at(i)) }
+  }
+  walk(tree)
+}
+
+/// The compartment path `"<node-path>#<key-idx>"` of the key holding `v`.
+/// Panics when `v` is absent.
+/// -> str
+#let by-value(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to look for.
+  /// -> int
+  v,
+) = {
+  let walk(n, path) = {
+    let i = _scan(n.keys, v)
+    if i < n.keys.len() and n.keys.at(i) == v {
+      path + "#" + str(i)
+    } else if _is-leaf(n) {
+      panic("b24.by-value: key not found in tree: " + repr(v) + ".")
+    } else {
+      walk(n.children.at(i), path + str(i))
+    }
+  }
+  walk(tree, "")
+}
+
+/// Every comparison made searching for `v`, in order. Each record is
+/// `(path, key-idx, key-value, key-label, cmp, found)`. Panics when `v` is
+/// absent — @@search-display() is the form that narrates a miss.
+/// -> array
+#let path-to(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to look for.
+  /// -> int
+  v,
+) = {
+  let walk(n, path) = {
+    let scan(i) = {
+      if i == n.keys.len() {
+        // v exceeds every key here; descend the rightmost child.
+        if _is-leaf(n) {
+          panic("b24.path-to: key not found in tree: " + repr(v) + ".")
+        }
+        walk(n.children.at(i), path + str(i))
+      } else {
+        let k = n.keys.at(i)
+        let cmp = if v == k {
+          str(v) + " = " + str(k)
+        } else if v < k { str(v) + " < " + str(k) } else {
+          str(v) + " > " + str(k)
+        }
+        let entry = (
+          path: path,
+          key-idx: i,
+          key-value: k,
+          key-label: alt-key-label(n, i),
+          cmp: cmp,
+          found: v == k,
+        )
+        if v == k {
+          (entry,)
+        } else if v < k {
+          if _is-leaf(n) {
+            panic("b24.path-to: key not found in tree: " + repr(v) + ".")
+          }
+          (entry,) + walk(n.children.at(i), path + str(i))
+        } else {
+          (entry,) + scan(i + 1)
+        }
+      }
+    }
+    scan(0)
+  }
+  walk(tree, "")
+}
+
+// The two strategies, and the error when neither is named.
+#let _strategies = ("top-down", "bottom-up")
+#let _assert-strategy(strategy, who) = assert(
+  _strategies.contains(strategy),
+  message: who
+    + ": unknown strategy "
+    + repr(strategy)
+    + "; supported: \"top-down\", \"bottom-up\".",
+)
+
+/// Insert `v`, returning a new tree.
+///
+/// `strategy` picks between splitting full nodes preventively on the way
+/// down (`"top-down"`) and splitting a transient overflow on the way back up
+/// (`"bottom-up"`). Both are correct; the shapes may differ.
+/// -> dictionary
+#let insert(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to insert.
+  /// -> int
+  v,
+  /// What to draw in the new compartment; `auto` draws `str(v)`.
+  /// -> auto | any
+  label: auto,
+  /// `"top-down"` or `"bottom-up"`.
+  /// -> str
+  strategy: "top-down",
+) = {
+  _assert-strategy(strategy, "b24.insert")
+  if strategy == "top-down" {
+    _insert-td(tree, v, label)
+  } else { _insert-bu(tree, v, label) }
+}
+
+/// Insert several keys in order, top-down. Each is a bare key or a
+/// `(key, label)` pair.
+/// -> dictionary
+#let insert-many(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The keys to insert.
+  /// -> any
+  ..vals,
+) = {
+  let out = tree
+  for x in vals.pos() {
+    let p = _parse-value(x, "b24.insert-many")
+    out = insert(out, p.value, label: p.label)
+  }
+  out
+}
+
+/// Build a tree from a list of keys: the first seeds the root, the rest are
+/// inserted in order. Each is a bare key or a `(key, label)` pair.
+///
+/// ```typ
+/// b24.new(4, 1, 7, 3, 6, 8)
+/// b24.new((4, [FOUR]), 1, 7, (6, [SIX]))
+/// ```
+///
+/// -> dictionary
+#let new(
+  /// The keys. At least one is required — it seeds the root.
+  /// -> any
+  ..vals,
+) = {
+  let xs = vals.pos()
+  assert(xs.len() > 0, message: "b24.new: at least one key is required (the root).")
+  let head = _parse-value(xs.first(), "b24.new")
+  insert-many(_mk((head.value,), (head.label,), ()), ..xs.slice(1))
+}
+
+// An empty leaf at the root means the tree has been emptied. Surface that
+// as `none`, the way every other structure's `delete` does — the internal
+// algorithms find the empty leaf easier to carry than a `none`.
+#let _empty-to-none(tree) = if (
+  tree != none and tree.keys.len() == 0 and _is-leaf(tree)
+) { none } else { tree }
+
+/// Delete `v`, returning a new tree (or `none` if the last key went).
+///
+/// `strategy` picks between refilling an under-full node on the way down
+/// (`"top-down"`) and merging on the way back up (`"bottom-up"`).
+/// -> dictionary | none
+#let delete(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to delete.
+  /// -> int
+  v,
+  /// `"top-down"` or `"bottom-up"`.
+  /// -> str
+  strategy: "top-down",
+) = {
+  _assert-strategy(strategy, "b24.delete")
+  let out = if strategy == "top-down" {
+    _delete-td(tree, v)
+  } else { _delete-bu(tree, v) }
+  _empty-to-none(out)
+}
+
+/// A recursive textual rendering of the tree, used in alt text.
+/// -> str
+#let describe(
+  /// The tree.
+  /// -> dictionary
+  tree,
+) = {
+  let key-str = range(tree.keys.len()).map(i => alt-key-label(tree, i)).join(", ")
+  if _is-leaf(tree) {
+    "[" + key-str + "]"
+  } else {
+    "[" + key-str + "] (children: " + tree.children.map(describe).join(", ") + ")"
+  }
+}
+
+/// Check all four 2-3-4 invariants: 1 to 3 keys per node, strictly
+/// increasing, `keys + 1` children at an internal node, and every leaf at
+/// the same depth. Returns `true` or panics naming the first violation.
+/// -> bool
+#let check-invariants(
+  /// The tree.
+  /// -> dictionary
+  tree,
+) = {
+  // Returns the subtree's leaf depth, panicking on the way up.
+  let walk(n) = {
+    let k = n.keys.len()
+    assert(
+      k >= 1 and k <= 3,
+      message: "b24.check-invariants: node has " + str(k) + " keys (must be 1 to 3).",
+    )
+    for i in range(k - 1) {
+      assert(
+        n.keys.at(i) < n.keys.at(i + 1),
+        message: "b24.check-invariants: keys are not strictly increasing: "
+          + repr(n.keys)
+          + ".",
+      )
+    }
+    if _is-leaf(n) {
+      1
+    } else {
+      assert(
+        n.children.len() == k + 1,
+        message: "b24.check-invariants: node "
+          + repr(n.keys)
+          + " has "
+          + str(n.children.len())
+          + " children, expected "
+          + str(k + 1)
+          + " (one more than its keys).",
+      )
+      let depths = n.children.map(walk)
+      assert(
+        depths.all(d => d == depths.first()),
+        message: "b24.check-invariants: unequal leaf depths under node "
+          + repr(n.keys)
+          + ".",
+      )
+      depths.first() + 1
+    }
+  }
+  let _ = walk(tree)
+  true
+}
+
+/// The compartment paths of every key, in left-to-right sorted order — the
+/// in-order walk threads each key between its flanking subtrees.
+/// -> array
+#let in-order(
+  /// The tree.
+  /// -> dictionary
+  tree,
+) = _traverse-in(tree, "")
+
+/// The compartment paths of every key, node before children.
+/// -> array
+#let pre-order(
+  /// The tree.
+  /// -> dictionary
+  tree,
+) = _traverse-pre(tree, "")
+
+/// The compartment paths of every key, children before node.
+/// -> array
+#let post-order(
+  /// The tree.
+  /// -> dictionary
+  tree,
+) = _traverse-post(tree, "")
+
+/// The compartment paths of every key, breadth-first by node.
+/// -> array
+#let level-order(
+  /// The tree.
+  /// -> dictionary
+  tree,
+) = {
+  let out = ()
+  let queue = ("",)
+  while queue.len() > 0 {
+    let path = queue.first()
+    queue = queue.slice(1)
+    let n = _resolve-at(tree, path)
+    for i in range(n.keys.len()) { out.push(path + "#" + str(i)) }
+    if not _is-leaf(n) {
+      for j in range(n.children.len()) { queue.push(path + str(j)) }
+    }
+  }
+  out
+}
+
+// ===================================================================
+// Rendering
+// ===================================================================
+
+// A readable text fill for a given background, from its oklab lightness —
+// so a compartment label stays legible against any traversal colour.
 #let _text-fill-for(bg) = {
   let l = bg.oklab().components().first()
   if l < 60% { white } else { black }
 }
 
-// Build an array of `Frame` records for one phase of an animation
-// (single tree, N snapshots). Mirrors `_make-frames` in bst.typ but
-// passes `_b24-default-node-style` so unstyled compartments still
-// pick up the btree-node shape.
-#let _make-frames(
+// A `key-styles` array of length `n` where only compartment `idx` carries
+// the override. Compartment styling merges index-wise, so this is how one
+// key of a node is highlighted without disturbing its neighbours.
+#let _solo-key-style(n, idx, override) = range(n).map(i => if i == idx {
+  override
+} else { (:) })
+
+/// A `Renderer` over this tree, bound to the tree backend and carrying the
+/// subdivided-rectangle node shape — the entry point for driving an
+/// animation yourself with the `Op` command stream. Pass `sticky: true` when
+/// you want each frame's styling to accumulate.
+/// -> dictionary
+#let renderer(
+  /// The tree.
+  /// -> dictionary
   tree,
-  build-snapshots,
-  captions,
-  steps-meta,
-  alts,
-  theme,
-  render-theme,
-) = {
-  let n = captions.len()
-  range(n).map(i => (tree-anim.Frame.new)(
-    _builder: (
-      fn: (op-arg, rt-arg) => {
-        let op = if theme == auto { op-arg } else { theme }
-        let rt = if render-theme == auto { rt-arg } else { render-theme }
-        let snaps = build-snapshots(op, rt)
-        tree-anim._render-canvas(
-          tree,
-          snaps.at(i),
-          _b24-default-node-style,
-          (:),
-          rt,
-        )
-      },
-    ),
-    caption: captions.at(i),
-    step: steps-meta.at(i),
-    alt: alts.at(i),
-  ))
-}
+  /// Base node styling beneath every frame's snapshot.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling beneath every frame's snapshot.
+  /// -> dictionary
+  edge-style: (:),
+  /// Whether new frames inherit the previous frame's styling.
+  /// -> bool
+  sticky: false,
+  /// Partial theme override for this renderer.
+  /// -> dictionary
+  theme: (:),
+) = make-renderer(
+  tree,
+  draw-tree,
+  node-style: (:.._NODE-STYLE, ..node-style),
+  edge-style: edge-style,
+  sticky: sticky,
+  theme: theme,
+)
 
-// Build a `key-styles` array of length `n` where only compartment
-// `idx` carries the override dict. Used by search and traversal
-// displays to highlight one compartment at a time.
-#let _solo-key-style(n, idx, override) = {
-  range(n).map(i => if i == idx { override } else { (:) })
-}
-
-// Multi-tree frame builder. Each spec carries its own `tree` and its
-// own `build(op, rt) -> Snapshot` closure, so phases that span tree-
-// shape changes (splits, merges) compose by concatenation. Mirrors
-// `_make-frames-rbt-multi` in rbt.typ.
-#let _make-frames-multi(specs, theme, render-theme) = {
-  specs.map(s => (tree-anim.Frame.new)(
-    _builder: (
-      fn: (op-arg, rt-arg) => {
-        let op = if theme == auto { op-arg } else { theme }
-        let rt = if render-theme == auto { rt-arg } else { render-theme }
-        let snap = (s.build)(op, rt)
-        tree-anim._render-canvas(
-          s.tree,
-          snap,
-          _b24-default-node-style,
-          (:),
-          rt,
-        )
-      },
-    ),
-    caption: s.caption,
-    step: s.step,
-    alt: s.alt,
-  ))
-}
-
-// Shared per-visit traversal animation. `paths` is the precomputed
-// per-compartment visit order (each path is "<node-path>#<key-idx>");
-// `name` appears in the initial alt text. One frame per visit: the
-// visited compartment gets a gradient fill sampled from the active
-// op-theme's `traversal-palette`, the caption accumulates the output
-// sequence, and the alt text logs the visit.
-//
-// step.kind values: "init" (initial frame), "visit" (per compartment).
-#let _render-traversal(self, paths, name, theme, render-theme) = {
-  let n = paths.len()
-
-  let captions = (none,)
-  let steps-meta = ((kind: "init"),)
-  let alts = (
-    "2-4 tree: "
-      + (self.describe)()
-      + ". About to traverse "
-      + name
-      + ".",
-  )
-
-  let output = ()
-  let split-path(p) = {
-    let parts = p.split("#")
-    (parts.at(0), int(parts.at(1)))
-  }
-
-  for (i, p) in paths.enumerate() {
-    let (node-path, key-idx) = split-path(p)
-    let node = (self.resolve)(node-path)
-    let value = node.keys.at(key-idx)
-    let disp = tree-anim._alt-key-label(node, key-idx)
-    output.push(disp)
-    captions.push([Output: #raw("[" + output.join(", ") + "]")])
-    steps-meta.push((
-      kind: "visit",
-      path: p,
-      index: i + 1,
-      value: value,
-    ))
-    alts.push(
-      "Visited "
-        + disp
-        + " (visit "
-        + str(i + 1)
-        + " of "
-        + str(n)
-        + "); output so far: "
-        + output.join(", ")
-        + ".",
-    )
-  }
-
-  let build-snapshots = (op, _rt) => {
-    let g = gradient.linear(..op.traversal-palette)
-    let r = tree-anim.make-renderer(
-      self,
-      sticky: true,
-      default-node-style: _b24-default-node-style,
-    )
-    for (i, p) in paths.enumerate() {
-      let (node-path, key-idx) = split-path(p)
-      let node = (self.resolve)(node-path)
-      let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
-      let fill = g.sample(t)
-      let txt-fill = _text-fill-for(fill)
-      r = (r.push-with-node)(
-        node-path,
-        key-styles: _solo-key-style(
-          node.keys.len(),
-          key-idx,
-          (fill: fill, text-fill: txt-fill),
-        ),
-      )
-    }
-    r.snapshots
-  }
-
-  _make-frames(
-    self,
-    build-snapshots,
-    captions,
-    steps-meta,
-    alts,
-    theme,
-    render-theme,
-  )
-}
-
+// Every display shares this. The caller's `node-style:` layers over the
+// btree-node shape rather than replacing it, so overriding a fill doesn't
+// silently turn every node back into a circle.
+#let _frames(specs, theme, node-style, edge-style) = make-frames(
+  specs,
+  draw-tree,
+  theme: theme,
+  node-style: (:.._NODE-STYLE, ..node-style),
+  edge-style: edge-style,
+)
 // ===================================================================
 // Insert-display event production
 // ===================================================================
@@ -871,29 +1165,31 @@
   )
 )
 
-// Re-apply accumulated descent-comparison highlights to the renderer.
-// Each entry contributes a search-stroke on its compartment and an
-// inline note on its node; index-wise merging keeps multiple
-// compartment highlights at the same node distinct.
-#let _replay-history(r, tree, history, op) = {
-  let acc = r
+// Re-apply the accumulated descent comparisons to a snapshot. Each entry
+// rings its compartment in `search-stroke` and hangs the comparison text
+// off its node; `key-styles` merges index-wise, so several highlighted
+// compartments on one node stay distinct.
+#let _replay-history(snap, tree, history, th) = {
+  let cur = snap
   for h in history {
     let node = _resolve-at(tree, h.path)
-    let ks = _solo-key-style(
-      node.keys.len(),
-      h.key-idx,
-      (stroke: op.search-stroke),
-    )
-    acc = (acc.patch)(f => (f.style-node)(
+    cur = with-node(
+      cur,
       h.path,
-      key-styles: ks,
-      note: h.cmp,
-    ))
+      (
+        key-styles: _solo-key-style(
+          node.keys.len(),
+          h.key-idx,
+          (stroke: th.op.search-stroke),
+        ),
+        note: h.cmp,
+      ),
+    )
   }
-  acc
+  cur
 }
 
-#let _td-insert-events(cls, root, v, label) = {
+#let _td-insert-events(root, v, label) = {
   let events = ((kind: "init", tree: root),)
   let current = root
   let history = ()
@@ -906,8 +1202,8 @@
       target-path: "",
       history: history,
     ))
-    let s = _split(cls, current)
-    current = _node(cls, (s.mid-key,), (s.mid-label,), (s.left, s.right))
+    let s = _split(current)
+    current = _mk((s.mid-key,), (s.mid-label,), (s.left, s.right))
     history = ()
     events.push((
       kind: "split-done",
@@ -923,8 +1219,8 @@
     let node = _resolve-at(current, node-path)
     if _is-leaf(node) {
       let (nk, nl, idx) = _insert-sorted(node.keys, node.labels, v, label)
-      let new-leaf = _node(cls, nk, nl, ())
-      current = _replace-at(cls, current, node-path, new-leaf)
+      let new-leaf = _mk(nk, nl, ())
+      current = _replace-at(current, node-path, new-leaf)
       events.push((
         kind: "settled",
         tree: current,
@@ -963,17 +1259,16 @@
         target-path: child-path,
         history: history,
       ))
-      let s = _split(cls, child)
+      let s = _split(child)
       let parent = _resolve-at(current, node-path)
-      let new-parent = _node(
-        cls,
+      let new-parent = _mk(
         parent.keys.slice(0, i) + (s.mid-key,) + parent.keys.slice(i),
         parent.labels.slice(0, i) + (s.mid-label,) + parent.labels.slice(i),
         parent.children.slice(0, i)
           + (s.left, s.right)
           + parent.children.slice(i + 1),
       )
-      current = _replace-at(cls, current, node-path, new-parent)
+      current = _replace-at(current, node-path, new-parent)
       // Tree shape changed — the accumulated search highlights at the
       // parent reference different compartments now. Clear history.
       history = ()
@@ -994,7 +1289,7 @@
   events
 }
 
-#let _bu-insert-events(cls, root, v, label) = {
+#let _bu-insert-events(root, v, label) = {
   // Bottom-up: descend without splitting, insert at leaf, propagate
   // overflow by emitting overflow + split-done event pairs.
   let events = ((kind: "init", tree: root),)
@@ -1055,8 +1350,8 @@
 
   // Insert v into the leaf. Tree shape changes here.
   let (nk, nl, idx) = _insert-sorted(leaf.keys, leaf.labels, v, label)
-  let new-leaf = _node(cls, nk, nl, ())
-  let current = _replace-at(cls, root, leaf-path, new-leaf)
+  let new-leaf = _mk(nk, nl, ())
+  let current = _replace-at(root, leaf-path, new-leaf)
   // Clear the descent history — the leaf's key positions just shifted.
   history = ()
 
@@ -1076,7 +1371,7 @@
       overflow-path: leaf-path,
       overflow-key-idx: idx,
     ))
-    let s = _split(cls, new-leaf)
+    let s = _split(new-leaf)
     let promoted-key = s.mid-key
     let promoted-label = s.mid-label
     let split-left = s.left
@@ -1105,8 +1400,7 @@
       let last-digit = current-leaf-path.at(current-leaf-path.len() - 1)
       let i = int(last-digit)
       // Build new ancestor with promoted key inserted.
-      let new-ancestor = _node(
-        cls,
+      let new-ancestor = _mk(
         ancestor.keys.slice(0, i) + (pending-key,) + ancestor.keys.slice(i),
         ancestor.labels.slice(0, i)
           + (pending-label,)
@@ -1115,7 +1409,7 @@
           + (pending-left, pending-right)
           + ancestor.children.slice(i + 1),
       )
-      current = _replace-at(cls, current, ancestor-path, new-ancestor)
+      current = _replace-at(current, ancestor-path, new-ancestor)
       // Emit split-done at the ancestor — shows promoted key arriving.
       events.push((
         kind: "split-done",
@@ -1144,7 +1438,7 @@
         overflow-path: ancestor-path,
         overflow-key-idx: i,
       ))
-      let s2 = _split(cls, new-ancestor)
+      let s2 = _split(new-ancestor)
       pending-left = s2.left
       pending-right = s2.right
       pending-key = s2.mid-key
@@ -1152,7 +1446,7 @@
       current-leaf-path = ancestor-path
     }
     // Stack exhausted — split propagated through the root.
-    let new-root = _node(cls, (pending-key,), (pending-label,), (pending-left, pending-right))
+    let new-root = _mk((pending-key,), (pending-label,), (pending-left, pending-right))
     current = new-root
     events.push((
       kind: "split-done",
@@ -1195,7 +1489,7 @@
 //                            single remaining child becomes the new
 //                            root.
 
-#let _td-delete-events(cls, root, v) = {
+#let _td-delete-events(root, v) = {
   let events = ((kind: "init", tree: root),)
 
   // Root prep: if the root has 1 key and both children are 1-key,
@@ -1206,7 +1500,6 @@
       and root.children.at(1).keys.len() == 1
   ) {
     let merged = _merge(
-      cls,
       root.children.at(0),
       root.keys.at(0),
       root.labels.at(0),
@@ -1267,13 +1560,12 @@
     if key-idx != -1 {
       // Found v at this node.
       if _is-leaf(node) {
-        let new-leaf = _node(
-          cls,
+        let new-leaf = _mk(
           node.keys.slice(0, key-idx) + node.keys.slice(key-idx + 1),
           node.labels.slice(0, key-idx) + node.labels.slice(key-idx + 1),
           (),
         )
-        current = _replace-at(cls, current, path, new-leaf)
+        current = _replace-at(current, path, new-leaf)
         events.push((
           kind: "td-remove",
           tree: current,
@@ -1298,8 +1590,8 @@
           let nl = node.labels
           nk.at(key-idx) = pred.value
           nl.at(key-idx) = pred.label
-          let new-node = _node(cls, nk, nl, node.children)
-          current = _replace-at(cls, current, path, new-node)
+          let new-node = _mk(nk, nl, node.children)
+          current = _replace-at(current, path, new-node)
           history = ()
           events.push((
             kind: "td-pred-swap",
@@ -1323,8 +1615,8 @@
           let nl = node.labels
           nk.at(key-idx) = succ.value
           nl.at(key-idx) = succ.label
-          let new-node = _node(cls, nk, nl, node.children)
-          current = _replace-at(cls, current, path, new-node)
+          let new-node = _mk(nk, nl, node.children)
+          current = _replace-at(current, path, new-node)
           history = ()
           events.push((
             kind: "td-succ-swap",
@@ -1338,8 +1630,8 @@
         } else {
           // Both flanks 1-key. Merge them with v as separator and
           // descend into the merged child.
-          let merged-parent = _merge-siblings(cls, node, key-idx)
-          current = _replace-at(cls, current, path, merged-parent)
+          let merged-parent = _merge-siblings(node, key-idx)
+          current = _replace-at(current, path, merged-parent)
           history = ()
           events.push((
             kind: "td-merge",
@@ -1372,8 +1664,8 @@
           history: history,
         ))
         if left-rich {
-          let new-parent = _rotate-from-left(cls, node, descend-i)
-          current = _replace-at(cls, current, path, new-parent)
+          let new-parent = _rotate-from-left(node, descend-i)
+          current = _replace-at(current, path, new-parent)
           events.push((
             kind: "td-borrow-left",
             tree: current,
@@ -1385,8 +1677,8 @@
           history = ()
           path = child-path
         } else if right-rich {
-          let new-parent = _rotate-from-right(cls, node, descend-i)
-          current = _replace-at(cls, current, path, new-parent)
+          let new-parent = _rotate-from-right(node, descend-i)
+          current = _replace-at(current, path, new-parent)
           events.push((
             kind: "td-borrow-right",
             tree: current,
@@ -1398,8 +1690,8 @@
           history = ()
           path = child-path
         } else if has-left {
-          let new-parent = _merge-siblings(cls, node, descend-i - 1)
-          current = _replace-at(cls, current, path, new-parent)
+          let new-parent = _merge-siblings(node, descend-i - 1)
+          current = _replace-at(current, path, new-parent)
           events.push((
             kind: "td-merge",
             tree: current,
@@ -1409,8 +1701,8 @@
           history = ()
           path = path + str(descend-i - 1)
         } else {
-          let new-parent = _merge-siblings(cls, node, descend-i)
-          current = _replace-at(cls, current, path, new-parent)
+          let new-parent = _merge-siblings(node, descend-i)
+          current = _replace-at(current, path, new-parent)
           events.push((
             kind: "td-merge",
             tree: current,
@@ -1437,7 +1729,7 @@
   events
 }
 
-#let _bu-delete-events(cls, root, v) = {
+#let _bu-delete-events(root, v) = {
   // Bottom-up: descend to v's location, swap with predecessor if v
   // is internal, then remove from the leaf. Propagate underflow up.
   let events = ((kind: "init", tree: root),)
@@ -1518,8 +1810,8 @@
     let nl = v-node.labels
     nk.at(key-idx) = pred-value
     nl.at(key-idx) = pred-label
-    let new-v-node = _node(cls, nk, nl, v-node.children)
-    current = _replace-at(cls, current, path, new-v-node)
+    let new-v-node = _mk(nk, nl, v-node.children)
+    current = _replace-at(current, path, new-v-node)
     history = ()
     events.push((
       kind: "td-pred-swap",
@@ -1551,13 +1843,12 @@
     // v was directly in the leaf — use the original key-idx.
     remove-idx = key-idx
   }
-  let new-leaf = _node(
-    cls,
+  let new-leaf = _mk(
     leaf.keys.slice(0, remove-idx) + leaf.keys.slice(remove-idx + 1),
     leaf.labels.slice(0, remove-idx) + leaf.labels.slice(remove-idx + 1),
     (),
   )
-  current = _replace-at(cls, current, target-leaf-path, new-leaf)
+  current = _replace-at(current, target-leaf-path, new-leaf)
   events.push((
     kind: "td-remove",
     tree: current,
@@ -1597,19 +1888,19 @@
       let fixed-parent = none
       let new-kind = ""
       if left-rich {
-        fixed-parent = _rotate-from-left(cls, parent, i)
+        fixed-parent = _rotate-from-left(parent, i)
         new-kind = "td-borrow-left"
       } else if right-rich {
-        fixed-parent = _rotate-from-right(cls, parent, i)
+        fixed-parent = _rotate-from-right(parent, i)
         new-kind = "td-borrow-right"
       } else if has-left {
-        fixed-parent = _merge-siblings(cls, parent, i - 1)
+        fixed-parent = _merge-siblings(parent, i - 1)
         new-kind = "td-merge"
       } else {
-        fixed-parent = _merge-siblings(cls, parent, i)
+        fixed-parent = _merge-siblings(parent, i)
         new-kind = "td-merge"
       }
-      current = _replace-at(cls, current, parent-path, fixed-parent)
+      current = _replace-at(current, parent-path, fixed-parent)
       if new-kind == "td-merge" {
         let merge-i = if has-left and not left-rich and not right-rich {
           i - 1
@@ -1664,20 +1955,20 @@
 // renders the snapshot for its own event regardless of later events.
 // `disp` is the human-readable name of the inserted key — its label
 // when a string was supplied, else `str(v)` (see `_alt-key-label`).
-#let _insert-events-to-specs(events, v, disp) = events.map(ev => {
+
+// ===================================================================
+// Events to frames
+// ===================================================================
+
+// One spec per insert event. `disp` names the inserted key the way it is
+// drawn (its label when a string was supplied, else the key).
+#let _insert-specs(events, v, disp) = events.map(ev => {
   let caption = none
   let alt = ""
   let step = (kind: ev.kind)
 
   if ev.kind == "init" {
-    caption = none
-    alt = (
-      "2-4 tree: "
-        + (ev.tree.describe)()
-        + ". About to insert "
-        + disp
-        + "."
-    )
+    alt = alt-intro(_DS, describe(ev.tree), "insert " + disp)
   } else if ev.kind == "compare" {
     caption = ev.cmp-text
     alt = "Comparing " + ev.cmp-text + " at the current node."
@@ -1685,7 +1976,9 @@
     step.insert("key-idx", ev.cmp-key-idx)
   } else if ev.kind == "td-pre-split-attention" {
     caption = [Full node — split first]
-    alt = "Node at path " + ev.target-path + " is full (3 keys); pre-split before descending."
+    alt = ("The node at path "
+      + ev.target-path
+      + " is full (3 keys); splitting it before descending.")
     step.insert("target-path", ev.target-path)
   } else if ev.kind == "split-done" {
     caption = [Promoted key]
@@ -1694,7 +1987,7 @@
     step.insert("promoted-key-idx", ev.promoted-key-idx)
   } else if ev.kind == "bu-overflow" {
     caption = [Overflow]
-    alt = "Leaf overflows with 4 keys — split before continuing."
+    alt = "The leaf overflows with 4 keys — split before continuing."
     step.insert("overflow-path", ev.overflow-path)
   } else if ev.kind == "settled" {
     caption = [Inserted #v]
@@ -1703,76 +1996,74 @@
     step.insert("new-key-idx", ev.new-key-idx)
   }
 
-  let build = (op, _rt) => {
-    let r = tree-anim.make-renderer(
-      ev.tree,
-      sticky: false,
-      default-node-style: _b24-default-node-style,
-    )
-    if ev.kind == "init" {
-      // No styling.
-    } else if ev.kind == "compare" {
-      r = _replay-history(r, ev.tree, ev.history, op)
+  let build = th => {
+    let cur = blank-snapshot()
+    if ev.kind == "compare" {
+      cur = _replay-history(cur, ev.tree, ev.history, th)
     } else if ev.kind == "td-pre-split-attention" {
-      r = _replay-history(r, ev.tree, ev.history, op)
-      r = (r.patch)(f => (f.style-node)(
-        ev.target-path,
-        stroke: op.attention-stroke,
-      ))
+      cur = _replay-history(cur, ev.tree, ev.history, th)
+      cur = with-node(cur, ev.target-path, (stroke: th.op.attention-stroke))
     } else if ev.kind == "split-done" {
       let n = _resolve-at(ev.tree, ev.promoted-path)
-      let ks = _solo-key-style(
-        n.keys.len(),
-        ev.promoted-key-idx,
-        (stroke: op.success-stroke),
+      cur = with-node(
+        cur,
+        ev.promoted-path,
+        (
+          key-styles: _solo-key-style(
+            n.keys.len(),
+            ev.promoted-key-idx,
+            (stroke: th.op.success-stroke),
+          ),
+        ),
       )
-      r = (r.patch)(f => (f.style-node)(ev.promoted-path, key-styles: ks))
       for p in ev.new-child-paths {
-        r = (r.patch)(f => (f.style-edge)(p, stroke: op.success-stroke))
+        cur = with-edge(cur, p, (stroke: th.op.success-stroke))
       }
     } else if ev.kind == "bu-overflow" {
       let n = _resolve-at(ev.tree, ev.overflow-path)
-      let ks = _solo-key-style(
-        n.keys.len(),
-        ev.overflow-key-idx,
-        (stroke: op.danger-stroke, fill: op.success-fill),
-      )
-      r = (r.patch)(f => (f.style-node)(
+      cur = with-node(
+        cur,
         ev.overflow-path,
-        key-styles: ks,
-        stroke: op.danger-stroke,
-      ))
+        (
+          key-styles: _solo-key-style(
+            n.keys.len(),
+            ev.overflow-key-idx,
+            (stroke: th.op.danger-stroke, fill: th.op.success-fill),
+          ),
+          stroke: th.op.danger-stroke,
+        ),
+      )
     } else if ev.kind == "settled" {
       let n = _resolve-at(ev.tree, ev.leaf-path)
-      let ks = _solo-key-style(
-        n.keys.len(),
-        ev.new-key-idx,
-        (fill: op.success-fill, stroke: op.settled-stroke),
+      cur = with-node(
+        cur,
+        ev.leaf-path,
+        (
+          key-styles: _solo-key-style(
+            n.keys.len(),
+            ev.new-key-idx,
+            (fill: th.op.success-fill, stroke: th.op.settled-stroke),
+          ),
+        ),
       )
-      r = (r.patch)(f => (f.style-node)(ev.leaf-path, key-styles: ks))
     }
-    r.snapshots.first()
+    // "init" draws the tree unstyled.
+    cur
   }
 
-  (tree: ev.tree, build: build, caption: caption, step: step, alt: alt)
+  (structure: ev.tree, build: build, caption: caption, step: step, alt: alt)
 })
 
-// `disp` names the deleted key by its label when a string was supplied,
-// else `str(v)` — resolved once up front since a swap can relocate the
-// key mid-descent (see `_alt-key-label`).
-#let _delete-events-to-specs(events, v, disp) = events.map(ev => {
+// One spec per delete event. `disp` names the deleted key the way it is
+// drawn, resolved once up front because a predecessor swap relocates the
+// key mid-descent.
+#let _delete-specs(events, v, disp) = events.map(ev => {
   let caption = none
   let alt = ""
   let step = (kind: ev.kind)
 
   if ev.kind == "init" {
-    alt = (
-      "2-4 tree: "
-        + (ev.tree.describe)()
-        + ". About to delete "
-        + disp
-        + "."
-    )
+    alt = alt-intro(_DS, describe(ev.tree), "delete " + disp)
   } else if ev.kind == "compare" {
     caption = ev.cmp-text
     alt = "Comparing " + ev.cmp-text + " at the current node."
@@ -1780,37 +2071,38 @@
     step.insert("key-idx", ev.cmp-key-idx)
   } else if ev.kind == "td-pre-fix-attention" {
     caption = [Under-full — fix before descending]
-    alt = "Descent target has only 1 key; borrow or merge before descending."
+    alt = ("The descent target has only 1 key; borrowing or merging before "
+      + "descending into it.")
     step.insert("target-path", ev.target-path)
   } else if ev.kind == "td-borrow-left" {
     caption = [Borrow from left]
-    alt = (
-      "Borrow: separator slides down into the target, left sibling's rightmost key slides up."
-    )
+    alt = ("Borrow: the separator slides down into the target and the left "
+      + "sibling's rightmost key slides up to replace it.")
     step.insert("target-path", ev.target-path)
   } else if ev.kind == "td-borrow-right" {
     caption = [Borrow from right]
-    alt = (
-      "Borrow: separator slides down into the target, right sibling's leftmost key slides up."
-    )
+    alt = ("Borrow: the separator slides down into the target and the right "
+      + "sibling's leftmost key slides up to replace it.")
     step.insert("target-path", ev.target-path)
   } else if ev.kind == "td-merge" {
     caption = [Merge]
-    alt = "Merge two children with their separator key."
+    alt = "Merged two children with their separator key."
     step.insert("merge-path", ev.merge-path)
   } else if ev.kind == "td-target" {
     caption = [Target found]
-    alt = "Found the value to delete; will swap with predecessor."
+    alt = "Found the key to delete; it will swap with its predecessor."
     step.insert("target-path", ev.target-path)
     step.insert("target-key-idx", ev.target-key-idx)
   } else if ev.kind == "td-pred-swap" {
     caption = [Swap with predecessor]
-    alt = "Replaced the target's value with its predecessor; will now delete the predecessor from the leaf."
+    alt = ("Replaced the target's key with its predecessor; the predecessor "
+      + "is now the one to delete, and it lives in a leaf.")
     step.insert("path", ev.path)
     step.insert("key-idx", ev.key-idx)
   } else if ev.kind == "td-succ-swap" {
     caption = [Swap with successor]
-    alt = "Replaced the target's value with its successor; will now delete the successor from the leaf."
+    alt = ("Replaced the target's key with its successor; the successor is "
+      + "now the one to delete, and it lives in a leaf.")
     step.insert("path", ev.path)
     step.insert("key-idx", ev.key-idx)
   } else if ev.kind == "td-remove" {
@@ -1819,615 +2111,527 @@
     step.insert("leaf-path", ev.leaf-path)
   } else if ev.kind == "td-root-collapse" {
     caption = [Root collapsed]
-    alt = "Root's only key was consumed by merging; the single remaining child becomes the new root."
+    alt = ("The root's only key was consumed by a merge; its single remaining "
+      + "child becomes the new root.")
   }
 
-  let build = (op, _rt) => {
-    let r = tree-anim.make-renderer(
-      ev.tree,
-      sticky: false,
-      default-node-style: _b24-default-node-style,
-    )
-    if ev.kind == "init" {
-      // No styling.
-    } else if ev.kind == "compare" {
-      r = _replay-history(r, ev.tree, ev.history, op)
+  let build = th => {
+    let cur = blank-snapshot()
+    if ev.kind == "compare" {
+      cur = _replay-history(cur, ev.tree, ev.history, th)
     } else if ev.kind == "td-pre-fix-attention" {
-      r = _replay-history(r, ev.tree, ev.history, op)
-      r = (r.patch)(f => (f.style-node)(
-        ev.target-path,
-        stroke: op.attention-stroke,
-      ))
+      cur = _replay-history(cur, ev.tree, ev.history, th)
+      cur = with-node(cur, ev.target-path, (stroke: th.op.attention-stroke))
     } else if ev.kind == "td-borrow-left" or ev.kind == "td-borrow-right" {
-      // Highlight the parent's affected key + the target node's
-      // new boundary key.
+      // The parent's affected key, plus the two edges the keys moved across.
       let parent = _resolve-at(ev.tree, ev.parent-path)
-      let pks = _solo-key-style(
-        parent.keys.len(),
-        ev.parent-key-idx,
-        (stroke: op.success-stroke),
-      )
-      r = (r.patch)(f => (f.style-node)(
+      cur = with-node(
+        cur,
         ev.parent-path,
-        key-styles: pks,
-      ))
-      r = (r.patch)(f => (f.style-edge)(
-        ev.target-path,
-        stroke: op.success-stroke,
-      ))
-      r = (r.patch)(f => (f.style-edge)(
-        ev.sibling-path,
-        stroke: op.success-stroke,
-      ))
+        (
+          key-styles: _solo-key-style(
+            parent.keys.len(),
+            ev.parent-key-idx,
+            (stroke: th.op.success-stroke),
+          ),
+        ),
+      )
+      cur = with-edge(cur, ev.target-path, (stroke: th.op.success-stroke))
+      cur = with-edge(cur, ev.sibling-path, (stroke: th.op.success-stroke))
     } else if ev.kind == "td-merge" {
-      // Root-prep merge has no specific child edge to highlight;
-      // outline the new merged root instead.
+      // A root-prep merge has no child edge to highlight — outline the new
+      // merged root instead.
       if ev.merge-child-idx == none {
-        r = (r.patch)(f => (f.style-node)(
-          ev.merge-path,
-          stroke: op.success-stroke,
-        ))
+        cur = with-node(cur, ev.merge-path, (stroke: th.op.success-stroke))
       } else {
-        r = (r.patch)(f => (f.style-edge)(
+        cur = with-edge(
+          cur,
           ev.merge-path + str(ev.merge-child-idx),
-          stroke: op.success-stroke,
-        ))
+          (stroke: th.op.success-stroke),
+        )
       }
     } else if ev.kind == "td-target" {
-      r = _replay-history(r, ev.tree, ev.history, op)
+      cur = _replay-history(cur, ev.tree, ev.history, th)
       let n = _resolve-at(ev.tree, ev.target-path)
-      let ks = _solo-key-style(
-        n.keys.len(),
-        ev.target-key-idx,
-        (stroke: op.attention-stroke),
+      cur = with-node(
+        cur,
+        ev.target-path,
+        (
+          key-styles: _solo-key-style(
+            n.keys.len(),
+            ev.target-key-idx,
+            (stroke: th.op.attention-stroke),
+          ),
+        ),
       )
-      r = (r.patch)(f => (f.style-node)(ev.target-path, key-styles: ks))
     } else if ev.kind == "td-pred-swap" or ev.kind == "td-succ-swap" {
       let n = _resolve-at(ev.tree, ev.path)
-      let ks = _solo-key-style(
-        n.keys.len(),
-        ev.key-idx,
-        (fill: op.success-fill, stroke: op.success-stroke),
+      cur = with-node(
+        cur,
+        ev.path,
+        (
+          key-styles: _solo-key-style(
+            n.keys.len(),
+            ev.key-idx,
+            (fill: th.op.success-fill, stroke: th.op.success-stroke),
+          ),
+        ),
       )
-      r = (r.patch)(f => (f.style-node)(ev.path, key-styles: ks))
     } else if ev.kind == "td-remove" {
-      // No specific compartment to highlight (it's gone). Outline
-      // the resulting node with success-stroke to signal completion.
-      r = (r.patch)(f => (f.style-node)(
-        ev.leaf-path,
-        stroke: op.settled-stroke,
-      ))
+      // The compartment is gone, so there is nothing to highlight inside the
+      // node; outline the whole node to signal completion.
+      cur = with-node(cur, ev.leaf-path, (stroke: th.op.settled-stroke))
     } else if ev.kind == "td-root-collapse" {
-      r = (r.patch)(f => (f.style-node)("", stroke: op.settled-stroke))
+      cur = with-node(cur, "", (stroke: th.op.settled-stroke))
     }
-    r.snapshots.first()
+    cur
   }
 
-  (tree: ev.tree, build: build, caption: caption, step: step, alt: alt)
+  (structure: ev.tree, build: build, caption: caption, step: step, alt: alt)
 })
 
+// Stamp `step.result` onto the last spec — the tree the operation produced.
+#let _stamp-result(specs, after) = {
+  let out = specs
+  let i = out.len() - 1
+  let s = out.at(i)
+  out.at(i) = (..s, step: (..s.step, result: after))
+  out
+}
+
 // ===================================================================
-// Class definition
+// Displays
 // ===================================================================
 
-#let B24 = class(
-  name: "B24",
-  fields: (
-    keys: Array(..Int),
-    labels: Array(..Any),
-    children: Array(..Any),
-  ),
-  methods: (
-    resolve: (self, path) => _resolve-at(self, path),
-
-    contains: (self, v) => {
-      let walk(node) = {
-        let i = _scan(node.keys, v)
-        if i < node.keys.len() and node.keys.at(i) == v {
-          true
-        } else if _is-leaf(node) {
-          false
-        } else {
-          walk(node.children.at(i))
-        }
-      }
-      walk(self)
-    },
-
-    by-value: (self, v) => {
-      // Returns the per-compartment path "<node-path>#<key-idx>" or
-      // panics if v isn't in the tree.
-      let walk(node, path) = {
-        let i = _scan(node.keys, v)
-        if i < node.keys.len() and node.keys.at(i) == v {
-          path + "#" + str(i)
-        } else if _is-leaf(node) {
-          panic("B24.by-value: value not found: " + repr(v))
-        } else {
-          walk(node.children.at(i), path + str(i))
-        }
-      }
-      walk(self, "")
-    },
-
-    path-to: (self, v) => {
-      // Returns the sequence of comparison records made along the
-      // search path. Each record:
-      //   (path, key-idx, key-value, key-label, cmp, found)
-      // where `path` is the node-path being examined, `key-idx` is
-      // the compartment compared, `key-value` is the key at that
-      // compartment, `key-label` is its display name (label if a string,
-      // else `str(key-value)`), `cmp` is the comparison string, and
-      // `found` is true if v == key-value.
-      let walk(node, path) = {
-        let scan(i) = {
-          if i == node.keys.len() {
-            // v exceeds all keys at this node; descend rightmost.
-            if _is-leaf(node) {
-              panic("B24.path-to: value not found: " + repr(v))
-            }
-            walk(node.children.at(i), path + str(i))
-          } else {
-            let k = node.keys.at(i)
-            let cmp = if v == k {
-              str(v) + " = " + str(k)
-            } else if v < k {
-              str(v) + " < " + str(k)
-            } else {
-              str(v) + " > " + str(k)
-            }
-            let entry = (
-              path: path,
-              key-idx: i,
-              key-value: k,
-              key-label: tree-anim._alt-key-label(node, i),
-              cmp: cmp,
-              found: v == k,
-            )
-            if v == k {
-              (entry,)
-            } else if v < k {
-              if _is-leaf(node) {
-                panic("B24.path-to: value not found: " + repr(v))
-              }
-              (entry,) + walk(node.children.at(i), path + str(i))
-            } else {
-              (entry,) + scan(i + 1)
-            }
-          }
-        }
-        scan(0)
-      }
-      walk(self, "")
-    },
-
-    insert: (self, v, label: auto, strategy: "top-down") => {
-      let cls = self.meta.cls
-      if strategy == "top-down" {
-        _insert-td(cls, self, v, label)
-      } else if strategy == "bottom-up" {
-        _insert-bu(cls, self, v, label)
-      } else {
-        panic(
-          "B24.insert: unknown strategy "
-            + repr(strategy)
-            + "; supported: \"top-down\", \"bottom-up\".",
-        )
-      }
-    },
-
-    // Plain `insert(..)` overload-free helper for the common int-only
-    // case. Iterates with the default strategy.
-    insert-many: (self, ..vals) => {
-      let tree = self
-      for v in vals.pos() {
-        tree = (tree.insert)(v)
-      }
-      tree
-    },
-
-    delete: (self, v, strategy: "top-down") => {
-      let cls = self.meta.cls
-      let result = if strategy == "top-down" {
-        _delete-td(cls, self, v)
-      } else if strategy == "bottom-up" {
-        _delete-bu(cls, self, v)
-      } else {
-        panic(
-          "B24.delete: unknown strategy "
-            + repr(strategy)
-            + "; supported: \"top-down\", \"bottom-up\".",
-        )
-      }
-      // Empty leaf at the root means the entire tree has been emptied.
-      // For consistency with BST.delete (which can return `none` from
-      // a 1-node tree), we surface that as `none` at the public API.
-      if result.keys.len() == 0 and _is-leaf(result) {
-        none
-      } else { result }
-    },
-
-    describe: self => {
-      let key-str = range(self.keys.len())
-        .map(i => tree-anim._alt-key-label(self, i))
-        .join(", ")
-      if _is-leaf(self) {
-        "[" + key-str + "]"
-      } else {
-        let cs = self.children.map(c => (c.describe)()).join(", ")
-        "[" + key-str + "] (children: " + cs + ")"
-      }
-    },
-
-    // Returns `none` if all invariants hold, otherwise an explanatory
-    // string. Used in tests; safe to call on user-built trees too.
-    check-invariants: self => {
-      let walk(node, is-root) = {
-        let k = node.keys.len()
-        if k < 1 or k > 3 {
-          return (
-            err: "node has "
-              + str(k)
-              + " keys (must be 1..3)",
-            depth: none,
-          )
-        }
-        for i in range(k - 1) {
-          if node.keys.at(i) >= node.keys.at(i + 1) {
-            return (
-              err: "keys not strictly increasing: "
-                + repr(node.keys),
-              depth: none,
-            )
-          }
-        }
-        if _is-leaf(node) {
-          return (err: none, depth: 1)
-        }
-        if node.children.len() != k + 1 {
-          return (
-            err: "child count "
-              + str(node.children.len())
-              + " ≠ keys + 1 ("
-              + str(k + 1)
-              + ")",
-            depth: none,
-          )
-        }
-        let leaf-depth = none
-        for c in node.children {
-          let r = walk(c, false)
-          if r.err != none { return r }
-          if leaf-depth == none {
-            leaf-depth = r.depth
-          } else if r.depth != leaf-depth {
-            return (
-              err: "unequal leaf depths under node "
-                + repr(node.keys),
-              depth: none,
-            )
-          }
-        }
-        (err: none, depth: leaf-depth + 1)
-      }
-      walk(self, true).err
-    },
-
-    in-order: self => _traverse-in(self, ""),
-    pre-order: self => _traverse-pre(self, ""),
-    post-order: self => _traverse-post(self, ""),
-    level-order: self => {
-      let result = ()
-      let queue = ("",)
-      while queue.len() > 0 {
-        let path = queue.first()
-        queue = queue.slice(1)
-        let n = _resolve-at(self, path)
-        for i in range(n.keys.len()) {
-          result.push(path + "#" + str(i))
-        }
-        if not _is-leaf(n) {
-          for j in range(n.children.len()) {
-            queue.push(path + str(j))
-          }
-        }
-      }
-      result
-    },
-
-    // --- display methods ---------------------------------------------
-
-    display: (self, theme: auto, render-theme: auto) => {
-      // One-frame Frame array — the static tree. `step` is none.
-      let captions = (none,)
-      let steps-meta = (none,)
-      let alts = ("2-4 tree: " + (self.describe)() + ".",)
-      let build-snapshots = (_op, _rt) => (tree-anim.blank-snapshot(),)
-      _make-frames(
-        self,
-        build-snapshots,
-        captions,
-        steps-meta,
-        alts,
-        _resolve-op-theme-arg(theme),
-        _resolve-render-theme-arg(render-theme),
-      )
-    },
-
-    search-display: (self, v, theme: auto, render-theme: auto) => {
-      // One frame per comparison made along the search path. The
-      // first frame is the unmodified tree (kind: "init"). Each
-      // subsequent frame highlights the compared compartment with
-      // `op.search-stroke` (key-styles) and attaches the comparison
-      // string as an inline note. `step` is:
-      //   (kind: "init")
-      //   (kind: "compare", path, key-idx, cmp, found: bool)
-      //
-      // Search misses are rendered as well — the final comparison is
-      // the last key checked at the leaf before the search would
-      // descend off the tree. `found` stays false; the alt text and
-      // caption explain the miss.
-      let walk(node, path) = {
-        let scan(i) = {
-          if i == node.keys.len() {
-            if _is-leaf(node) {
-              // Search would descend off the rightmost child of a
-              // leaf — emit a terminal "v > kₙ₋₁" comparison.
-              let k = node.keys.last()
-              ((
-                path: path,
-                key-idx: node.keys.len() - 1,
-                key-value: k,
-                key-label: tree-anim._alt-key-label(node, node.keys.len() - 1),
-                cmp: str(v) + " > " + str(k),
-                found: false,
-              ),)
-            } else { walk(node.children.at(i), path + str(i)) }
-          } else {
-            let k = node.keys.at(i)
-            let cmp = if v == k {
-              str(v) + " = " + str(k)
-            } else if v < k {
-              str(v) + " < " + str(k)
-            } else {
-              str(v) + " > " + str(k)
-            }
-            let entry = (
-              path: path,
-              key-idx: i,
-              key-value: k,
-              key-label: tree-anim._alt-key-label(node, i),
-              cmp: cmp,
-              found: v == k,
-            )
-            if v == k {
-              (entry,)
-            } else if v < k {
-              if _is-leaf(node) {
-                (entry,)
-              } else { (entry,) + walk(node.children.at(i), path + str(i)) }
-            } else {
-              (entry,) + scan(i + 1)
-            }
-          }
-        }
-        scan(0)
-      }
-      let cmps = walk(self, "")
-      let captions = (none,)
-      let steps-meta = ((kind: "init"),)
-      let alts = (
-        "2-4 tree: "
-          + (self.describe)()
-          + ". About to search for "
-          + str(v)
-          + ".",
-      )
-      for (i, c) in cmps.enumerate() {
-        captions.push(c.cmp)
-        steps-meta.push((
-          kind: "compare",
-          path: c.path,
-          key-idx: c.key-idx,
-          cmp: c.cmp,
-          found: c.found,
-        ))
-        let is-last = i == cmps.len() - 1
-        let alt = if c.found {
-          "Match found at key " + c.key-label + "."
-        } else if is-last {
-          (
-            "Comparing "
-              + c.cmp
-              + " at key "
-              + c.key-label
-              + "; search ends here, "
-              + str(v)
-              + " is not in the tree."
-          )
-        } else {
-          (
-            "Comparing "
-              + c.cmp
-              + " at key "
-              + c.key-label
-              + "; continuing search."
-          )
-        }
-        alts.push(alt)
-      }
-
-      let build-snapshots = (op, _rt) => {
-        let r = tree-anim.make-renderer(
-          self,
-          sticky: true,
-          default-node-style: _b24-default-node-style,
-        )
-        for c in cmps {
-          let node = (self.resolve)(c.path)
-          r = (r.push-with-node)(
-            c.path,
-            key-styles: _solo-key-style(
-              node.keys.len(),
-              c.key-idx,
-              (stroke: op.search-stroke),
-            ),
-            note: c.cmp,
-          )
-        }
-        r.snapshots
-      }
-
-      _make-frames(
-        self,
-        build-snapshots,
-        captions,
-        steps-meta,
-        alts,
-        _resolve-op-theme-arg(theme),
-        _resolve-render-theme-arg(render-theme),
-      )
-    },
-
-    delete-display: (
-      self,
-      v,
-      strategy: "top-down",
-      theme: auto,
-      render-theme: auto,
-    ) => {
-      let cls = self.meta.cls
-      let events = if strategy == "top-down" {
-        _td-delete-events(cls, self, v)
-      } else if strategy == "bottom-up" {
-        _bu-delete-events(cls, self, v)
-      } else {
-        panic(
-          "B24.delete-display: unknown strategy "
-            + repr(strategy)
-            + "; supported: \"top-down\", \"bottom-up\".",
-        )
-      }
-      // Resolve the deleted key's display name up front (v is guaranteed
-      // present here — delete-display panics otherwise).
-      let bp = (self.by-value)(v).split("#")
-      let disp = tree-anim._alt-key-label(_resolve-at(self, bp.at(0)), int(bp.at(1)))
-      let specs = _delete-events-to-specs(events, v, disp)
-      _make-frames-multi(
-        specs,
-        _resolve-op-theme-arg(theme),
-        _resolve-render-theme-arg(render-theme),
-      )
-    },
-
-    insert-display: (
-      self,
-      v,
-      label: auto,
-      strategy: "top-down",
-      theme: auto,
-      render-theme: auto,
-    ) => {
-      let cls = self.meta.cls
-      let events = if strategy == "top-down" {
-        _td-insert-events(cls, self, v, label)
-      } else if strategy == "bottom-up" {
-        _bu-insert-events(cls, self, v, label)
-      } else {
-        panic(
-          "B24.insert-display: unknown strategy "
-            + repr(strategy)
-            + "; supported: \"top-down\", \"bottom-up\".",
-        )
-      }
-      // The inserted key displays its label when a string was given.
-      let disp = if type(label) == str { label } else { str(v) }
-      let specs = _insert-events-to-specs(events, v, disp)
-      _make-frames-multi(
-        specs,
-        _resolve-op-theme-arg(theme),
-        _resolve-render-theme-arg(render-theme),
-      )
-    },
-
-    in-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
-      self,
-      (self.in-order)(),
-      "in-order",
-      _resolve-op-theme-arg(theme),
-      _resolve-render-theme-arg(render-theme),
-    ),
-    pre-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
-      self,
-      (self.pre-order)(),
-      "pre-order",
-      _resolve-op-theme-arg(theme),
-      _resolve-render-theme-arg(render-theme),
-    ),
-    post-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
-      self,
-      (self.post-order)(),
-      "post-order",
-      _resolve-op-theme-arg(theme),
-      _resolve-render-theme-arg(render-theme),
-    ),
-    level-order-display: (self, theme: auto, render-theme: auto) => _render-traversal(
-      self,
-      (self.level-order)(),
-      "level-order",
-      _resolve-op-theme-arg(theme),
-      _resolve-render-theme-arg(render-theme),
+/// The tree as a single static frame.
+/// -> array
+#let display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = _frames(
+  (
+    (
+      structure: tree,
+      build: _ => blank-snapshot(),
+      caption: none,
+      step: (kind: "static", result: tree),
+      alt: alt-describe(_DS, describe(tree)),
     ),
   ),
+  theme,
+  node-style,
+  edge-style,
 )
 
-// ===================================================================
-// Convenience constructor
-// ===================================================================
-
-/// Build a 2-3-4 tree from a list of values. The first value seeds
-/// the root; subsequent values are inserted left-to-right using the
-/// default (#raw("\"top-down\"")) strategy. Each positional value may
-/// be either a bare integer or a #raw("(value, label)") 2-tuple.
-///
-/// ```typc
-/// // root 4, then insert 1, 7, 3, 6, 8
-/// let t = b24(4, 1, 7, 3, 6, 8)
-///
-/// // mixed labels
-/// let t = b24((4, [FOUR]), 1, 7, (6, [SIX]))
-/// ```
-///
-/// -> dictionary
-#let b24(
-  /// Positional values. Each is either a bare value or a
-  /// #raw("(value, label)") 2-tuple. At least one is required (the
-  /// root).
-  ..vals,
-) = {
-  let xs = vals.pos()
-  assert(
-    xs.len() > 0,
-    message: "b24: at least one value required (the root)",
-  )
-  let parse(x) = if type(x) == array {
-    assert(
-      x.len() == 2,
-      message: "b24: expected (value, label) 2-tuple, got " + repr(x),
-    )
-    (value: x.at(0), label: x.at(1))
-  } else {
-    (value: x, label: auto)
+// Every comparison a search for `v` makes, ending at a match or at the last
+// key checked before the search would descend off a leaf. Unlike `path-to`
+// this narrates a miss instead of panicking.
+#let _search-walk(tree, v) = {
+  let walk(n, path) = {
+    let scan(i) = {
+      if i == n.keys.len() {
+        if _is-leaf(n) {
+          // The search would descend off the rightmost child of a leaf —
+          // report the terminal "v > last key" comparison.
+          let k = n.keys.last()
+          ((
+            path: path,
+            key-idx: n.keys.len() - 1,
+            key-value: k,
+            key-label: alt-key-label(n, n.keys.len() - 1),
+            cmp: str(v) + " > " + str(k),
+            found: false,
+          ),)
+        } else { walk(n.children.at(i), path + str(i)) }
+      } else {
+        let k = n.keys.at(i)
+        let cmp = if v == k {
+          str(v) + " = " + str(k)
+        } else if v < k { str(v) + " < " + str(k) } else {
+          str(v) + " > " + str(k)
+        }
+        let entry = (
+          path: path,
+          key-idx: i,
+          key-value: k,
+          key-label: alt-key-label(n, i),
+          cmp: cmp,
+          found: v == k,
+        )
+        if v == k {
+          (entry,)
+        } else if v < k {
+          if _is-leaf(n) { (entry,) } else {
+            (entry,) + walk(n.children.at(i), path + str(i))
+          }
+        } else {
+          (entry,) + scan(i + 1)
+        }
+      }
+    }
+    scan(0)
   }
-  let head = parse(xs.first())
-  let tree = (B24.new)(
-    keys: (head.value,),
-    labels: (head.label,),
-    children: (),
-  )
-  for x in xs.slice(1) {
-    let p = parse(x)
-    tree = (tree.insert)(p.value, label: p.label)
-  }
-  tree
+  walk(tree, "")
 }
+
+/// Animate searching for `v`: one frame per comparison, each ringing the
+/// compared compartment and hanging the comparison beside its node. A miss
+/// is animated too — the walk ends on the last key checked before the search
+/// would run off the tree.
+/// -> array
+#let search-display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to search for.
+  /// -> int
+  v,
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = {
+  let cmps = _search-walk(tree, v)
+  let n = cmps.len()
+
+  // One shared closure builds every snapshot, each frame indexing into the
+  // result; Typst memoizes the call, so the accumulation runs once.
+  let build-all = th => {
+    let cur = blank-snapshot()
+    let out = (cur,)
+    for c in cmps {
+      let node = _resolve-at(tree, c.path)
+      cur = with-node(
+        cur,
+        c.path,
+        (
+          key-styles: _solo-key-style(
+            node.keys.len(),
+            c.key-idx,
+            (stroke: th.op.search-stroke),
+          ),
+          note: c.cmp,
+        ),
+      )
+      out.push(cur)
+    }
+    out
+  }
+
+  let specs = (
+    (
+      structure: tree,
+      build: th => build-all(th).at(0),
+      caption: none,
+      step: (kind: "init"),
+      alt: alt-intro(_DS, describe(tree), "search for " + str(v)),
+    ),
+  )
+  for (i, c) in cmps.enumerate() {
+    let at = i + 1
+    specs.push((
+      structure: tree,
+      build: th => build-all(th).at(at),
+      caption: c.cmp,
+      step: (
+        kind: if c.found { "found" } else if at == n { "not-found" } else {
+          "compare"
+        },
+        path: c.path,
+        key-idx: c.key-idx,
+        cmp: c.cmp,
+        found: c.found,
+        ..if at == n { (result: tree) },
+      ),
+      alt: if c.found {
+        "Match found at key " + c.key-label + "."
+      } else if at == n {
+        ("Comparing "
+          + c.cmp
+          + " at key "
+          + c.key-label
+          + "; search ends here, "
+          + str(v)
+          + " is not in the tree.")
+      } else {
+        ("Comparing " + c.cmp + " at key " + c.key-label + "; continuing search.")
+      },
+    ))
+  }
+  _frames(specs, theme, node-style, edge-style)
+}
+
+/// Animate inserting `v` under the chosen `strategy`.
+///
+/// Top-down splits every full node it passes on the way down, so the leaf it
+/// reaches always has room; bottom-up walks straight to the leaf, lets it
+/// overflow to 4 keys, and splits back up. The two can land the key in
+/// different places — running both is the point.
+/// -> array
+#let insert-display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to insert.
+  /// -> int
+  v,
+  /// What to draw in the new compartment; `auto` draws `str(v)`.
+  /// -> auto | any
+  label: auto,
+  /// `"top-down"` or `"bottom-up"`.
+  /// -> str
+  strategy: "top-down",
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = {
+  _assert-strategy(strategy, "b24.insert-display")
+  let events = if strategy == "top-down" {
+    _td-insert-events(tree, v, label)
+  } else { _bu-insert-events(tree, v, label) }
+  // The inserted key displays its label when a string was given.
+  let disp = if type(label) == str { label } else { str(v) }
+  _frames(
+    _stamp-result(_insert-specs(events, v, disp), events.last().tree),
+    theme,
+    node-style,
+    edge-style,
+  )
+}
+
+/// Animate deleting `v` under the chosen `strategy`.
+///
+/// Top-down refills every under-full node it passes on the way down — by
+/// borrowing from a sibling or merging with one — so the leaf it reaches can
+/// always afford to lose a key; bottom-up removes first and repairs on the
+/// way back up.
+///
+/// With `search: false` the descent is dropped entirely — no comparison
+/// frames, and no comparison highlights inherited by the frames that remain —
+/// so the animation is only the structural work.
+/// -> array
+#let delete-display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// The key to delete.
+  /// -> int
+  v,
+  /// Whether to show one frame per comparison on the way down.
+  /// -> bool
+  search: true,
+  /// `"top-down"` or `"bottom-up"`.
+  /// -> str
+  strategy: "top-down",
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = {
+  _assert-strategy(strategy, "b24.delete-display")
+  let events = if strategy == "top-down" {
+    _td-delete-events(tree, v)
+  } else { _bu-delete-events(tree, v) }
+  let after = _empty-to-none(events.last().tree)
+  // Dropping the comparison frames also means dropping the trail they left:
+  // the structural frames replay the descent's history, and half a search is
+  // more confusing than none.
+  let shown = if search { events } else {
+    events
+      .filter(e => e.kind != "compare")
+      .map(e => if "history" in e { (..e, history: ()) } else { e })
+  }
+  // Name the deleted key the way it is drawn. `v` is known present here —
+  // the event producers panic otherwise — so `by-value` cannot fail.
+  let bp = by-value(tree, v).split("#")
+  let disp = alt-key-label(_resolve-at(tree, bp.at(0)), int(bp.at(1)))
+  _frames(
+    _stamp-result(_delete-specs(shown, v, disp), after),
+    theme,
+    node-style,
+    edge-style,
+  )
+}
+
+// ===================================================================
+// Traversals
+// ===================================================================
+//
+// One frame per key visited: the visited compartment is filled from the
+// theme's `traversal-palette` and the running output accumulates in the
+// caption. `paths` is the per-compartment visit order, each entry
+// `"<node-path>#<key-idx>"`.
+
+#let _split-path(p) = {
+  let parts = p.split("#")
+  (parts.at(0), int(parts.at(1)))
+}
+
+#let _traversal(tree, paths, name, node-style, edge-style, theme) = {
+  let n = paths.len()
+
+  // One shared closure builds every snapshot; each frame then indexes into
+  // the result. Typst memoizes the call, so an n-frame traversal costs one
+  // accumulation pass rather than n of them.
+  let build-all = th => {
+    let g = gradient.linear(..th.op.traversal-palette)
+    let cur = blank-snapshot()
+    let out = (cur,)
+    for (i, p) in paths.enumerate() {
+      let (node-path, key-idx) = _split-path(p)
+      let node = _resolve-at(tree, node-path)
+      let t = if n <= 1 { 0% } else { (i / (n - 1)) * 100% }
+      let fill = g.sample(t)
+      cur = with-node(
+        cur,
+        node-path,
+        (
+          key-styles: _solo-key-style(
+            node.keys.len(),
+            key-idx,
+            (fill: fill, text-fill: _text-fill-for(fill)),
+          ),
+        ),
+      )
+      out.push(cur)
+    }
+    out
+  }
+
+  let specs = (
+    (
+      structure: tree,
+      build: th => build-all(th).at(0),
+      caption: none,
+      step: (kind: "init", ..if n == 0 { (result: tree) }),
+      alt: alt-intro(_DS, describe(tree), "traverse " + name),
+    ),
+  )
+
+  let output = ()
+  for (i, p) in paths.enumerate() {
+    let (node-path, key-idx) = _split-path(p)
+    let node = _resolve-at(tree, node-path)
+    let disp = alt-key-label(node, key-idx)
+    output.push(disp)
+    let at = i + 1
+    specs.push((
+      structure: tree,
+      build: th => build-all(th).at(at),
+      caption: [Output: #raw("[" + output.join(", ") + "]")],
+      step: (
+        kind: "visit",
+        path: p,
+        index: at,
+        value: node.keys.at(key-idx),
+        ..if at == n { (result: tree) },
+      ),
+      alt: "Visited "
+        + disp
+        + " (visit "
+        + str(at)
+        + " of "
+        + str(n)
+        + "); output so far: "
+        + output.join(", ")
+        + ".",
+    ))
+  }
+
+  _frames(specs, theme, node-style, edge-style)
+}
+
+/// Animate an in-order traversal — the sorted walk, threading each key
+/// between its flanking subtrees.
+/// -> array
+#let in-order-display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = _traversal(tree, in-order(tree), "in-order", node-style, edge-style, theme)
+
+/// Animate a pre-order traversal — a node's keys before its children.
+/// -> array
+#let pre-order-display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = _traversal(tree, pre-order(tree), "pre-order", node-style, edge-style, theme)
+
+/// Animate a post-order traversal — a node's keys after its children.
+/// -> array
+#let post-order-display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = _traversal(tree, post-order(tree), "post-order", node-style, edge-style, theme)
+
+/// Animate a level-order (breadth-first) traversal.
+/// -> array
+#let level-order-display(
+  /// The tree.
+  /// -> dictionary
+  tree,
+  /// Base node styling.
+  /// -> dictionary
+  node-style: (:),
+  /// Base edge styling.
+  /// -> dictionary
+  edge-style: (:),
+  /// Partial theme override for this call.
+  /// -> dictionary
+  theme: (:),
+) = _traversal(tree, level-order(tree), "level-order", node-style, edge-style, theme)

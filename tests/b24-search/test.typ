@@ -4,21 +4,21 @@
 //   - miss (search ends at a leaf without finding the value)
 
 #import "/src/lib.typ" as starling
-#import starling: B24, b24
+#import starling: b24
 
 #set page(width: auto, height: auto, margin: 1em)
 
-#let t = b24(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
+#let t = b24.new(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
 
 == Hit at the root (15)
-#starling.stacked((t.search-display)(15))
+#starling.stacked(b24.search-display(t, 15))
 
 #pagebreak()
 
 == Hit on a deep compartment (19)
-#starling.stacked((t.search-display)(19))
+#starling.stacked(b24.search-display(t, 19))
 
 #pagebreak()
 
 == Miss (8 is not in the tree)
-#starling.stacked((t.search-display)(8))
+#starling.stacked(b24.search-display(t, 8))
