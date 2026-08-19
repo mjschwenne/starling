@@ -4,21 +4,21 @@
 //   - a word that is an existing prefix (only the terminal bit flips)
 
 #import "/src/lib.typ" as starling
-#import starling: Trie, trie
+#import starling: trie
 
 #set page(width: auto, height: auto, margin: 1em)
 
-#let t = trie("cat", "car", "card", "dog")
+#let t = trie.new("cat", "car", "card", "dog")
 
 == Extend an existing prefix — insert "care"
-#starling.stacked((t.insert-display)("care"))
+#starling.stacked(trie.insert-display(t, "care"))
 
 #pagebreak()
 
 == Brand-new branch — insert "bat"
-#starling.stacked((t.insert-display)("bat"))
+#starling.stacked(trie.insert-display(t, "bat"))
 
 #pagebreak()
 
 == Existing prefix becomes a word — insert "ca"
-#starling.stacked((t.insert-display)("ca"))
+#starling.stacked(trie.insert-display(t, "ca"))

@@ -1949,13 +1949,6 @@
   events
 }
 
-// Convert events to specs. The `build` closure dispatches on event
-// kind to apply the right styling. Captured event payloads are copied
-// at closure-creation time (Typst value semantics), so each frame
-// renders the snapshot for its own event regardless of later events.
-// `disp` is the human-readable name of the inserted key — its label
-// when a string was supplied, else `str(v)` (see `_alt-key-label`).
-
 // ===================================================================
 // Events to frames
 // ===================================================================

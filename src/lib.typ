@@ -26,6 +26,7 @@
 #import "ds/rbt.typ" as rbt
 #import "ds/avl.typ" as avl
 #import "ds/b24.typ" as b24
+#import "ds/trie.typ" as trie
 
 // The semantic style vocabulary — `styles.attention(..)`, `styles.ghost(..)`
 // and friends, each returning an op array that follows the active theme.
@@ -80,20 +81,11 @@
 // TRANSITIONAL — the pre-1.0 surface for the not-yet-migrated structures
 // ===================================================================
 //
-// Trie, Graph, Sort, Skiplist and the git DSL still ride the
-// old typsy stack. Their exports below are unchanged and keep working; each
-// block disappears as its structure moves into `ds/` (Phases 4-6). Nothing
-// here is part of the 1.0 surface.
+// Graph, Sort, Skiplist and the git DSL still ride the old typsy stack.
+// Their exports below are unchanged and keep working; each block disappears
+// as its structure moves into `ds/` (Phases 5-6). Nothing here is part of
+// the 1.0 surface.
 
-#import "./trie.typ": (
-  Trie,
-  trie,
-  default-trie-theme,
-  set-trie-theme,
-  TrieTheme,
-  paint-trie,
-  _trie-theme-state,
-)
 #import "./graph.typ": Graph, graph, aux-strip, aux-view-title
 #import "./graph-draw.typ": draw-graph, node-anchor, edge-key, make-graph-renderer
 #import "./sort.typ": (

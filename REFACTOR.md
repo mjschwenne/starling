@@ -704,10 +704,12 @@ Signature rules, uniform across all modules:
   search phase makes sense (BST/RBT/AVL have it today; add to
   B24/Trie/HashMap/Skiplist for uniformity, default matching current behavior).
 
-  B24's landed in Phase 4 and defaults to `true`, since its delete always
-  narrated the descent. `false` drops the comparison frames *and* the trail
-  they left on the structural frames that follow — the frames replay the
-  descent's history, and half a search reads worse than none.
+  B24's and the trie's landed in Phase 4, both defaulting to `true`, since
+  both deletes always narrated the descent. For B24, `false` drops the
+  comparison frames *and* the trail they left on the structural frames that
+  follow — those frames replay the descent's history, and half a search reads
+  worse than none. For the trie it drops the walk phase outright, so the
+  animation opens on the unmark.
 - DS-specific flags keep their current names where semantics differ: `bits:`
   (rbt), `factors:`/`heights:` (avl), `strategy:` (b24, hashmap),
   `variant:`/`separate-counts:` (sort), `tombstone:`/`rehash:` (hashmap),
@@ -753,12 +755,20 @@ b24.leaf(..keys)
   one down. `avl-fixup`'s two fixtures are exactly that, and its refs are
   unchanged because the escape hatch exists.
 - `bst` gains `check-invariants` (the only DS missing it).
-- ⚠️ **Amended in Phase 4:** `b24.check-invariants` returns `true` or panics,
-  like every other module's. Pre-1.0 it returned `none` on success and an
-  explanatory *string* on failure, so the only way to use it was
+- ⚠️ **Amended in Phase 4:** `b24.check-invariants` and
+  `trie.check-invariants` return `true` or panic, like every other module's.
+  Pre-1.0 they returned `none` on success and an explanatory *string* on
+  failure, so the only way to use them was
   `assert.eq(check-invariants(t), none)` — which reads backwards and, worse,
-  is a different contract from its four siblings for no reason. Uniformity is
+  is a different contract from their siblings for no reason. Uniformity is
   the whole point of §7.1.
+- ⚠️ **Also Phase 4:** §5's "captions are always content" needs a small piece
+  of care in the trie, whose captions quote the word (`found "cat"`,
+  `no 'b' edge`). Rewriting those as markup would turn the straight quotes
+  into smart ones and move every ref. `ds/trie.typ` has a one-line `_cap(s)`
+  that interpolates the string into content instead, which is content by the
+  time a frame sees it and renders identically. All 88 compared frames stayed
+  byte-identical through the conversion.
 - Path alphabets, `PathId` semantics, and the `#<int>` compartment suffix are
   unchanged.
 
@@ -1179,7 +1189,21 @@ pre-1.0 equivalent to shrink against.)
 
 **Done when:** suite green; bst/hashmap tests pass on the new API; conformance
 test passes; scaffolding measured and acceptable.
-### Phase 4 — Remaining Trees: Rbt, Avl, B24, Trie
+### Phase 4 — Remaining Trees: Rbt, Avl, B24, Trie — ✅ DONE (commits `Phase 4a`–`4d`)
+
+Decisions made while implementing it are folded into §§5, 7.1, 7.2 and 8
+above, each marked "Phase 4": the `rbt.red` / `rbt.paint-red` split (§8),
+`avl.node`'s `height:` escape hatch (§7.2), `check-invariants` returning
+`true` for b24 and the trie (§7.2), the trie's `_cap` for quoted captions
+(§7.2), and B24's / the trie's `delete-display(search:)` (§7.1).
+
+Every port was validated frame by frame, not just by refs — old and new
+rendered side by side and compared by PNG hash. 111 RBT frames across 24
+display calls, 178 AVL frames across 33, 179 B24 frames across 33, 88 trie
+frames across 20. All byte-identical. Two refs moved, both deliberately: a
+ninth `b24-delete` panel for the new `search: false`, and `trie-display`'s
+second heading, which named `set-trie-theme` (the canvas below it is
+unchanged — checked by reverting the heading alone).
 
 Per module, in this order (each is one commit): port to `ds/`, wire tree-common
 (rbt/avl), literal builders, style vocabulary

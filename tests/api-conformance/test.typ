@@ -15,6 +15,7 @@
 #import "/src/ds/rbt.typ"
 #import "/src/ds/avl.typ"
 #import "/src/ds/b24.typ"
+#import "/src/ds/trie.typ"
 
 // ===================================================================
 // The per-module contract
@@ -161,6 +162,22 @@
     ),
   ),
   (
+    name: "trie",
+    seed: "cat",
+    module: trie,
+    verbs: (
+      "insert",
+      "insert-many",
+      "delete",
+      "contains",
+      "has-prefix",
+      "path-to",
+      "resolve",
+      "words",
+    ),
+    displays: ("search-display", "insert-display", "delete-display"),
+  ),
+  (
     name: "hashmap",
     module: hashmap,
     verbs: (
@@ -204,8 +221,10 @@
     }
   }
   // The structure is always the first positional argument, so a display can be
-  // called on the structure alone and still produce frames.
-  let frames = (d.display)((d.new)(1))
+  // called on the structure alone and still produce frames. `new` takes
+  // whatever that structure is built from — integers for most, words for a
+  // trie — so the table names one sample argument per module.
+  let frames = (d.display)((d.new)(m.at("seed", default: 1)))
   assert(
     type(frames) == array and frames.len() >= 1,
     message: m.name + ".display must return a non-empty array of frames.",
@@ -229,6 +248,7 @@
   "rbt",
   "avl",
   "b24",
+  "trie",
   "hashmap",
   "styles",
   "git",
@@ -285,6 +305,11 @@
   "RBT",
   "AVL",
   "B24",
+  "Trie",
+  "paint-trie",
+  "set-trie-theme",
+  "default-trie-theme",
+  "TrieTheme",
   "paint-rbt",
   "set-rbt-theme",
   "default-rbt-theme",

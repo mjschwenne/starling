@@ -4,21 +4,21 @@
 //   - a miss (a character with no matching edge)
 
 #import "/src/lib.typ" as starling
-#import starling: Trie, trie
+#import starling: trie
 
 #set page(width: auto, height: auto, margin: 1em)
 
-#let t = trie("cat", "car", "card", "dog")
+#let t = trie.new("cat", "car", "card", "dog")
 
 == Hit — stored word "card"
-#starling.stacked((t.search-display)("card"))
+#starling.stacked(trie.search-display(t, "card"))
 
 #pagebreak()
 
 == Prefix only — "ca" is not a stored word
-#starling.stacked((t.search-display)("ca"))
+#starling.stacked(trie.search-display(t, "ca"))
 
 #pagebreak()
 
 == Miss — no 'b' edge out of "ca"
-#starling.stacked((t.search-display)("cab"))
+#starling.stacked(trie.search-display(t, "cab"))
