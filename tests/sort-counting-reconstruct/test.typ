@@ -6,5 +6,5 @@
 #set page(width: auto, height: auto, margin: 10pt)
 
 #starling.stacked(
-  (sort(2, 0, 1, 2, 0).counting-sort-display)(variant: "reconstruct"),
+  sort.counting-display(sort.new(2, 0, 1, 2, 0), variant: "reconstruct"),
 )

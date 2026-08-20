@@ -17,6 +17,7 @@
 #import "/src/ds/b24.typ"
 #import "/src/ds/trie.typ"
 #import "/src/ds/graph.typ"
+#import "/src/ds/sort.typ"
 
 // ===================================================================
 // The per-module contract
@@ -208,6 +209,22 @@
     ),
   ),
   (
+    // A sort is an array of keys, so it has no insert/delete either; its
+    // verbs are the two algorithms plus the oracle they are checked against.
+    name: "sort",
+    module: sort,
+    verbs: (
+      "counting",
+      "radix",
+      "sorted",
+      "len",
+      "positioned",
+      "cell-key",
+      "entry-key",
+    ),
+    displays: ("counting-display", "radix-display"),
+  ),
+  (
     name: "hashmap",
     module: hashmap,
     verbs: (
@@ -242,8 +259,10 @@
     )
   }
   // Every animation is named `<op>-display`, and nothing else wears the word.
+  // Private helpers (`_`-prefixed, the convention for "not API" in a language
+  // with no visibility control) are exempt.
   for name in d.keys() {
-    if name.contains("display") {
+    if name.contains("display") and not name.starts-with("_") {
       assert(
         name == "display" or name.ends-with("-display"),
         message: m.name + ": '" + name + "' should be named '<op>-display'.",
@@ -281,6 +300,7 @@
   "trie",
   "graph",
   "hashmap",
+  "sort",
   "styles",
   "aux",
   "git",
@@ -353,6 +373,15 @@
   "edge-key",
   "make-graph-renderer",
   "aux-view-title",
+  "Sort",
+  "set-sort-theme",
+  "default-sort-theme",
+  "SortTheme",
+  "array-cell-key",
+  "array-entry-key",
+  "array-cell-anchor",
+  "array-entry-anchor",
+  "make-array-renderer",
   "concat-frames",
   "GraphNodeId",
   "TreeRenderer",

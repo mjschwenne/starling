@@ -7,5 +7,5 @@
 #set page(width: auto, height: auto, margin: 10pt)
 
 #starling.stacked(
-  (sort(1, 0, 2, 1, 3, 0).counting-sort-display)(separate-counts: true),
+  sort.counting-display(sort.new(1, 0, 2, 1, 3, 0), separate-counts: true),
 )

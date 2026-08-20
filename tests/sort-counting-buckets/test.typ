@@ -8,12 +8,15 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#starling.stacked((sort(3, 1, 4, 1, 0).counting-sort-display)(variant: "buckets"))
+#starling.stacked(sort.counting-display(sort.new(3, 1, 4, 1, 0), variant: "buckets"))
 
 // Enumeration: weekday labels distributed by ordinal, gathered in order.
-#starling.stacked((sort(
-  (value: 2, label: [Tue]),
-  (value: 0, label: [Sun]),
-  (value: 2, label: [Tue]),
-  (value: 1, label: [Mon]),
-).counting-sort-display)(variant: "buckets"))
+#starling.stacked(sort.counting-display(
+  sort.new(
+    (value: 2, label: [Tue]),
+    (value: 0, label: [Sun]),
+    (value: 2, label: [Tue]),
+    (value: 1, label: [Mon]),
+  ),
+  variant: "buckets",
+))

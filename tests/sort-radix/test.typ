@@ -6,4 +6,4 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#starling.stacked((sort(23, 4, 8, 17).radix-sort-display)())
+#starling.stacked(sort.radix-display(sort.new(23, 4, 8, 17)))

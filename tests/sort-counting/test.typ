@@ -5,4 +5,4 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#starling.stacked((sort(1, 0, 2, 1, 3, 0).counting-sort-display)())
+#starling.stacked(sort.counting-display(sort.new(1, 0, 2, 1, 3, 0)))

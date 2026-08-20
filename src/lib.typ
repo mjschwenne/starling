@@ -28,6 +28,7 @@
 #import "ds/b24.typ" as b24
 #import "ds/trie.typ" as trie
 #import "ds/graph.typ" as graph
+#import "ds/sort.typ" as sort
 
 // The semantic style vocabulary — `styles.attention(..)`, `styles.ghost(..)`
 // and friends, each returning an op array that follows the active theme.
@@ -84,32 +85,17 @@
 #import "draw/tree.typ": draw-tree
 #import "draw/graph.typ": draw-graph
 #import "draw/hashmap.typ": draw-hashmap
+#import "draw/array.typ": draw-array
 
 // ===================================================================
 // TRANSITIONAL — the pre-1.0 surface for the not-yet-migrated structures
 // ===================================================================
 //
-// Sort, Skiplist and the git DSL still ride the old typsy stack.
+// Skiplist and the git DSL still ride the old typsy stack.
 // Their exports below are unchanged and keep working; each block disappears
 // as its structure moves into `ds/` (Phases 5-6). Nothing here is part of
 // the 1.0 surface.
 
-#import "./sort.typ": (
-  Sort,
-  sort,
-  default-sort-theme,
-  set-sort-theme,
-  SortTheme,
-  _sort-theme-state,
-)
-#import "./array-draw.typ": (
-  draw-array,
-  array-cell-anchor,
-  array-entry-anchor,
-  array-cell-key,
-  array-entry-key,
-  make-array-renderer,
-)
 #import "./skiplist.typ": (
   Skiplist,
   skiplist,

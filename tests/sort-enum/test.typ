@@ -9,21 +9,21 @@
 
 // Weekdays keyed by their ordinal, displayed by name — out of order so
 // placement visibly reorders the labels, not just the keys.
-#let days = sort(
+#let days = sort.new(
   (value: 3, label: [Wed]),
   (value: 1, label: [Mon]),
   (value: 0, label: [Sun]),
   (value: 2, label: [Tue]),
 )
 
-#starling.stacked((days.counting-sort-display)())
+#starling.stacked(sort.counting-display(days))
 
 // Radix over labelled numbers: the digit subscripts read off the key while
 // the label rides along to the sorted output.
-#let nums = sort(
+#let nums = sort.new(
   (value: 23, label: [23kg]),
   (value: 4, label: [4kg]),
   (value: 8, label: [8kg]),
 )
 
-#starling.stacked((nums.radix-sort-display)())
+#starling.stacked(sort.radix-display(nums))
