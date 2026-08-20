@@ -556,6 +556,12 @@ Canonical `step.kind` values, enforced during each DS port:
 - Row/column/aux-view kinds (`"buckets"`, `"count"`, `"header"`, `"dist-map"`,
   …) are a different namespace from step kinds; they stay on table/view dicts
   and must never appear as a `step.kind`.
+
+  One overlap survives on purpose, settled in Phase 5: the graph's terminal
+  *prune* frame has `step.kind: "spanning-tree"`. It is a genuine step —
+  "the non-tree edges are gone, this is the tree" — and it closes Prim,
+  Kruskal, and both spanning-tree traversals alike, so it is DS-specific
+  vocabulary rather than a stray view kind.
 - **Every** display's final frame `step` carries
   `result: <the post-operation structure>` (for searches/traversals: the
   unchanged input). This feeds `result(frames)` and kills the write-it-twice
@@ -782,6 +788,17 @@ single-`aux`/`aux-kind` contract is deleted (BFS/DFS emit a one-element list).
 now reading the unified theme. `positioned`, `auto-layout` handshake, and the
 lazy-layout rules are unchanged.
 
+⚠️ **Decided in Phase 5.** Three details the list above did not pin down.
+(a) The adjacency tables are not frames, so no `slides.typ` helper opens a
+`context` for them — each opens its own and calls `resolve-theme(theme)`
+itself. That is the only place outside `slides.typ` and `aux.typ` that reads
+theme state, and it has to be. (b) `step.result` for every graph display is
+the *unchanged* input: none of these four algorithms mutates the structure,
+which §5 already anticipated for searches and traversals. (c) `graph-layout.typ`
+is imported as `_layout` rather than by name, so `auto-layout` does not become
+a second, namespaced spelling of the flat export — the §0 rule about
+`_`-prefixing import aliases, applied.
+
 **hashmap** — `hash`/`hash2` become bare function fields. The `positioned()`
 table dict gains `measure-cells` (computed exactly like sort/skiplist do) and
 `draw/hashmap.typ` consumes it through the unified `resolve-dims`.
@@ -790,9 +807,32 @@ table dict gains `measure-cells` (computed exactly like sort/skiplist do) and
 `radix-sort-display` → `radix-display`; pure ops `counting-sort` → `counting`,
 `radix-sort` → `radix`. String captions become content.
 
+⚠️ **Decided in Phase 5:** sort's `step.result` is the sorted array **as a
+structure** (`(kind: "sort", values:, labels:)`), not the bare key array the
+pure `counting` / `radix` return. §5 says "the post-operation structure", and
+that is what makes `result(frames)` feed straight into the next display — the
+whole point of the field. It also carries the labels, so the stable variants
+(prefix, buckets) show each element's own label in its sorted slot while
+reconstruct, which rebuilds from the histogram alone, shows the first-seen
+label per key. The 13 string captions become content through a one-line
+`_cap(s)` that *interpolates* rather than re-writes them as markup — the same
+trick `ds/trie.typ` uses, and for the same reason: `count[0] += 1` written as
+markup needs escaping, and the refs would move.
+
 **skiplist** — key helpers export as `box-key(col, level)`,
 `forward-key(col, level)`, `data-key(col)` (the `sl-` prefixes die; the
 namespace disambiguates).
+
+⚠️ **Decided in Phase 5:** `delete-display(search: false)` drops the pure
+*navigation* frames (`advance` and the `drop`s above the target's tower) and
+keeps everything else. The skip list's delete is interleaved single-pass —
+each lane is unlinked as the descent reaches it — so there is no separable
+search phase to remove; what is left is the opening frame, one `unlink` per
+lane, and the terminal, which is exactly "the pointer surgery without the walk
+that found it". `search-walk` is public, unlike the other modules' walk
+helpers, because it is the one descent `contains` and all three animations
+run, and it is parameterized on per-node linked heights — the mechanism that
+lets an insert's search ignore its own not-yet-spliced node.
 
 Key-helper short names per module: `graph.edge-key(u, v, directed:)`;
 `hashmap.cell-key(i)`, `hashmap.entry-key(i, j)`; `sort.cell-key(row, col)`,
@@ -806,6 +846,17 @@ Tree modules need no key constructors (paths are the keys).
 `aux-view-title(kind)` moves here. Contract: `aux-views` only. Adding aux views
 for hashmap/sort/skiplist is **out of scope** for 1.0 (future work), but the
 module boundary now permits it.
+
+⚠️ **Decided in Phase 5.** The one shared helper the extraction needed is
+`muted(c)` — "de-emphasized version of a theme color", used by the strips for
+an empty structure or a rejected element and by `ds/graph.typ`'s adjacency
+tables for an absent cell. It went to `core/draw-util.typ` beside
+`text-fill-for`, which the same two files also share. Neither is a `draw/*`
+backend, so this stretches that module's stated remit slightly; the
+alternative was a third and fourth copy of a one-line function, which is what
+§1 exists to stop. `aux.typ` is otherwise a clean lift: seven view builders,
+two box primitives, and the dispatch, all reading `theme.op` and
+`theme.render` off the one resolved theme.
 
 ---
 
@@ -1009,6 +1060,20 @@ module: presence of `new`, `insert` (where applicable — graph has
 `*-display` name in the module ends in `-display`; and that `lib.typ`'s dict
 contains exactly the §10.1 export list (no more, no less — this is the tripwire
 against accidental exports).
+
+Two refinements from Phase 5:
+
+- The `-display` naming rule **exempts `_`-prefixed names**. `ds/sort.typ` and
+  `ds/skiplist.typ` import `core/text.typ`'s `display-value` (their elements
+  are `(key:, label:)` pairs, so they pass `value-key: "key"`), and a
+  selective import lands in the module dict. Aliasing it `_display-value` says
+  "not API" in the one way Typst has; the rule is about the public surface, so
+  it should read the prefix the same way §0 does.
+- The export check became an **equality** test as soon as the last structure
+  migrated, rather than waiting for Phase 6. The extras are enumerated by name
+  (the four git-palette exports §9 retires), so the assertion fails on any
+  *other* accidental export — which is the whole value of the tripwire, and it
+  is live one phase earlier this way.
 
 ---
 
@@ -1226,7 +1291,22 @@ outright, and `tree-common.stamp-result(specs, after)` stamps §5's
 old `bst.typ`/`rbt.typ`/`avl.typ`/`b24.typ`/`trie.typ`/`tree-anim.typ` deleted
 (nothing imports them — verify with grep before deleting).
 
-### Phase 5 — Graph, Aux, Sort, Skiplist
+### Phase 5 — Graph, Aux, Sort, Skiplist — ✅ DONE (commits `Phase 5a`–`5c`)
+
+Decisions made while implementing it are folded into §§5, 7.2, 7.3, 10.1 and
+11.3 above, each marked "Phase 5". The load-bearing ones: sort's
+`step.result` is the sorted array *as a structure* (§7.2), the skip list's
+`delete-display(search:)` semantics (§7.2), and the conformance test's two
+new rules (§11.3).
+
+Every port was validated frame by frame, not just by refs — old and new
+rendered side by side and compared by PNG hash. 166 graph frames across 27
+display calls, plus 196 aux strips over the same runs; 482 sort frames across
+21; 145 skip-list frames across 27. All byte-identical. Two refs moved, both
+the same documented change: `sort-theming`'s and `skiplist-theming`'s
+second panels, where a per-call `theme:` now layers on `set-theme` state
+instead of replacing the palette (§4.4, first seen in `hashmap-theming` in
+Phase 3). Both tests were rewritten to assert that precedence.
 
 1. `aux.typ` extracted; `ds/graph.typ` ported (aux-views-only contract, display
    renames, step-kind renames); migrate `graph-*` tests.
@@ -1238,14 +1318,27 @@ old `bst.typ`/`rbt.typ`/`avl.typ`/`b24.typ`/`trie.typ`/`tree-anim.typ` deleted
 **Done when:** suite green; `src/` contains only the target tree (§2) plus
 `lib.typ`; `grep -r "typsy" src/` returns nothing.
 
+⚠️ **One carve-out on that last criterion.** Deleting the old top-level DS
+classes (`graph.typ`, `sort.typ`, `skiplist.typ`, and `hashmap.typ`, which
+Phase 3 left behind) took the last typsy *frames* with them, so
+`slides.typ`'s Phase-3 compat arm and `lib.typ`'s `canvases-only` shim went
+too — both existed only to serve those frames, and Phase 6 step 2 is
+correspondingly already done. But `git-graph.typ` still imports typsy for one
+thing: `GitTheme = Refine(..)`, the per-DS theme refinement that §9 and Phase 6
+step 3 delete when the git palette moves into `core/theme.typ`. Replacing it
+now would mean hand-rolling a key check that Phase 6 throws away. So the grep
+returns exactly one line, and it is the line Phase 6 removes.
+
 ### Phase 6 — Presentation Layer
 
 1. `subslides` per §10.2, including `fit:` and the aux layouts. Visual test
    `tt new slides-subslides`: a graph traversal's frames through
    `subslides(aux: "right", fit: (20cm, 12cm))`, plus a `last`/single-Frame
    call, plus an `overlay` callout using an `el-` anchor. New refs.
-2. Delete `canvases-only` and the old lib.typ helper implementations; drop the
-   Phase-3 compat arm in slides.typ.
+2. ~~Delete `canvases-only` and the old lib.typ helper implementations; drop
+   the Phase-3 compat arm in slides.typ.~~ Done in Phase 5 — see the carve-out
+   note there. The last typsy frames died with the old DS classes, so both
+   pieces of scaffolding went with them.
 3. git-graph curation per §9 (rename internals, unified theme section).
    `git-graph` test refs must be pixel-identical.
 
