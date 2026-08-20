@@ -18,24 +18,11 @@
 
 #import "core/theme.typ": resolve-theme
 
-// TRANSITIONAL (Phase 3 → 6). Frames come in two shapes while the data
-// structures migrate: the new plain dicts carrying a `builder`, and the old
-// typsy `Frame` class carrying a `render` method plus the two old theme
-// states. These imports and `_render-frame`'s second arm exist only to serve
-// the not-yet-migrated structures and are deleted with the last of them.
-#import "anim-core.typ": _render-theme-state
-#import "op-theme.typ": _op-theme-state
+// Whether `frames` is a single frame rather than an array of them.
+#let _is-frame(x) = type(x) == dictionary and "builder" in x
 
-#let _is-new(frame) = type(frame) == dictionary and "builder" in frame
-
-// Render one frame against an already-resolved theme. Old-style frames read
-// the two legacy states themselves — lazily, so a document with no old frames
-// never touches them (and never pays their convergence cost).
-#let _render-frame(frame, theme) = if _is-new(frame) {
-  (frame.builder)(theme)
-} else {
-  (frame.render)(_op-theme-state.get(), _render-theme-state.get())
-}
+// Render one frame against an already-resolved theme.
+#let _render-frame(frame, theme) = (frame.builder)(theme)
 
 // A frame's canvas with its caption stacked below, when it has one.
 #let _with-caption(frame, spacing, theme) = {
@@ -69,7 +56,7 @@
 )
 
 // Accept a lone frame anywhere an array is expected.
-#let _as-array(frames) = if _is-new(frames) or type(frames) != array {
+#let _as-array(frames) = if _is-frame(frames) or type(frames) != array {
   (frames,)
 } else { frames }
 

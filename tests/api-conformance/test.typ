@@ -18,6 +18,7 @@
 #import "/src/ds/trie.typ"
 #import "/src/ds/graph.typ"
 #import "/src/ds/sort.typ"
+#import "/src/ds/skiplist.typ"
 
 // ===================================================================
 // The per-module contract
@@ -225,6 +226,28 @@
     displays: ("counting-display", "radix-display"),
   ),
   (
+    // A skip list is a sorted set, so it has the tree verbs without the tree
+    // shape; `search-walk` is the descent its animations and its `contains`
+    // both run.
+    name: "skiplist",
+    module: skiplist,
+    verbs: (
+      "insert",
+      "delete",
+      "contains",
+      "get",
+      "keys",
+      "levels",
+      "len",
+      "search-walk",
+      "positioned",
+      "box-key",
+      "forward-key",
+      "data-key",
+    ),
+    displays: ("search-display", "insert-display", "delete-display"),
+  ),
+  (
     name: "hashmap",
     module: hashmap,
     verbs: (
@@ -301,6 +324,7 @@
   "graph",
   "hashmap",
   "sort",
+  "skiplist",
   "styles",
   "aux",
   "git",
@@ -347,11 +371,26 @@
   assert(name in exported, message: "lib.typ must export '" + name + "'.")
 }
 
-// TRANSITIONAL. lib.typ still carries the pre-1.0 surface for the structures
-// that have not migrated yet, so the check above is a subset test. Phase 6
-// tightens it to equality — that is the tripwire against accidental exports —
-// once the last `#import "./<old>.typ"` block is gone. Until then, assert only
-// that the names Phase 3 deliberately retired have in fact gone.
+// Every data structure has migrated, so the only names left over the 1.0
+// surface are the git DSL's own theme, which Phase 6 folds into the one theme.
+// Listing them exactly makes this the tripwire it is meant to be: any *other*
+// accidental export fails here.
+#let phase-6-leftovers = (
+  "default-git-theme",
+  "set-git-theme",
+  "GitTheme",
+  "_git-theme-state",
+)
+#let extra = exported.keys().filter(n => not expected.contains(n))
+#assert.eq(
+  extra.sorted(),
+  phase-6-leftovers.sorted(),
+  message: "lib.typ exports names outside the 1.0 surface: "
+    + extra.filter(n => not phase-6-leftovers.contains(n)).join(", ")
+    + " (see REFACTOR.md §10.1).",
+)
+
+// And the names the migration deliberately retired are gone for good.
 #let retired = (
   "BST",
   "RBT",
@@ -382,6 +421,24 @@
   "array-cell-anchor",
   "array-entry-anchor",
   "make-array-renderer",
+  "Skiplist",
+  "set-skiplist-theme",
+  "default-skiplist-theme",
+  "SkiplistTheme",
+  "sl-box-key",
+  "sl-forward-key",
+  "sl-data-key",
+  "sl-box-anchor",
+  "make-skiplist-renderer",
+  // The two pre-1.0 theme states, and the frame-array shim that served the
+  // old typsy frames until the last structure migrated.
+  "default-op-theme",
+  "set-op-theme",
+  "OpTheme",
+  "default-render-theme",
+  "set-render-theme",
+  "RenderTheme",
+  "canvases-only",
   "concat-frames",
   "GraphNodeId",
   "TreeRenderer",

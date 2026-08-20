@@ -6,7 +6,7 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#let sl = skiplist(
+#let sl = skiplist.new(
   (value: 2, height: 1),
   (value: 5, height: 3),
   (value: 8, height: 1),
@@ -16,7 +16,7 @@
 )
 
 // A tall insert in the middle (splices at levels 0, 1, 2).
-#starling.stacked((sl.insert-display)(9, height: 3))
+#starling.stacked(skiplist.insert-display(sl, 9, height: 3))
 #pagebreak()
 // A height-1 insert at the tail (single splice at level 0).
-#starling.stacked((sl.insert-display)(23, height: 1))
+#starling.stacked(skiplist.insert-display(sl, 23, height: 1))

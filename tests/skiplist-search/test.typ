@@ -6,7 +6,7 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#let sl = skiplist(
+#let sl = skiplist.new(
   (value: 2, height: 1),
   (value: 5, height: 3),
   (value: 8, height: 1),
@@ -15,6 +15,6 @@
   (value: 20, height: 2),
 )
 
-#starling.stacked((sl.search-display)(17))
+#starling.stacked(skiplist.search-display(sl, 17))
 #pagebreak()
-#starling.stacked((sl.search-display)(10))
+#starling.stacked(skiplist.search-display(sl, 10))

@@ -6,11 +6,11 @@
 
 #set page(width: auto, height: auto, margin: 10pt)
 
-#starling.last((skiplist(
+#starling.last(skiplist.display(skiplist.new(
   (value: 2, height: 1),
   (value: 5, height: 3),
   (value: 8, height: 1),
   (value: 12, height: 2),
   (value: 17, height: 1),
   (value: 20, height: 2),
-).display)())
+)))

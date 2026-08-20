@@ -29,6 +29,7 @@
 #import "ds/trie.typ" as trie
 #import "ds/graph.typ" as graph
 #import "ds/sort.typ" as sort
+#import "ds/skiplist.typ" as skiplist
 
 // The semantic style vocabulary — `styles.attention(..)`, `styles.ghost(..)`
 // and friends, each returning an op array that follows the active theme.
@@ -86,62 +87,28 @@
 #import "draw/graph.typ": draw-graph
 #import "draw/hashmap.typ": draw-hashmap
 #import "draw/array.typ": draw-array
+#import "draw/skiplist.typ": draw-skiplist
 
 // ===================================================================
-// TRANSITIONAL — the pre-1.0 surface for the not-yet-migrated structures
+// The git DSL
 // ===================================================================
 //
-// Skiplist and the git DSL still ride the old typsy stack.
-// Their exports below are unchanged and keep working; each block disappears
-// as its structure moves into `ds/` (Phases 5-6). Nothing here is part of
-// the 1.0 surface.
+// Deliberately off the frame stack: a stateful, imperative cetz builder
+// called inside a `git-graph({ .. })` block. Its verbs use generic names
+// (`commit`, `branch`, `merge`, `tag`, `checkout`), so they stay behind the
+// namespace rather than going flat.
 
-#import "./skiplist.typ": (
-  Skiplist,
-  skiplist,
-  default-skiplist-theme,
-  set-skiplist-theme,
-  SkiplistTheme,
-  _skiplist-theme-state,
-)
-#import "./skiplist-draw.typ": (
-  draw-skiplist,
-  sl-box-anchor,
-  sl-forward-anchor,
-  sl-data-anchor,
-  sl-box-key,
-  sl-forward-key,
-  sl-data-key,
-  make-skiplist-renderer,
-)
-// The git DSL's verbs use generic names (`commit`, `branch`, `merge`, `tag`,
-// `checkout`), so they stay behind a namespace rather than going flat.
 #import "./git-graph.typ" as git
+
+// TRANSITIONAL — the last of the pre-1.0 surface. The git palette is still a
+// per-DS theme with its own state; Phase 6 folds it into the one theme
+// (REFACTOR.md §9), and these four exports go with it.
 #import "./git-graph.typ": (
   default-git-theme,
   set-git-theme,
   GitTheme,
   _git-theme-state,
 )
-// The two pre-1.0 theme states the old structures read.
-#import "./op-theme.typ": default-op-theme, set-op-theme, OpTheme, _op-theme-state
-#import "./anim-core.typ": (
-  default-render-theme,
-  set-render-theme,
-  RenderTheme,
-  _render-theme-state,
-)
-
-/// TRANSITIONAL. Drop captions and step metadata, returning just the canvases,
-/// for a hand-built layout. Superseded by @@canvas() (and, from Phase 6, by
-/// `subslides`), which is what the migrated structures use.
-///
-/// -> array
-#let canvases-only(
-  /// The frame array from a `*-display`.
-  /// -> array
-  frames,
-) = frames.map(f => canvas(f))
 
 // ===================================================================
 // Layout
