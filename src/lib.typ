@@ -68,7 +68,11 @@
 // Presentation
 // ===================================================================
 
-#import "slides.typ": canvas, figures, last, stacked
+/// Frames into content: `last` for the end state, `stacked` for a handout,
+/// `figures` / `subslides` for one piece of content per step (splat either
+/// into touying's `alternatives(..)`; `subslides` also lays out the aux strip
+/// and the caption), `canvas` for the bare, alt-less form you place yourself.
+#import "slides.typ": canvas, figures, last, stacked, subslides
 
 /// One frame's auxiliary bookkeeping — a BFS queue, Kruskal's disjoint sets,
 /// Dijkstra's priority queue — as placeable content beside the canvas. The
@@ -99,16 +103,6 @@
 // namespace rather than going flat.
 
 #import "./git-graph.typ" as git
-
-// TRANSITIONAL — the last of the pre-1.0 surface. The git palette is still a
-// per-DS theme with its own state; Phase 6 folds it into the one theme
-// (REFACTOR.md §9), and these four exports go with it.
-#import "./git-graph.typ": (
-  default-git-theme,
-  set-git-theme,
-  GitTheme,
-  _git-theme-state,
-)
 
 // ===================================================================
 // Layout

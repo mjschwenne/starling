@@ -11,49 +11,23 @@
 // canvas body, or redraw a commit dot with `git-highlight`. The lib.typ
 // frame helpers (`last`, `stacked`, `figures`) do not apply here.
 //
-// It DOES adopt starling's per-DS theme pattern: all styling defaults
-// live in `default-git-theme` and are overridable document-wide with
-// `set-git-theme(..)` (state) or per-call with `git-graph(theme: (..))`.
-// See the RBT palette (`src/rbt.typ`) for the mirrored template.
+// It DOES share starling's one theme: every styling default lives in the
+// `git:` section of `core/theme.typ`'s `default-theme` — the branch color
+// palette, the lane/graph strokes, and the commit/tag/pointer decorators
+// and angles. Override it document-wide with `set-theme((git: (..)))` or
+// per-call with `git-graph(theme: (git: (..)))`, exactly like every other
+// structure's palette. Behavioral/layout config (`direction`,
+// `commit-spacing`, `lane-spacing`) and live runtime state (`branches`,
+// `commit-id`, ...) are NOT theme; they are `git-graph(..)` `..style`
+// arguments merged in `_git-graph-behavior`.
 
-#import "@preview/cetz:0.5.2"
-#import "@preview/typsy:0.2.2": Refine, Dictionary, Any
+#import "@preview/cetz:0.5.2" as _cetz
+#import "core/theme.typ": resolve-theme as _resolve-theme
 
-#let d = cetz.draw
+#let _d = _cetz.draw
 
-#let offset(anchor, x: 0, y: 0) = {
-  (v => cetz.vector.add(v, (x, y)), anchor)
-}
-#let default-colors = (red, orange, yellow, green, blue, purple, fuchsia, gray)
-#let color-boxed(..args) = {
-  set text(0.8em)
-  box(
-    inset: (y: 0.25em, x: 0.1em),
-    fill: yellow.lighten(80%),
-    stroke: black + 0.5pt,
-    radius: 0.2em,
-    ..args,
-  )
-}
-#let _default-branch-pointer-decorator(color, name) = {
-  set text(0.8em, weight: "bold", fill: white)
-  box(
-    inset: (y: 0.25em, x: 0.3em),
-    fill: color,
-    stroke: black + 0.5pt,
-    radius: 0.2em,
-    name,
-  )
-}
-#let _default-head-pointer-decorator() = {
-  set text(0.8em, weight: "bold")
-  box(
-    inset: (y: 0.25em, x: 0.3em),
-    fill: yellow.lighten(60%),
-    stroke: black + 0.5pt,
-    radius: 0.2em,
-    "HEAD",
-  )
+#let _offset(anchor, x: 0, y: 0) = {
+  (v => _cetz.vector.add(v, (x, y)), anchor)
 }
 // Negative layers render behind the default (0); positive ones in front.
 #let _layers = (
@@ -64,122 +38,6 @@
   COMMIT: 1,
   TAG: 1,
 )
-
-// ===================================================================
-// Per-DS theme — the git-graph styling surface
-// ===================================================================
-//
-// Mirrors the RBT palette pattern (`default-rbt-theme` /
-// `set-rbt-theme` / `RbtTheme` in `src/rbt.typ`). Only *styling* lives
-// here — the branch color palette, the lane/graph strokes, and the
-// commit/tag/pointer decorators and angles. Behavioral/layout config
-// (`direction`, `commit-spacing`, `lane-spacing`) and live runtime
-// state (`branches`, `commit-id`, ...) are NOT theme; they are
-// `git-graph(..)` `..style` arguments merged in `_git-graph-behavior`.
-//
-// Merging is *shallow* at the top level: overriding e.g. `commit-style`
-// replaces the whole sub-dict (each sub-style must be complete). This
-// matches the existing `_horizontal-style-defaults` contract below.
-
-/// Default styling theme for git graphs. Pass a partial dict to
-/// #raw("set-git-theme(..)") (document-wide) or #raw("git-graph(theme: (..))")
-/// (per-call) to override individual roles. Each top-level value is a
-/// *complete* sub-style dict — merging is shallow.
-#let default-git-theme = (
-  colors: default-colors,
-  lane-style: (
-    stroke: (paint: gray, dash: "dashed"),
-  ),
-  graph-style: (
-    stroke: (thickness: 0.25em),
-    radius: 0.1,
-  ),
-  commit-style: (
-    decorator: color-boxed,
-    angle: 45deg,
-    dot-anchor: "south-west",
-    text-anchor: "east",
-  ),
-  tag-style: (
-    decorator: color-boxed.with(fill: blue.lighten(75%), stroke: black),
-    angle: -45deg,
-    text-anchor: "west",
-  ),
-  // Pointers borrow the tag/commit-message look (boxed, tilted at `angle`)
-  // and extend opposite the commit message: NE of the dot in bottom-to-top
-  // mode, NW in left-to-right mode. head-pointer stacks past the active
-  // branch's pointer along that diagonal (with `stack-padding` between
-  // them); pass `after: none` on head-pointer to anchor it at the dot.
-  pointer-style: (
-    branch-decorator: _default-branch-pointer-decorator,
-    head-decorator: _default-head-pointer-decorator,
-    angle: 45deg,
-    padding: 0.75em,
-    stack-padding: 0.2em,
-  ),
-)
-
-#let _git-theme-keys = (
-  "colors",
-  "lane-style",
-  "graph-style",
-  "commit-style",
-  "tag-style",
-  "pointer-style",
-)
-
-/// Typsy refinement: a dictionary whose keys are a subset of the
-/// git-theme keys. Used by #raw("set-git-theme") and the per-call
-/// #raw("theme:") argument to give early errors on typos.
-#let GitTheme = Refine(
-  Dictionary(..Any),
-  d => d.keys().all(k => _git-theme-keys.contains(k)),
-)
-
-#let _git-theme-state = state("starling:git-theme", default-git-theme)
-
-/// Override one or more git-theme keys for the rest of the document
-/// (state-based, scoped by Typst's normal layout flow). Pass a partial
-/// dictionary — only the top-level keys you list are replaced (shallow),
-/// the rest stay at their current values. Unknown keys panic.
-#let set-git-theme(theme) = {
-  for k in theme.keys() {
-    if not _git-theme-keys.contains(k) {
-      panic(
-        "set-git-theme: unknown key '"
-          + k
-          + "'. Valid keys: "
-          + _git-theme-keys.join(", ")
-          + ".",
-      )
-    }
-  }
-  _git-theme-state.update(prev => {
-    let next = prev
-    for (k, v) in theme.pairs() { next.insert(k, v) }
-    next
-  })
-}
-
-// Merge a partial git-theme override into `default-git-theme`, panicking
-// on unknown keys. Used by the per-call `theme:` argument (the non-state
-// path — no `context` needed, so it doubles as the perf escape hatch).
-#let _merge-git-theme(override) = {
-  for k in override.keys() {
-    if not _git-theme-keys.contains(k) {
-      panic(
-        "git-theme: unknown key '"
-          + k
-          + "'. Valid keys: "
-          + _git-theme-keys.join(", ")
-          + ".",
-      )
-    }
-  }
-  let next = default-git-theme
-  for (k, v) in override.pairs() { next.insert(k, v) }
-  next
-}
 
 // Non-styling defaults merged beneath every git-graph. These are
 // behavioral/layout knobs and live runtime state, NOT theme.
@@ -199,17 +57,19 @@
   direction: "bottom-to-top",
 )
 
-// Style overrides applied when direction == "left-to-right". Each entry
-// must be a complete style dict because dict merging is shallow.
-#let _horizontal-style-defaults = (
+// Style overrides applied when direction == "left-to-right": the label
+// angles and anchors that keep a message leaning away from a horizontal
+// lane. Only those keys change — the decorators come from `git`, the
+// resolved theme section, so a themed decorator survives the flip.
+#let _horizontal-style(git) = (
   commit-style: (
-    decorator: color-boxed,
+    ..git.commit-style,
     angle: -45deg,
     dot-anchor: "south",
     text-anchor: "north-west",
   ),
   tag-style: (
-    decorator: color-boxed.with(fill: blue.lighten(75%), stroke: black),
+    ..git.tag-style,
     angle: 45deg,
     text-anchor: "west",
   ),
@@ -241,23 +101,23 @@
   c.has("text") and c.text == ""
 }
 
-#let graph-props(func) = {
-  d.get-ctx(ctx => {
+#let _graph-props(func) = {
+  _d.get-ctx(ctx => {
     let props = ctx.git-graph
     props.ctx = ctx
     func(props)
   })
 }
 
-#let set-graph-props(func) = {
-  d.set-ctx(ctx => {
+#let _set-graph-props(func) = {
+  _d.set-ctx(ctx => {
     ctx.git-graph = func(ctx.git-graph)
     ctx
   })
 }
 
-#let branch-props(func, branch: auto) = {
-  graph-props(props => {
+#let _branch-props(func, branch: auto) = {
+  _graph-props(props => {
     let branch = branch
     if branch == auto {
       branch = props.active-branch
@@ -272,9 +132,9 @@
 }
 
 #let background-lanes() = {
-  graph-props(props => {
+  _graph-props(props => {
     for branch-name in props.branches.keys() {
-      let (ctx, latest-commit) = cetz.coordinate.resolve(props.ctx, "head")
+      let (ctx, latest-commit) = _cetz.coordinate.resolve(props.ctx, "head")
       let extent = _along-of(props, latest-commit) + props.commit-spacing
       // Anchor the lane at the same edge of the label box that was used to
       // place the label, so the lane aligns with the commit dots regardless
@@ -284,11 +144,11 @@
       let label-edge = if _is-horizontal(props) { "east" } else { "north" }
       let start = branch-name + "." + label-edge
       let end = if _is-horizontal(props) {
-        offset(start, x: extent)
+        _offset(start, x: extent)
       } else {
-        offset(start, y: extent)
+        _offset(start, y: extent)
       }
-      d.on-layer(_layers.BACKGROUND-LANES, d.line(
+      _d.on-layer(_layers.BACKGROUND-LANES, _d.line(
         start,
         end,
         ..props.lane-style,
@@ -300,24 +160,24 @@
 #let _branch-line(src, dst, color, name: none) = {
   // Easier than a merge line since src is guaranteed to be earlier on the
   // along-axis than dst.
-  graph-props(props => {
+  _graph-props(props => {
     let ctx = props.ctx
-    let (ctx, a, b) = cetz.coordinate.resolve(ctx, src, dst)
+    let (ctx, a, b) = _cetz.coordinate.resolve(ctx, src, dst)
     assert(
       _along-of(props, a) < _along-of(props, b) and _across-of(props, a) <= _across-of(props, b),
       message: "source branch must start before destination branch",
     )
     let radius = props.graph-style.radius
     let stroke = (stroke: (paint: color, ..props.graph-style.stroke))
-    d.merge-path(..stroke, name: name, {
+    _d.merge-path(..stroke, name: name, {
       if _is-horizontal(props) {
         // Vertical line down from src, then quarter-arc that flips to going
         // right along the new lane.
-        d.line(src, (a.at(0), b.at(1) + radius))
-        d.arc((), start: 180deg, delta: 90deg, radius: radius)
+        _d.line(src, (a.at(0), b.at(1) + radius))
+        _d.arc((), start: 180deg, delta: 90deg, radius: radius)
       } else {
-        d.line(src, (b.at(0) - radius, a.at(1)))
-        d.arc((), start: -90deg, delta: 90deg, radius: radius)
+        _d.line(src, (b.at(0) - radius, a.at(1)))
+        _d.arc((), start: -90deg, delta: 90deg, radius: radius)
       }
     })
   })
@@ -327,17 +187,15 @@
   if type(name) != str {
     name = name.text
   }
-  set-graph-props(props => {
+  _set-graph-props(props => {
     let branches = props.branches
     if name in branches {
       panic("Branch `" + name + "` already exists")
     }
     let color = color
-    // Fall back to the themed palette (props.colors) when the caller
-    // didn't pass an explicit color list.
-    let colors = if colors == auto {
-      props.at("colors", default: default-colors)
-    } else { colors }
+    // Fall back to the themed palette when the caller didn't pass an
+    // explicit color list.
+    let colors = if colors == auto { props.colors } else { colors }
     let n-cur = branches.len()
     if color == auto {
       color = colors.at(calc.rem(n-cur, colors.len()))
@@ -352,16 +210,16 @@
     set text(weight: "bold", fill: white)
     rect(radius: 0.25em, ..args)
   }
-  branch-props(props => {
+  _branch-props(props => {
     let label-anchor = if _is-horizontal(props) { "east" } else { "west" }
-    d.content(
+    _d.content(
       _pt(props, 0, props.lane * props.lane-spacing),
       styled(name, fill: props.branches.at(name).fill),
       name: name,
       anchor: label-anchor,
     )
   })
-  branch-props(props => {
+  _branch-props(props => {
     let new-head = name
     if props.commit-id > 0 {
       // `from:` accepts a branch name (resolves to its tip), any cetz anchor
@@ -374,7 +232,7 @@
       } else {
         from
       }
-      let (_, source-pos, lane-pos) = cetz.coordinate.resolve(
+      let (_, source-pos, lane-pos) = _cetz.coordinate.resolve(
         props.ctx,
         source,
         name,
@@ -388,7 +246,7 @@
       )
       new-head = _pt(props, parent-along, new-across)
       if parent-along > 0 {
-        d.on-layer(-props.lane + _layers.BRANCH, _branch-line(
+        _d.on-layer(-props.lane + _layers.BRANCH, _branch-line(
           source,
           join-loc,
           props.fill,
@@ -396,37 +254,37 @@
         ))
       }
     }
-    d.anchor("head", new-head)
-    d.anchor(name + "/head", new-head)
+    _d.anchor("head", new-head)
+    _d.anchor(name + "/head", new-head)
   })
 }
 
 #let checkout(branch) = {
-  set-graph-props(props => {
+  _set-graph-props(props => {
     if branch not in props.branches {
       panic("Branch `" + branch + "` does not exist")
     }
     props.active-branch = branch
     props
   })
-  d.anchor("head", branch + "/head")
+  _d.anchor("head", branch + "/head")
 }
 
 #let commit(message, branch: auto, name: none, edge-name: none) = {
   if branch != auto {
     checkout(branch)
   }
-  set-graph-props(props => {
+  _set-graph-props(props => {
     props.commit-id = props.commit-id + 1
     props.ref-branch-map.insert(str(props.commit-id), props.active-branch)
     props
   })
-  let on-graph = d.on-layer.with(_layers.GRAPH)
-  let on-branch = d.on-layer.with(_layers.BRANCH)
-  branch-props(props => {
+  let on-graph = _d.on-layer.with(_layers.GRAPH)
+  let on-branch = _d.on-layer.with(_layers.BRANCH)
+  _branch-props(props => {
     let txt = props.commit-style.at("decorator")(message)
-    let (_, lane-pos) = cetz.coordinate.resolve(props.ctx, "head")
-    let (_, branch-pos) = cetz.coordinate.resolve(
+    let (_, lane-pos) = _cetz.coordinate.resolve(props.ctx, "head")
+    let (_, branch-pos) = _cetz.coordinate.resolve(
       props.ctx,
       props.active-branch + "/head",
     )
@@ -439,8 +297,8 @@
     }
     let new-along = props.commit-id * props.commit-spacing
     let across = _across-of(props, lane-pos)
-    d.anchor("head", _pt(props, new-along, across))
-    on-graph(d.content(
+    _d.anchor("head", _pt(props, new-along, across))
+    on-graph(_d.content(
       "head",
       circle(fill: props.fill, radius: 0.5em),
       name: dot-name,
@@ -451,7 +309,7 @@
       (0, props.graph-style.radius / 2)
     }
     on-branch(
-      d.line(
+      _d.line(
         (rel: rel-offset, to: branch-pos),
         "head",
         stroke: (paint: props.fill, ..props.graph-style.stroke),
@@ -478,25 +336,25 @@
         "text-anchor",
         default: default-text-anc,
       )
-      d.content(dot-name + "." + dot-anc, txt, anchor: text-anc, angle: rot)
+      _d.content(dot-name + "." + dot-anc, txt, anchor: text-anc, angle: rot)
     }
   })
-  graph-props(props => {
-    d.anchor(props.active-branch + "/head", "head")
+  _graph-props(props => {
+    _d.anchor(props.active-branch + "/head", "head")
     // Always provide commit-id-N as a point alias, even when a custom name
     // owns the edge anchors.
     if name != none {
-      d.anchor("commit-id-" + str(props.commit-id), "head")
+      _d.anchor("commit-id-" + str(props.commit-id), "head")
     }
   })
 }
 
 #let tag(message) = {
-  graph-props(props => {
+  _graph-props(props => {
     let txt = props.tag-style.at("decorator")(message)
     let rot = props.tag-style.at("angle")
     let anc = props.tag-style.at("text-anchor", default: "west")
-    d.content("head", txt, anchor: anc, angle: rot, padding: 0.75em)
+    _d.content("head", txt, anchor: anc, angle: rot, padding: 0.75em)
   })
 }
 
@@ -507,13 +365,13 @@
 // The drawn label is registered as the cetz anchor "branch-pointer-<name>"
 // so head-pointer can stack against its rotated bounding box.
 #let branch-pointer(name, padding: auto, anchor: auto, angle: auto) = {
-  set-graph-props(props => {
+  _set-graph-props(props => {
     let drawn = props.pointer-drawn
     drawn.insert(name, true)
     props.pointer-drawn = drawn
     props
   })
-  graph-props(props => {
+  _graph-props(props => {
     if name not in props.branches {
       panic("Branch `" + name + "` does not exist")
     }
@@ -529,7 +387,7 @@
       if _is-horizontal(props) { -style.angle } else { style.angle }
     } else { angle }
     let pad = if padding == auto { style.padding } else { padding }
-    d.content(
+    _d.content(
       name + "/head",
       txt,
       anchor: anc,
@@ -556,7 +414,7 @@
   anchor: auto,
   angle: auto,
 ) = {
-  graph-props(props => {
+  _graph-props(props => {
     let style = props.pointer-style
     let txt = (style.head-decorator)()
     let anc = if anchor == auto {
@@ -569,7 +427,7 @@
     if target != none {
       // Detached: anchor directly at the supplied target, no branch logic.
       let pad = if padding == auto { style.padding } else { padding }
-      d.content(target, txt, anchor: anc, angle: rot, padding: pad)
+      _d.content(target, txt, anchor: anc, angle: rot, padding: pad)
     } else {
       let branch = if branch == auto { props.active-branch } else { branch }
       if branch not in props.branches {
@@ -599,7 +457,7 @@
         style.stack-padding
       }
       let pad = if padding == auto { default-pad } else { padding }
-      d.content(resolved-target, txt, anchor: anc, angle: rot, padding: pad)
+      _d.content(resolved-target, txt, anchor: anc, angle: rot, padding: pad)
     }
   })
 }
@@ -620,16 +478,16 @@
   edge-name: none,
   color: gray,
 ) = {
-  let on-graph = d.on-layer.with(_layers.GRAPH)
-  let on-branch = d.on-layer.with(_layers.BRANCH)
-  graph-props(props => {
+  let on-graph = _d.on-layer.with(_layers.GRAPH)
+  let on-branch = _d.on-layer.with(_layers.BRANCH)
+  _graph-props(props => {
     let txt = props.commit-style.at("decorator")(message)
-    on-graph(d.content(
+    on-graph(_d.content(
       (rel: offset, to: from),
       circle(fill: color, radius: 0.5em),
       name: name,
     ))
-    on-branch(d.line(
+    on-branch(_d.line(
       from,
       name,
       stroke: (paint: color, ..props.graph-style.stroke),
@@ -639,60 +497,60 @@
       let rot = props.commit-style.at("angle")
       let dot-anc = props.commit-style.at("dot-anchor", default: "south-west")
       let text-anc = props.commit-style.at("text-anchor", default: "east")
-      d.content(name + "." + dot-anc, txt, anchor: text-anc, angle: rot)
+      _d.content(name + "." + dot-anc, txt, anchor: text-anc, angle: rot)
     }
   })
 }
 
 #let _merge-line(src, dest, color, name: none) = {
   // A line with a quarter-circle turn from src to dest branch
-  graph-props(props => {
+  _graph-props(props => {
     let ctx = props.ctx
-    let (ctx, a, b) = cetz.coordinate.resolve(ctx, src, dest)
+    let (ctx, a, b) = _cetz.coordinate.resolve(ctx, src, dest)
     assert(
       calc.abs(_along-of(props, a)) < calc.abs(_along-of(props, b)),
       message: "Destination must be further along than source",
     )
     let radius = props.graph-style.radius
-    let p = d.merge-path(
+    let p = _d.merge-path(
       stroke: (paint: color, ..props.graph-style.stroke),
       name: name,
       {
         if _is-horizontal(props) {
-          d.line(src, (b.at(0) - radius, a.at(1)))
+          _d.line(src, (b.at(0) - radius, a.at(1)))
           // Branch above dest -> arc turns east into south, otherwise north.
           if a.at(1) > b.at(1) {
-            d.arc((), start: 90deg, delta: -90deg, radius: radius)
+            _d.arc((), start: 90deg, delta: -90deg, radius: radius)
           } else {
-            d.arc((), start: -90deg, delta: 90deg, radius: radius)
+            _d.arc((), start: -90deg, delta: 90deg, radius: radius)
           }
-          d.line((), b)
+          _d.line((), b)
         } else {
-          d.line(src, (a.at(0), b.at(1) - radius))
+          _d.line(src, (a.at(0), b.at(1) - radius))
           if a.at(0) < b.at(0) {
-            d.arc((), start: 180deg, delta: -90deg, radius: radius)
+            _d.arc((), start: 180deg, delta: -90deg, radius: radius)
           } else {
-            d.arc((), start: 0deg, delta: 90deg, radius: radius)
+            _d.arc((), start: 0deg, delta: 90deg, radius: radius)
           }
-          d.line((), b)
+          _d.line((), b)
         }
       },
     )
-    d.on-layer(_layers.BRANCH, p)
+    _d.on-layer(_layers.BRANCH, p)
   })
 }
 
 #let merge(commit-id, message: [], name: none, edge-name: none, fast-forward: false) = {
   commit(message, name: name)
   if fast-forward {
-    d.on-layer(_layers.GRAPH, d.circle(
+    _d.on-layer(_layers.GRAPH, _d.circle(
       (),
       radius: 0.35em,
       fill: white,
       stroke: none,
     ))
   }
-  graph-props(props => {
+  _graph-props(props => {
     let commit-id = commit-id
     let refs = props.ref-branch-map
     // Resolve `commit-id` to (src-branch, anchor). A branch name like
@@ -730,18 +588,18 @@
 // layer so it covers the original. Pair with touying alternatives() to flip
 // the highlight on and off across subslides.
 #let git-highlight(commit-name, fill: yellow) = {
-  d.on-layer(_layers.COMMIT + 10, d.content(
+  _d.on-layer(_layers.COMMIT + 10, _d.content(
     commit-name,
     circle(radius: 0.5em, fill: fill, stroke: none),
   ))
 }
 
 // Trade-off on the `name:` parameter:
-//   - name: none (default) — no d.group wrapper. Anchors created inside
+//   - name: none (default) — no _d.group wrapper. Anchors created inside
 //     (commit-id-N, branch labels, named edges, ...) live at the canvas
 //     scope. Touying (pause,) / alternatives() markers inside the body are
 //     visible to the outer reducer, so animation works.
-//   - name: "x" — wraps the body in d.group(name: "x"). Anchors are
+//   - name: "x" — wraps the body in _d.group(name: "x"). Anchors are
 //     namespaced as "x.commit-id-N" and reachable from outside the block,
 //     but (pause,) inside the body is swallowed by the group and animation
 //     breaks. Pick per slide: external anchors OR in-block animation.
@@ -751,25 +609,20 @@
 // and anchors are applied unless the caller passes their own commit-style
 // or tag-style dict.
 //
-// Styling comes from the git-theme: `theme: auto` reads the active
-// `set-git-theme` state (resolved inside the cetz ctx, where a context is
-// available); pass a partial dict to override per-call without touching
-// state (the perf escape hatch). Precedence, lowest to highest:
-//   theme -> horizontal-direction defaults -> ..style
-#let git-graph(graph, name: none, theme: auto, ..style) = {
+// Styling comes from the one theme's `git:` section. `theme:` is a partial
+// nested override — `git-graph(theme: (git: (colors: (teal, maroon))))` —
+// merged over the ambient theme, exactly like a `*-display`'s `theme:`.
+// The read happens inside the deferred `set-ctx` closure, where cetz
+// supplies the context a state read needs. Precedence, lowest to highest:
+//   default-theme -> set-theme state -> theme: -> direction defaults -> ..style
+#let git-graph(graph, name: none, theme: (:), ..style) = {
   let style-named = style.named()
   let direction = style-named.at("direction", default: "bottom-to-top")
-  d.set-ctx(ctx => {
-    // `theme == auto` reads state (needs context — supplied by cetz's
-    // element processing); a dict bypasses state via `_merge-git-theme`.
-    let resolved-theme = if theme == auto {
-      _git-theme-state.get()
-    } else {
-      _merge-git-theme(theme)
-    }
-    let base = resolved-theme + _git-graph-behavior
+  _d.set-ctx(ctx => {
+    let git = _resolve-theme(theme).git
+    let base = git + _git-graph-behavior
     let defaults = if direction == "left-to-right" {
-      base + _horizontal-style-defaults
+      base + _horizontal-style(git)
     } else {
       base
     }
@@ -779,6 +632,6 @@
   if name == none {
     graph
   } else {
-    d.group(name: name, graph)
+    _d.group(name: name, graph)
   }
 }

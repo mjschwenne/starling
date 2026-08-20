@@ -3,8 +3,8 @@
 // `starling.git.*` namespace. This is NOT a `Frame`-based structure, so
 // there is no `*-display` / `last` here; each case is a `cetz.canvas`
 // wrapping a `git.git-graph({ .. })` block. Covers both layout
-// directions and the per-DS theme (per-call `theme:` override, which
-// goes through `_merge-git-theme` + the `GitTheme` refinement).
+// directions and the theme (per-call `theme:` override, layered over the
+// ambient theme like every other structure's palette).
 #import "@preview/cetz:0.5.2"
 #import "/src/lib.typ" as starling
 #import starling: git
@@ -64,14 +64,16 @@
       git.head-pointer(target: "loose")
     })),
   ),
-  // Per-call theme: custom palette + thicker edges via `_merge-git-theme`
-  // (bypasses `set-git-theme` state entirely).
+  // Per-call theme: custom palette + thicker edges, given as a partial
+  // nested override of the one theme's `git:` section.
   panel(
     [Per-call theme],
     cetz.canvas(git.git-graph(
       theme: (
-        colors: (teal, maroon, olive),
-        graph-style: (stroke: (thickness: 0.4em), radius: 0.15),
+        git: (
+          colors: (teal, maroon, olive),
+          graph-style: (stroke: (thickness: 0.4em), radius: 0.15),
+        ),
       ),
       {
         git.branch("main")

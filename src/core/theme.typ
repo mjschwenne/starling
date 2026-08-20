@@ -6,7 +6,7 @@
 //             whites and blacks a backend falls back on)
 //   op        operation-semantic roles shared across data structures
 //             (searching, succeeding, failing, traversing)
-//   rbt/trie/hashmap/sort/skiplist
+//   rbt/trie/hashmap/sort/skiplist/git
 //             styling intrinsic to one data structure
 //
 // Resolution order, lowest precedence first:
@@ -24,6 +24,51 @@
 // ===================================================================
 // The defaults
 // ===================================================================
+
+// The git section's defaults are content builders rather than plain values: a
+// commit message, a tag, and the two pointer labels are all little boxes.
+// They live here, beside the palette they belong to, so `core/*` never has to
+// import `git-graph.typ` (which imports cetz, and would make the theme
+// module depend on a drawing library it has no other use for).
+
+// Branch colors, cycled in declaration order.
+#let _branch-colors = (red, orange, yellow, green, blue, purple, fuchsia, gray)
+
+// The boxed, tilted label a commit message and a tag are drawn in.
+#let _boxed-label(..args) = {
+  set text(0.8em)
+  box(
+    inset: (y: 0.25em, x: 0.1em),
+    fill: yellow.lighten(80%),
+    stroke: black + 0.5pt,
+    radius: 0.2em,
+    ..args,
+  )
+}
+
+// A branch pointer: the branch name, in that branch's color.
+#let _branch-pointer-label(color, name) = {
+  set text(0.8em, weight: "bold", fill: white)
+  box(
+    inset: (y: 0.25em, x: 0.3em),
+    fill: color,
+    stroke: black + 0.5pt,
+    radius: 0.2em,
+    name,
+  )
+}
+
+// The HEAD pointer.
+#let _head-pointer-label() = {
+  set text(0.8em, weight: "bold")
+  box(
+    inset: (y: 0.25em, x: 0.3em),
+    fill: yellow.lighten(60%),
+    stroke: black + 0.5pt,
+    radius: 0.2em,
+    "HEAD",
+  )
+}
 
 /// The full default theme. Every section is complete; per-call overrides and
 /// `set-theme` take partial dicts merged over this.
@@ -130,9 +175,51 @@
     unlinked-stroke: rgb("#a8a8a8"),
     unlinked-text-fill: rgb("#9a9a9a"),
   ),
-  // NOTE: there is deliberately no `git:` section yet — the git-graph
-  // palette carries decorator functions that still live in `git-graph.typ`.
-  // See the deferral note in REFACTOR.md §4.4; Phase 6 adds it.
+  // ---------------------------------------------------------------
+  // The git DSL's palette. Unlike the other sections this one holds
+  // *sub-style dicts* rather than flat values, so overriding e.g.
+  // `commit-style` replaces the whole dict — which is exactly the
+  // two-level merge rule above, and the shallow contract git-graph has
+  // always had.
+  // ---------------------------------------------------------------
+  git: (
+    // Branch colors, assigned in declaration order and wrapping around.
+    colors: _branch-colors,
+    // The dashed rule `background-lanes` draws along each branch's lane.
+    lane-style: (
+      stroke: (paint: gray, dash: "dashed"),
+    ),
+    // Commit dots and the edges between them.
+    graph-style: (
+      stroke: (thickness: 0.25em),
+      radius: 0.1,
+    ),
+    // The tilted commit message beside each dot.
+    commit-style: (
+      decorator: _boxed-label,
+      angle: 45deg,
+      dot-anchor: "south-west",
+      text-anchor: "east",
+    ),
+    // A tag: the same boxed look under a blue tint.
+    tag-style: (
+      decorator: _boxed-label.with(fill: blue.lighten(75%), stroke: black),
+      angle: -45deg,
+      text-anchor: "west",
+    ),
+    // Branch and HEAD pointers borrow the boxed, tilted look and extend
+    // opposite the commit message: north-east of the dot in bottom-to-top
+    // mode, north-west in left-to-right. `head-pointer` stacks past the
+    // active branch's pointer along that diagonal, `stack-padding` apart
+    // (pass `after: none` to anchor it at the dot instead).
+    pointer-style: (
+      branch-decorator: _branch-pointer-label,
+      head-decorator: _head-pointer-label,
+      angle: 45deg,
+      padding: 0.75em,
+      stack-padding: 0.2em,
+    ),
+  ),
 )
 
 // ===================================================================

@@ -159,8 +159,19 @@ Import discipline (checked at the end of every phase):
 - `draw/*` imports cetz + `core/*`. Never a `ds/*` file.
 - `ds/*` imports its backend(s) + `core/*` (+ `graph-layout.typ` for ds/graph
   only).
-- `styles.typ`, `aux.typ`, `slides.typ` import `core/*` only.
+- `styles.typ` and `aux.typ` import `core/*` only; `slides.typ` imports `core/*`
+  **plus `aux.typ`** — `subslides` composes the strip beside the canvas
+  (§10.2), and aux imports core only, so the graph stays acyclic. *(Amended in
+  Phase 6; the original bullet said core-only for all three, which `subslides`
+  cannot honor.)*
 - `git-graph.typ` imports cetz + `core/theme.typ` only.
+
+Every module-scope `#import` binds a name in that module's dict, so a module
+re-exported whole (`git`, `aux`, `styles`, the DS modules) publishes its
+imports too. Alias anything that is not part of that namespace's surface:
+`git-graph.typ` imports cetz as `_cetz` and `resolve-theme` as
+`_resolve-theme` (Phase 6 — `starling.git.cetz` was live until then, the same
+class of leak as `starling.git.d`).
 
 ---
 
@@ -920,13 +931,32 @@ Names deliberately avoid colliding with Typst/cetz builtins (`hidden` not `hide`
   Phase 1 deliberately left out, so **this phase adds it**, moving
   `default-colors` / `color-boxed` / the two pointer decorators into
   `core/theme.typ` first (see the deferral note in §4.4);
-  `set-git-theme` and its private state die. `git-graph(theme: auto)` reads the
-  ONE theme state inside its deferred `d.set-ctx` closure (same mechanism as
-  today — cetz supplies context there); `theme: (…)` per-call bypasses state
-  exactly as today via the merge helper.
+  `set-git-theme` and its private state die. `git-graph` reads the ONE theme
+  state inside its deferred `_d.set-ctx` closure (same mechanism as today —
+  cetz supplies context there).
+
+  ⚠️ **Two amendments from Phase 6.** (a) The per-call argument is a *partial
+  nested* theme, `git-graph(theme: (git: (…)))`, defaulting to `(:)` rather
+  than `auto`, and it **layers over the state** — §4.4's rule for every other
+  structure, decided in Phase 3, which this bullet predates. `auto` would have
+  been a second spelling of `(:)`. (b) `_horizontal-style-defaults` became
+  `_horizontal-style(git)`: it now overrides only the direction-dependent
+  angles and anchors and inherits the decorators from the resolved section, so
+  a themed decorator survives a `direction: "left-to-right"` flip. The default
+  theme produces byte-identical dicts either way, which is why the refs held.
+
+  The four moved bindings are private in `core/theme.typ`
+  (`_branch-colors`, `_boxed-label`, `_branch-pointer-label`,
+  `_head-pointer-label`) — reachable through `default-theme.git` when a caller
+  overrides one sub-style dict and wants to keep the rest.
 - Behavior/layout config (`direction`, `commit-spacing`, `lane-spacing`) and
   runtime state stay where they are (not theme). No drawing changes; the
-  `git-graph` test's 4 panels must stay pixel-identical.
+  `git-graph` test's 4 panels must stay pixel-identical. *(They did — only
+  that test's per-call `theme:` argument was renested.)* Phase 6 added
+  `tests/git-theming/`, the hashmap-theming analog: one panel themed from
+  `set-theme((git: …))` state and one layering a per-call override on top of
+  it, since routing the DSL's palette through the one state is the change
+  with no existing coverage.
 - FYI, not a task: lecture 07 uses a *pre-theme fork* of this file from
   `07-assets/`; the package version is strictly newer. Nothing to port from the
   fork — confirm with a quick diff if in doubt.
@@ -981,23 +1011,42 @@ lib.typ explicitly with a doc comment.
 `subslides` semantics:
 
 - Per frame: canvas + (aux-strip of `frame.step` if `aux != none`) + caption,
-  arranged in a grid (`(1fr, auto)` columns for left/right, a `stack` for
-  below), horizon-aligned.
+  arranged in a grid, horizon-aligned.
+
+  ⚠️ **Amended in Phase 6:** both columns of the side-by-side layouts are
+  `auto`, not `(1fr, auto)`. A fractional track collapses in the *unbounded*
+  region `measure` lays content out in, so a `1fr` canvas column measures ~0
+  and `fit: (w, h)` scales off a bogus size — the two features in this same
+  section cannot both have it. With `auto` the pair sizes to its content and
+  the caller places the block. Caption and "below" strip go in a one-column
+  grid (not a `stack`, which cannot center a narrow row under a wide one).
+  Spacing is three module constants, not parameters: the point of `subslides`
+  is that a deck stops hand-tuning this.
 - **Alt-preserving:** the entire composition is wrapped in the alt figure (this
   fixes the `ua-1` accessibility hole that `canvases-only` + manual captions
   created).
 - `fit:` — a ratio is a plain `scale(x: r, y: r, reflow: true)`; a
-  `(width, height)` pair measures every frame's composition (one `context`),
-  takes the max dimensions across ALL frames, and applies ONE common scale
-  factor so subslides don't wobble frame-to-frame.
+  `(width, height)` pair measures every frame's composition, takes the max
+  dimensions across ALL frames, and applies ONE common scale factor so
+  subslides don't wobble frame-to-frame. Verified in Phase 6: every subslide
+  of a run measures to exactly the box on its limiting axis.
 - Still zero touying dependency: it returns an array; the user splats it into
   `alternatives(..)`. Benchmark the defaults against the lecture 13/14
   graph-algorithm slides (the 10× grid sandwich this replaces) — they needed
   `column-gutter: -8em` and 0.7em fonts to fit, which good defaults here should
-  make unnecessary.
+  make unnecessary. *(Phase 6: they do — a 5-node BFS with the strip on the
+  right and `fit: (20cm, 12cm)` fills a slide-shaped page with no tuning.)*
 
-All helpers open one `context`, resolve the one theme state once via
-`resolve-theme`, and pass the result into each frame's builder.
+`last`, `stacked`, and `canvas` open one `context`, resolve the one theme state
+once via `resolve-theme`, and pass the result into each frame's builder.
+`figures` and `subslides` cannot: touying lays each returned element out
+independently, so each opens its own `context` (as the pre-1.0 `figures`
+already did). For `fit: (w, h)` that means each subslide needs the whole run's
+compositions to compute the shared factor — they are built by one top-level
+helper called with identical arguments from every subslide, so Typst's call
+cache computes them once. Measured cost on a 15-frame Dijkstra: ~5× the
+unfitted compile (1.4s vs 0.3s), the price of one extra measured layout of the
+animation. `fit: <ratio>` needs no measurement and is the escape hatch.
 
 ---
 
@@ -1073,7 +1122,15 @@ Two refinements from Phase 5:
   migrated, rather than waiting for Phase 6. The extras are enumerated by name
   (the four git-palette exports §9 retires), so the assertion fails on any
   *other* accidental export — which is the whole value of the tripwire, and it
-  is live one phase earlier this way.
+  is live one phase earlier this way. *(Phase 6 retired those four, so the
+  allowance list is gone and the check is a bare `extra == ()`.)*
+
+And one more from Phase 6: the same equality, applied to `dictionary(git)`
+against §9's public-verb list (ignoring `_`-prefixed names). `git` is the one
+namespace lib.typ re-exports **whole**, so its module-scope imports are public
+too — which is how `starling.git.cetz` survived every earlier check. The DS
+modules are re-exported whole as well, but their imports are public core names
+the contract already names (`anchor`, `make-frames`, …); git's were not.
 
 ---
 
@@ -1329,7 +1386,13 @@ step 3 delete when the git palette moves into `core/theme.typ`. Replacing it
 now would mean hand-rolling a key check that Phase 6 throws away. So the grep
 returns exactly one line, and it is the line Phase 6 removes.
 
-### Phase 6 — Presentation Layer
+### Phase 6 — Presentation Layer — ✅ DONE (commit `Phase 6: subslides, and the git DSL on the one theme`)
+
+Decisions made while implementing it are folded into §§2, 9, 10.2 and 11.3
+above, each marked "Phase 6". The load-bearing ones: `subslides` composes with
+`auto` columns because a `1fr` track collapses under `measure` and would break
+`fit:` (§10.2), and git-graph's per-call `theme:` is a partial *nested*
+override layered over state, like every other structure's (§9).
 
 1. `subslides` per §10.2, including `fit:` and the aux layouts. Visual test
    `tt new slides-subslides`: a graph traversal's frames through
@@ -1340,10 +1403,15 @@ returns exactly one line, and it is the line Phase 6 removes.
    note there. The last typsy frames died with the old DS classes, so both
    pieces of scaffolding went with them.
 3. git-graph curation per §9 (rename internals, unified theme section).
-   `git-graph` test refs must be pixel-identical.
+   `git-graph` test refs must be pixel-identical. *(They are. `tt new
+   git-theming` covers the newly state-backed palette; see §9.)*
 
 **Done when:** suite green; `dictionary(lib)` matches §10.1 exactly (conformance
 test).
+
+All of that holds: 106/106 green, the export check is a bare equality with no
+allowances, and `grep -r typsy src/` is finally empty — the Phase 5 carve-out
+was `GitTheme`, and it died with `set-git-theme`.
 
 ### Phase 7 — Sweep
 

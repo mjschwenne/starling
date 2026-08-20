@@ -313,7 +313,7 @@
 // lib.typ's exports
 // ===================================================================
 
-// The 1.0 surface (REFACTOR.md §10.1). `subslides` lands in Phase 6.
+// The 1.0 surface (REFACTOR.md §10.1).
 #let expected = (
   // Namespaced data structures and vocabularies.
   "bst",
@@ -353,6 +353,7 @@
   "last",
   "stacked",
   "figures",
+  "subslides",
   "canvas",
   // Backends and anchors.
   "draw-tree",
@@ -371,22 +372,15 @@
   assert(name in exported, message: "lib.typ must export '" + name + "'.")
 }
 
-// Every data structure has migrated, so the only names left over the 1.0
-// surface are the git DSL's own theme, which Phase 6 folds into the one theme.
-// Listing them exactly makes this the tripwire it is meant to be: any *other*
-// accidental export fails here.
-#let phase-6-leftovers = (
-  "default-git-theme",
-  "set-git-theme",
-  "GitTheme",
-  "_git-theme-state",
-)
+// And nothing else. Typst has no visibility control, so this equality is the
+// only thing standing between a stray import at the top of lib.typ and a name
+// users can reach — which is exactly how `starling.git.d` escaped in 0.3.x.
 #let extra = exported.keys().filter(n => not expected.contains(n))
 #assert.eq(
-  extra.sorted(),
-  phase-6-leftovers.sorted(),
+  extra,
+  (),
   message: "lib.typ exports names outside the 1.0 surface: "
-    + extra.filter(n => not phase-6-leftovers.contains(n)).join(", ")
+    + extra.join(", ")
     + " (see REFACTOR.md §10.1).",
 )
 
@@ -450,6 +444,11 @@
   "set-hashmap-theme",
   "default-hashmap-theme",
   "HashmapTheme",
+  // The git palette's own state and refinement, folded into the one theme.
+  "default-git-theme",
+  "set-git-theme",
+  "GitTheme",
+  "_git-theme-state",
 )
 #for name in retired {
   assert(
@@ -475,6 +474,44 @@
 
 // `canvas` is the bare, alt-less form for hand-built layouts.
 #assert.eq(type(starling.canvas(demo.first())), content)
+
+// `subslides` composes one piece of content per frame. It takes a lone frame
+// too, and its `aux:` / `fit:` arguments are checked up front rather than
+// deep inside a layout pass.
+#assert.eq(starling.subslides(demo).len(), demo.len())
+#assert.eq(starling.subslides(demo.at(1)).len(), 1)
+#assert.eq(starling.subslides(demo, fit: 60%).len(), demo.len())
+
+// ===================================================================
+// The git DSL's surface
+// ===================================================================
+
+// git-graph is a namespace of DSL verbs, not a DS module, so it has its own
+// expected surface (REFACTOR.md §9). Everything else in the file is
+// `_`-prefixed — this is the module where an accidental export (the cetz
+// draw alias, once exported as `starling.git.d`) did real damage.
+#let git-verbs = (
+  "git-graph",
+  "commit",
+  "branch",
+  "merge",
+  "tag",
+  "checkout",
+  "branch-pointer",
+  "head-pointer",
+  "detached-commit",
+  "git-highlight",
+  "background-lanes",
+)
+#let git-exported = dictionary(starling.git).keys().filter(n => (
+  not n.starts-with("_")
+))
+#assert.eq(
+  git-exported.sorted(),
+  git-verbs.sorted(),
+  message: "starling.git's public surface drifted from REFACTOR.md §9: "
+    + git-exported.filter(n => not git-verbs.contains(n)).join(", "),
+)
 
 // Placeholder page (tytanic always compares a rendered page).
 #set page(width: auto, height: auto, margin: 6pt)
