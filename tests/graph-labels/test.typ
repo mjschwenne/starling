@@ -5,7 +5,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let g = graph(
+#let g = graph.new(
   (
     ("A", 0, 0, [Start]),
     ("B", 3, 1, [Server]),
@@ -21,8 +21,8 @@
   ),
 )
 
-#starling.last((g.display)())
+#starling.last(graph.display(g))
 
 // Labels survive into an algorithm display: weights still drive Prim,
 // but labelled edges show their label.
-#starling.last((g.mst-prim-display)("A"))
+#starling.last(graph.prim-display(g, "A"))

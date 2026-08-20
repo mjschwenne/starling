@@ -10,7 +10,7 @@
 
 // Names overflow the default circle — manual positions keep pages 1–3
 // deterministic (autosize measures the label, independent of layout).
-#let people = graph(
+#let people = graph.new(
   (
     ("A", 0, 0, [Alice]),
     ("B", 3, 0, [Bob]),
@@ -27,21 +27,23 @@
 )
 
 // Fixed ellipse (default rx/ry).
-#starling.last((people.display)(node-style: (shape: "ellipse")))
+#starling.last(graph.display(people, node-style: (shape: "ellipse")))
 
 // Autosize ellipse — each node fits its own name.
-#starling.last((people.display)(node-style: (shape: "ellipse", autosize: true)))
+#starling.last(graph.display(people, node-style: (shape: "ellipse", autosize: true)))
 
 // Autosize rectangle, exercised through a traversal so per-frame fills
 // merge over the doc-wide shape and the trim stays shape-aware.
-#starling.last((people.dfs-display)(
+#starling.last(graph.dfs-display(
+  people,
   "A",
   node-style: (shape: "rectangle", autosize: true),
 ))
 
 // Internal layout: the display lays the graph out itself (sizes: auto
 // heuristic) and draws autosize ellipses. Pulls diagraph-layout.
-#starling.last((people.display)(
+#starling.last(graph.display(
+  people,
   node-style: (shape: "ellipse", autosize: true),
   layout: "neato",
 ))

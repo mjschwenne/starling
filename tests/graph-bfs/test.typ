@@ -4,7 +4,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let g = graph(
+#let g = graph.new(
   (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2)),
   edges: (
     ("A", "B", 7),
@@ -15,4 +15,4 @@
   ),
 )
 
-#starling.stacked((g.bfs-display)("A"))
+#starling.stacked(graph.bfs-display(g, "A"))

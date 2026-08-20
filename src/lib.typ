@@ -27,6 +27,7 @@
 #import "ds/avl.typ" as avl
 #import "ds/b24.typ" as b24
 #import "ds/trie.typ" as trie
+#import "ds/graph.typ" as graph
 
 // The semantic style vocabulary — `styles.attention(..)`, `styles.ghost(..)`
 // and friends, each returning an op array that follows the active theme.
@@ -67,6 +68,12 @@
 
 #import "slides.typ": canvas, figures, last, stacked
 
+/// One frame's auxiliary bookkeeping — a BFS queue, Kruskal's disjoint sets,
+/// Dijkstra's priority queue — as placeable content beside the canvas. The
+/// whole `aux` module (with `aux-view-title`) is namespaced too.
+#import "aux.typ" as aux
+#import "aux.typ": aux-strip
+
 // ===================================================================
 // Draw backends
 // ===================================================================
@@ -75,19 +82,18 @@
 // structure with annotations of your own; they need no `context`.
 
 #import "draw/tree.typ": draw-tree
+#import "draw/graph.typ": draw-graph
 #import "draw/hashmap.typ": draw-hashmap
 
 // ===================================================================
 // TRANSITIONAL — the pre-1.0 surface for the not-yet-migrated structures
 // ===================================================================
 //
-// Graph, Sort, Skiplist and the git DSL still ride the old typsy stack.
+// Sort, Skiplist and the git DSL still ride the old typsy stack.
 // Their exports below are unchanged and keep working; each block disappears
 // as its structure moves into `ds/` (Phases 5-6). Nothing here is part of
 // the 1.0 surface.
 
-#import "./graph.typ": Graph, graph, aux-strip, aux-view-title
-#import "./graph-draw.typ": draw-graph, node-anchor, edge-key, make-graph-renderer
 #import "./sort.typ": (
   Sort,
   sort,

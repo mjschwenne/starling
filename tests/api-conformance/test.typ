@@ -16,6 +16,7 @@
 #import "/src/ds/avl.typ"
 #import "/src/ds/b24.typ"
 #import "/src/ds/trie.typ"
+#import "/src/ds/graph.typ"
 
 // ===================================================================
 // The per-module contract
@@ -178,6 +179,35 @@
     displays: ("search-display", "insert-display", "delete-display"),
   ),
   (
+    // A graph is built up rather than inserted into, so its verbs differ the
+    // most from the trees'. `new` takes a node list; one placed node is
+    // enough for `display` to draw.
+    name: "graph",
+    seed: (("A", 0, 0),),
+    module: graph,
+    verbs: (
+      "add-node",
+      "add-edge",
+      "with-position",
+      "neighbors",
+      "weight",
+      "contains-node",
+      "contains-edge",
+      "ek",
+      "edge-key",
+      "positioned",
+      "adjacency-matrix",
+      "adjacency-list",
+    ),
+    displays: (
+      "prim-display",
+      "kruskal-display",
+      "dijkstra-display",
+      "bfs-display",
+      "dfs-display",
+    ),
+  ),
+  (
     name: "hashmap",
     module: hashmap,
     verbs: (
@@ -249,8 +279,10 @@
   "avl",
   "b24",
   "trie",
+  "graph",
   "hashmap",
   "styles",
+  "aux",
   "git",
   // Snapshots and the op stream.
   "blank-snapshot",
@@ -316,6 +348,11 @@
   "RbtTheme",
   "bst-factory",
   "HashMap",
+  "Graph",
+  "node-anchor",
+  "edge-key",
+  "make-graph-renderer",
+  "aux-view-title",
   "concat-frames",
   "GraphNodeId",
   "TreeRenderer",

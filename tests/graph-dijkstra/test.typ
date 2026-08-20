@@ -5,7 +5,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let dg = graph(
+#let dg = graph.new(
   (("S", 0, 0), ("A", 2.5, 1.2), ("B", 2.5, -1.2), ("T", 5, 0)),
   edges: (
     ("S", "A", 1),
@@ -18,7 +18,7 @@
 )
 
 = Default (distances on nodes, instant path)
-#starling.stacked((dg.dijkstra-display)("S", target: "T"))
+#starling.stacked(graph.dijkstra-display(dg, "S", target: "T"))
 
 // `node-distances: false` drops the on-canvas distance notes (they live
 // in the `dist` aux map instead); `reconstruct: true` appends the
@@ -26,4 +26,4 @@
 // back from the end (settled stroke over the tree, the prepended node
 // ringed) rather than highlighted all at once.
 = node-distances: false + reconstruct: true
-#starling.stacked((dg.dijkstra-display)("S", target: "T", node-distances: false, reconstruct: true))
+#starling.stacked(graph.dijkstra-display(dg, "S", target: "T", node-distances: false, reconstruct: true))

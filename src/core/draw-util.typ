@@ -62,6 +62,11 @@
   if l < 60% { white } else { black }
 }
 
+/// A de-emphasized version of a theme color, for the parts of a drawing that
+/// should read second: an absent adjacency-matrix cell, an empty auxiliary
+/// structure, a rejected element's label.
+#let muted(c) = c.transparentize(55%)
+
 /// A small piece of content on a filled halo, so index labels and edge tags
 /// stay legible over any connector running beneath them. `theme` is the full
 /// resolved theme; the halo uses `theme.render.note-bg`.

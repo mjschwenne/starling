@@ -7,9 +7,9 @@
 // danger-stroke in both the queue and on the canvas — the payoff of the
 // add-a-new-instance model.
 #import "/src/lib.typ" as starling
-#import starling: graph, aux-strip
+#import starling: aux-strip, canvas, graph
 
-#let dg = graph(
+#let dg = graph.new(
   (("S", 0, 0), ("A", 2.5, 1.2), ("B", 2.5, -1.2), ("T", 5, 0)),
   edges: (
     ("S", "A", 1),
@@ -21,7 +21,7 @@
   directed: true,
 )
 
-#let frames = (dg.dijkstra-display)("S")
+#let frames = graph.dijkstra-display(dg, "S")
 
 // Canvas + all three aux views per frame, wrapped into a grid so the
 // full 12-frame run stays a reasonable shape.
@@ -34,7 +34,7 @@
   ..frames.map(f => stack(
     dir: ttb,
     spacing: 0.6em,
-    starling.canvases-only((f,)).first(),
+    canvas(f),
     aux-strip(f.step),
     text(0.8em, f.caption),
   )),
@@ -61,7 +61,7 @@
 // the route one hop at a time (prepended node ringed) and the `prev` map
 // traces the chain being read — the cell read this hop marked `current`,
 // earlier reads `added`.
-#let recon = (dg.dijkstra-display)("S", target: "T", node-distances: false, reconstruct: true)
+#let recon = graph.dijkstra-display(dg, "S", target: "T", node-distances: false, reconstruct: true)
 = Path reconstruction (`prev` trace)
 #stack(
   dir: ttb,
@@ -70,7 +70,7 @@
     columns: (auto, auto, auto),
     column-gutter: 1.5em,
     align: horizon + left,
-    starling.canvases-only((f,)).first(),
+    canvas(f),
     aux-strip(f.step, view: "prev-map", title: true),
     text(0.85em, f.caption),
   )),

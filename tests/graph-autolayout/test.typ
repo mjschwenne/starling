@@ -7,7 +7,7 @@
 #import "/src/graph-layout.typ": auto-layout
 
 // No coordinates — positions come from graphviz.
-#let g = graph(
+#let g = graph.new(
   ("A", "B", "C", "D", "E"),
   edges: (
     ("A", "B", 7),
@@ -23,7 +23,7 @@
 #let pos = auto-layout(g)
 
 // Static render with the computed layout.
-#last((g.display)(positions: pos))
+#last(graph.display(g, positions: pos))
 
 // An algorithm display also accepts the computed positions.
-#last((g.mst-prim-display)("A", positions: pos))
+#last(graph.prim-display(g, "A", positions: pos))

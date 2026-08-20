@@ -5,7 +5,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let g = graph(
+#let g = graph.new(
   (("A", 0, 0), ("B", 3, 1), ("C", 1.5, 2.6), ("D", 4.5, 2.6)),
   edges: (
     ("A", "B", 7),
@@ -16,5 +16,5 @@
   ),
 )
 
-#starling.last((g.display)())
-#starling.last((g.display)(scale: 1.6))
+#starling.last(graph.display(g))
+#starling.last(graph.display(g, scale: 1.6))

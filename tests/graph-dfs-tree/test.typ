@@ -6,7 +6,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let g = graph(
+#let g = graph.new(
   (
     ("A", 0, 2), ("B", 1.5, 2), ("C", 3, 2),
     ("D", 0, 0.5), ("E", 1.5, 0.5), ("F", 3, 0.5),
@@ -18,4 +18,4 @@
   ),
 )
 
-#starling.stacked((g.dfs-display)("A", sort-frontier: true, spanning-tree: true))
+#starling.stacked(graph.dfs-display(g, "A", sort-frontier: true, spanning-tree: true))

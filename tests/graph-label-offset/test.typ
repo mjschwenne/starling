@@ -1,18 +1,14 @@
-// Edge weight-label side via the `label-offset` edge-style key, driven
-// through the Op command stream. The default (+0.12) seats the weight on
-// the left of the u->v direction; a negative offset flips it to the other
-// side, and a larger magnitude widens the gap. Three horizontal directed
-// edges share the same geometry so the placement is the only difference:
-// A->B keeps the default (above the rightward edge), C->D flips below,
-// E->F flips below with a wider gap.
+// Edge weight-label side via the `label-offset` edge-style key, driven through
+// the op command stream. The default (+0.12) seats the weight on the left of
+// the u->v direction; a negative offset flips it to the other side, and a
+// larger magnitude widens the gap. Three horizontal directed edges share the
+// same geometry so the placement is the only difference: A->B keeps the
+// default (above the rightward edge), C->D flips below, E->F flips below with
+// a wider gap.
 #import "/src/lib.typ" as starling
-#import starling: graph
-// TRANSITIONAL (until the graph moves to ds/ in Phase 5): the pre-1.0 op
-// kernel, taken from its own modules now that lib.typ carries the 1.0 one.
-#import "/src/anim-core.typ": Op, apply-ops
-#import "/src/graph-draw.typ": edge-key, make-graph-renderer
+#import starling: apply-ops, graph, render, set-alt, style-edge
 
-#let d = graph(
+#let d = graph.new(
   (
     ("A", 0, 0), ("B", 3, 0),
     ("C", 0, -1.5), ("D", 3, -1.5),
@@ -26,17 +22,14 @@
   directed: true,
 )
 
-#let r = make-graph-renderer((d.positioned)(), sticky: true)
 #let r = apply-ops(
-  r,
-  (
-    (Op.StyleEdge.new)(path: edge-key("C", "D", directed: true), style: (label-offset: -0.12)),
-    (Op.StyleEdge.new)(path: edge-key("E", "F", directed: true), style: (label-offset: -0.5)),
-    (Op.Alt.new)(text: "Edge weight labels seated on chosen sides via label-offset."),
-  ),
+  graph.renderer(d, sticky: true),
+  style-edge(graph.ek(d, "C", "D"), label-offset: -0.12)
+    + style-edge(graph.ek(d, "E", "F"), label-offset: -0.5)
+    + set-alt("Edge weight labels seated on chosen sides via label-offset."),
 )
 
-#let frames = (r.render)()
+#let frames = render(r)
 #assert.eq(frames.len(), 1)
 
 #starling.last(frames)

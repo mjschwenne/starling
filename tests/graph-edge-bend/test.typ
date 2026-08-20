@@ -1,17 +1,13 @@
-// Bent edges via the `bend` edge-style key, driven through the Op
-// command stream. Two opposite directed edges (A->B and B->A) given the
-// same positive bend fan to opposite sides — so a mutual pair reads as
-// two distinct arcs instead of overlapping into one undirected-looking
-// line. C->A is left straight (bend defaults to 0). Each arc keeps its
-// own weight on the convex side and a filled arrowhead on the boundary.
+// Bent edges via the `bend` edge-style key, driven through the op command
+// stream. Two opposite directed edges (A->B and B->A) given the same positive
+// bend fan to opposite sides — so a mutual pair reads as two distinct arcs
+// instead of overlapping into one undirected-looking line. C->A is left
+// straight (bend defaults to 0). Each arc keeps its own weight on the convex
+// side and a filled arrowhead on the boundary.
 #import "/src/lib.typ" as starling
-#import starling: graph
-// TRANSITIONAL (until the graph moves to ds/ in Phase 5): the pre-1.0 op
-// kernel, taken from its own modules now that lib.typ carries the 1.0 one.
-#import "/src/anim-core.typ": Op, apply-ops
-#import "/src/graph-draw.typ": edge-key, make-graph-renderer
+#import starling: apply-ops, graph, render, set-alt, style-edge
 
-#let d = graph(
+#let d = graph.new(
   (("A", 0, 0), ("B", 3, 0), ("C", 1.5, 2.4)),
   edges: (
     ("A", "B", 1),
@@ -23,19 +19,19 @@
   directed: true,
 )
 
-#let r = make-graph-renderer((d.positioned)(), sticky: true)
 #let r = apply-ops(
-  r,
-  (
-    (Op.StyleEdge.new)(path: edge-key("A", "B", directed: true), style: (bend: 0.6)),
-    (Op.StyleEdge.new)(path: edge-key("B", "A", directed: true), style: (bend: 0.6)),
-    (Op.StyleEdge.new)(path: edge-key("B", "C", directed: true), style: (bend: 0.6)),
-    (Op.StyleEdge.new)(path: edge-key("C", "B", directed: true), style: (bend: 0.6)),
-    (Op.Alt.new)(text: "Mutual directed pairs fanned apart with bend."),
-  ),
+  graph.renderer(d, sticky: true),
+  style-edge(
+    graph.ek(d, "A", "B"),
+    graph.ek(d, "B", "A"),
+    graph.ek(d, "B", "C"),
+    graph.ek(d, "C", "B"),
+    bend: 0.6,
+  )
+    + set-alt("Mutual directed pairs fanned apart with bend."),
 )
 
-#let frames = (r.render)()
+#let frames = render(r)
 #assert.eq(frames.len(), 1)
 
 #starling.last(frames)

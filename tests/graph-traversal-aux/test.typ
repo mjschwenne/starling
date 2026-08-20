@@ -4,9 +4,9 @@
 // a duplicate (C is pushed before an earlier copy is popped), which the
 // faithful strip shows verbatim.
 #import "/src/lib.typ" as starling
-#import starling: graph, aux-strip
+#import starling: aux-strip, canvas, graph
 
-#let g = graph(
+#let g = graph.new(
   (("A", 0, 0), ("B", -1.5, -1.5), ("C", 1.5, -1.5), ("D", 0, -3), ("E", 0, -4.5)),
   edges: (("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E")),
 )
@@ -19,16 +19,16 @@
   ..frames.map(f => stack(
     dir: ttb,
     spacing: 0.6em,
-    starling.canvases-only((f,)).first(),
+    canvas(f),
     aux-strip(f.step),
   )),
 )
 
 = BFS queue
-#with-strips((g.bfs-display)("A"))
+#with-strips(graph.bfs-display(g, "A"))
 
 = DFS stack (faithful — note the duplicate C)
-#with-strips((g.dfs-display)("A"))
+#with-strips(graph.dfs-display(g, "A"))
 
 = DFS search for E (terminal frame keeps last stack)
-#with-strips((g.dfs-display)("A", target: "E"))
+#with-strips(graph.dfs-display(g, "A", target: "E"))

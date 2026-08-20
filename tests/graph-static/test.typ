@@ -2,7 +2,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let g = graph(
+#let g = graph.new(
   (("A", 0, 0), ("B", 3, 1), ("C", 1.5, 2.6), ("D", 4.5, 2.6)),
   edges: (
     ("A", "B", 7),
@@ -13,12 +13,12 @@
   ),
 )
 
-#starling.last((g.display)())
+#starling.last(graph.display(g))
 
-#let d = graph(
+#let d = graph.new(
   (("S", 0, 0), ("T", 3, 0), ("U", 1.5, 2)),
   edges: (("S", "T", 3), ("S", "U", 1), ("U", "T", 1)),
   directed: true,
 )
 
-#starling.last((d.display)())
+#starling.last(graph.display(d))

@@ -6,7 +6,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let g = graph(
+#let g = graph.new(
   (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2), ("E", 6, 0.5)),
   edges: (
     ("A", "B", 7),
@@ -19,12 +19,12 @@
 )
 
 // Found: stops at D before E is ever visited.
-#starling.stacked((g.bfs-display)("A", target: "D"))
+#starling.stacked(graph.bfs-display(g, "A", target: "D"))
 
 // Not found: Z is in its own component, unreachable from A.
-#let h = graph(
+#let h = graph.new(
   (("A", 0, 0), ("B", 3, 0), ("C", 1.5, 1.8), ("Z", 6, 0)),
   edges: (("A", "B", 1), ("A", "C", 2), ("B", "C", 3)),
 )
 
-#starling.stacked((h.bfs-display)("A", target: "Z"))
+#starling.stacked(graph.bfs-display(h, "A", target: "Z"))

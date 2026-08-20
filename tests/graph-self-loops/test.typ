@@ -6,7 +6,7 @@
 #import "/src/lib.typ" as starling
 #import starling: graph
 
-#let d = graph(
+#let d = graph.new(
   (("A", 0, 0), ("B", 3, 0), ("C", 1.5, 2.4)),
   edges: (
     ("A", "B", 1),
@@ -19,12 +19,12 @@
   directed: true,
 )
 
-#starling.last((d.display)())
+#starling.last(graph.display(d))
 
 // Undirected self-loop draws the teardrop with no arrowhead.
-#let u = graph(
+#let u = graph.new(
   (("X", 0, 0), ("Y", 2.5, 0)),
   edges: (("X", "Y", 5), ("X", "X", 1)),
 )
 
-#starling.last((u.display)())
+#starling.last(graph.display(u))
