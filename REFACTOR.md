@@ -1510,7 +1510,7 @@ sweep: the 6-line `_stamp-result` in `ds/b24.typ`, `ds/trie.typ` and
 cannot import — it would want to move to `core/frame.typ`, a core change), and
 the one-line `_cap` / `_styled` conveniences.
 
-### Phase 8 — Docs & Packaging
+### Phase 8 — Docs & Packaging — ✅ DONE (commit `Phase 8: the 1.0.0 documentation`)
 
 1. `docs/manual.typ`: rewrite all example code via §11.1; add tidy
    `parse-module`/ `show-module` stanzas for **every** public module (the old
@@ -1532,6 +1532,57 @@ the one-line `_cap` / `_styled` conveniences.
    contract, the theme dict, and the phase-free steady state).
 6. `just ci` green. Tag nothing; leave merging to mjs.
 
+**The manual was rewritten rather than edited**, since every code line in it
+was 0.3-era. It is now 20 narrative chapters plus the reference: the model
+(frames, snapshots, renderers, element keys, step kinds and `step.result`),
+the presentation layer (including `subslides` and `aux-strip`), theming, the
+style vocabulary, the op stream, cetz composition (`anchor` / `overlay`), the
+extension story, a tour per structure, and the migration chapter. Every
+example is live — the tours render real animations, so a stale call is a
+compile error rather than rotting prose.
+
+Three things turned up that the plan did not anticipate.
+
+- **`just check` needed a tytanic *expression*, not a name list.** The
+  `tt run <name>...` form takes exact names only, so the recipe is
+  `tt run --no-fail-fast -e 'regex:"-ops$" | exact:core-ops | exact:api-conformance'`
+  — note `-ops$` rather than `ops$`, which would also catch `graph-self-loops`.
+  It selects 11 tests and runs in ~0.5s.
+- **The Justfile's install targets already read `typst.toml`** (via
+  `scripts/setup`), so step 3's hard-coded `0.1.0` was only ever in the old
+  CLAUDE.md's prose. Added `just version` so the value is inspectable, and
+  said where it comes from in the recipe comments.
+- **tidy has two docstring traps**, both of which were live in `src/` and
+  silently mangling the reference. A ` -> ` *with spaces* anywhere in a
+  docstring is read as the return-type marker: `` `key -> style` `` truncated
+  two `core/style.typ` descriptions and made the whole module fail to render
+  with "unclosed raw text" (the trailing backtick went with the discarded
+  half). And a docstring line beginning with `=` becomes a markup heading:
+  `hashmap.new`'s wrapped `` `k` `` / `` `m` `` explanation was producing a
+  phantom level-1 chapter in the middle of the API reference. Both are fixed
+  at the source, and both are now called out in `CLAUDE.md`.
+
+Two docs-only source changes came with it. `git-graph.typ`'s public verbs had
+`//` comments, which tidy ignores, so `starling.git`'s reference section would
+have rendered empty; the eleven verbs now carry `///` docs (the implementation
+notes stayed, moved inside the function body where they cannot break the doc
+association). And `docs/thumbnail.typ` was still on the typsy `BST` — it now
+uses `bst.insert-many` / `bst.insert-display`, and regenerates both SVGs
+byte-identically, which is a small extra check that the port preserved the
+drawing.
+
+`README.md` was rewritten too. It is not in the plan's task list, but it was
+0.2.0-era prose describing typsy, a BST-only package, `canvases-only`, and
+`concat-frames` — shipping 1.0.0 behind it was not defensible.
+
+The CHANGELOG entry folds in everything that landed after 0.2.0 without a
+changelog entry of its own: the version number moved to 0.3.0 during that
+work but was never released, and the `[Unreleased]` section listed only two
+of the eight structures that had arrived since.
+
+**Result:** `just ci` green — 106/106 tests, and `just doc` builds a 301-page
+manual (208 before, with the reference covering 19 modules rather than 11).
+Nothing is tagged; merging is mjs's call.
 ---
 
 ## 13. Out of Scope for 1.0.0 (Future Work — Do Not Do These Now)

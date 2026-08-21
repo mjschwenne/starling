@@ -1,144 +1,148 @@
 # Starling
 
-<div align="center">Version 0.2.0</div>
+<div align="center">Version 1.0.0</div>
 
 Animated renderings of data structures for teaching, built on
-[cetz](https://typst.app/universe/package/cetz),
-[typsy](https://typst.app/universe/package/typsy),
-and (optionally) [touying](https://typst.app/universe/package/touying).
+[cetz](https://typst.app/universe/package/cetz). It composes with
+[touying](https://typst.app/universe/package/touying) without depending
+on it, and reaches for
+[diagraph-layout](https://typst.app/universe/package/diagraph-layout)
+only if you ask for graphviz layout.
 
-Starling is the animation toolkit for a programming course; it
-currently ships a `BST` (binary search tree) and will grow to cover more
-structures over time (heaps, hash tables, graphs, etc.).
+Starling is the animation toolkit for a programming course. It ships
+binary search trees, red-black trees, AVL trees, 2-3-4 trees, tries,
+weighted graphs (Prim, Kruskal, Dijkstra, BFS/DFS), hash maps, the
+linear sorts, skip lists, and a DSL for git commit graphs.
 
 ## Quick start
 
 ```typ
-#import "@preview/starling:0.2.0" as starling
-#import starling: BST
+#import "@preview/starling:1.0.0" as starling
+#import starling: bst, last, stacked, result
 
-#let t = (BST.new)(value: 4, left: none, right: none)
-#let t = (t.insert)(1)
-#let t = (t.insert)(7)
-#let t = (t.insert)(3)
-#let t = (t.insert)(6)
+#let t = bst.new(4, 1, 7, 3, 6)
 
-#starling.last((t.display)())              // static tree
-#starling.last((t.search-display)(6))      // search, final frame
-#starling.stacked((t.insert-display)(5))   // insert, all frames vertically
-#starling.stacked((t.delete-display)(3))   // delete, all frames vertically
-#starling.stacked((t.rotate-display)(1))   // rotation, all frames vertically
-#starling.stacked((t.in-order-display)())  // traversal (also pre-/post-/level-order-display)
+#last(bst.display(t))                     // the tree, statically
+#last(bst.search-display(t, 6))           // a search, final frame only
+#stacked(bst.insert-display(t, 5))        // an insert, every frame down the page
+#stacked(bst.in-order-display(t))         // a traversal (also pre-/post-/level-order)
 ```
 
-## Frames and helpers
+Every data structure is a namespace of plain functions, and the
+structure is always the first argument — `bst.insert(t, 5)`,
+`hashmap.search-display(h, 21)`, `graph.prim-display(g, "A")`. Nothing
+mutates: an operation returns a new structure.
 
-Every `*-display` method returns `Array(Frame)`. A `Frame` is a record:
+## Frames
 
+Every `*-display` returns an array of *frames*. A frame is a plain
+dictionary carrying a builder (`theme => content`), a caption, step
+metadata, and alt text — data until you render it.
+
+| Helper                          | Result                                                  |
+|---------------------------------|---------------------------------------------------------|
+| `last(frames)`                  | the final frame, for print                              |
+| `stacked(frames)`               | every frame down the page, captioned — the handout form |
+| `figures(frames)`               | one figure per frame, to splat into `alternatives(..)`  |
+| `subslides(frames, aux: "right")` | canvas + auxiliary strip + caption, composed per step |
+| `canvas(frame)`                 | one bare canvas, for hand-built layouts                 |
+
+The final frame carries `step.result`, so an animation and the state it
+leaves behind stay in sync without writing the operation twice:
+
+```typ
+#let frames = bst.insert-display(t, 5)
+#stacked(frames)
+#let t = result(frames)
 ```
-(canvas: Content, caption: Union(None, Content), step: Union(None, Dictionary))
-```
-
-`canvas` is a cetz canvas, `caption` is an optional textual track for the
-step, and `step` is per-method metadata (e.g. `(kind: "compare", path,
-cmp, found)` for search frames). The package ships these helpers:
-
-| Helper                                  | Result                                  |
-|-----------------------------------------|-----------------------------------------|
-| `last(frames, caption: false)`          | final frame's canvas (+ caption opt-in) |
-| `stacked(frames, caption: true)`        | all frames stacked vertically           |
-| `figures(frames, caption: true)`        | `Array(figure)` for touying             |
-| `canvases-only(frames)`                 | strip captions, return canvas array     |
-
-If those don't fit your layout, pull the records apart yourself:
-`frames.last().canvas`, `frames.map(f => f.caption)`, etc.
 
 ## Usage with touying
 
-Starling does not depend on touying. Splat `figures` into `alternatives`
-so each frame becomes its own subslide:
+Starling has no touying dependency — it returns plain arrays.
 
 ```typ
 #import "@preview/touying:0.7.3": *
-#import "@preview/starling:0.2.0" as starling
-#import starling: BST
-
-#show: solaris-theme.with(aspect-ratio: "16-9")
-
-== A Binary Search Tree
-
-#let t = (BST.new)(value: 4, left: none, right: none)
-#let t = (t.insert)(1)
-// ...
+#import "@preview/starling:1.0.0" as starling
+#import starling: bst, graph, subslides
 
 == Searching
+#alternatives(..subslides(bst.search-display(t, 6)))
 
-#alternatives(..starling.figures((t.search-display)(6)))
+== Breadth-first search
+#alternatives(..subslides(graph.bfs-display(g, "A"), aux: "right"))
 ```
 
-Because Starling returns plain data, you can also weave frame fields
-into custom slide layouts — for instance, side-by-side animation and
-prose that step together:
+`subslides` composes each step's canvas with the algorithm's auxiliary
+state (a BFS queue, Dijkstra's priority queue, Kruskal's disjoint sets)
+and the step's caption, keeping the whole thing one alt-tagged figure.
 
-```typ
-== Searching for 6
-#let frames = (t.search-display)(6)
-#grid(columns: 2,
-  alternatives(..starling.figures(frames, caption: false)),
-  alternatives(..frames.map(f => f.caption)),
-)
-```
+## Annotating with cetz
 
-## Adding cetz annotations alongside a tree
-
-For callouts or overlays that need to track specific nodes, drop down
-to the cetz layer. `draw-tree` emits the tree's draw commands *without*
-wrapping them in `cetz.canvas`, so you can compose them with your own
-annotations in a shared canvas. `path-anchor("LR")` translates a starling
-L/R path to the cetz anchor name of the corresponding node circle:
+Each backend emits cetz drawables *without* a surrounding canvas, and
+`anchor(<element key>)` names any element it drew:
 
 ```typ
 #import "@preview/cetz:0.5.2"
-#import "@preview/starling:0.2.0" as starling
+#import starling: anchor, blank-snapshot, draw-tree
 
 #cetz.canvas({
-  starling.draw-tree(t, starling.blank-snapshot())
-  import cetz.draw: *
-  // Ring around the node at path "LR" (root → L → R).
-  circle(starling.path-anchor("LR"), radius: 0.85, stroke: red + 2pt)
+  draw-tree(t, blank-snapshot())
+  import cetz.draw: circle       // selectively: cetz has an `anchor` of its own
+  circle(anchor("LR"), radius: 0.85, stroke: red + 2pt)
 })
 ```
 
-`draw-tree` accepts a `name:` (default `"tree"`) and `node-prefix:`
-(default `"node-"`); `path-anchor` takes matching `tree-name:` and
-`prefix:` if you've customised those.
+To annotate a step of an existing animation instead, `overlay(frames,
+at: -1, draw: ..)` appends commands inside that frame's own canvas.
 
-## Lower-level: building your own animations
+## Building your own animations
 
-The animation kernel lives in `src/tree-anim.typ` and is exposed for
-custom uses:
+Drive a renderer with the op stream when no built-in animation fits:
 
-- `make-renderer(tree, sticky: true)` — start with one blank frame.
-- `r.push-with-node(path, ..style)`, `r.push-with-edge(path, ..style)`
-  — append a frame that styles a node/edge.
-- `r.patch(f => f.style-node(...))` — modify the topmost frame's
-  style snapshot in place.
-- `r.with-caption(c)`, `r.with-step(s)` — set the current frame's
-  caption / metadata.
-- `r.render()` — produce `Array(Frame)`.
-- `concat-frames(r1, r2, ...)` — stitch frames across renderers
-  (needed when the tree shape changes mid-animation).
+```typ
+#import starling: apply-ops, commit, render, set-alt, style-node, styles
 
-Paths are `"L"`/`"R"` strings rooted at `""`. The header of
-`src/tree-anim.typ` documents the data model and sketches a path to
-n-ary trees.
+#let r = bst.renderer(t, sticky: true)
+#stacked(render(apply-ops(r,
+  styles.search("") + commit(caption: [start at the root], alt: "At the root.")
+    + styles.search("R") + commit(caption: [go right], alt: "Descending right.")
+    + styles.success("RL") + set-alt("Found it."),
+)))
+```
+
+`make-renderer(structure, draw, ..)` takes a draw backend of your own —
+a plain function of a structure and a snapshot — so the frame,
+snapshot, theme, and presentation machinery works for structures
+starling doesn't ship.
+
+## Theming
+
+One nested dictionary, one setter. Sections: `render` (structural
+defaults), `op` (operation-semantic roles shared by every structure),
+and a palette per structure that needs one.
+
+```typ
+#starling.set-theme((op: (search-stroke: (paint: teal, thickness: 2.5pt))))
+#bst.search-display(t, 6, theme: (render: (node-fill: yellow.lighten(85%))))
+```
+
+A per-call `theme:` layers over the document's rather than replacing
+it. Calling `set-theme` at all costs an extra layout pass (Typst state
+convergence), so a document where compile speed matters can skip it and
+pass a palette per call instead.
+
+## Documentation
+
+[`docs/manual.pdf`](docs/manual.pdf) has a tour of every structure, the
+theme and style vocabularies, the extension story, an API reference for
+every module, and a chapter on migrating from 0.3.x.
 
 ## Installation
 
 While Starling is unpublished, install locally:
 
 ```sh
-just install        # installs to @local/starling/0.2.0
+just install        # installs to @local/starling/1.0.0
 just uninstall      # removes it
 ```
 
@@ -151,9 +155,10 @@ Or use the underlying script directly:
 ## Development
 
 ```sh
-just doc            # build docs/manual.pdf and thumbnails
-just test           # run tytanic test suite
+just test           # run the tytanic visual-regression suite
+just check          # the assertion tests only
 just update         # update visual regression refs
+just doc            # build docs/manual.pdf and the thumbnails
 just ci             # test + doc
 ```
 

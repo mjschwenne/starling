@@ -360,9 +360,9 @@
 // ===================================================================
 
 /// Build a hash map with `capacity` slots, a collision `strategy`, a pluggable
-/// `hash` function `(key, m) => index`, and a display `hash-repr` string (`k`
-/// = key, `m` = capacity, substituted as whole words — write them standalone,
-/// `"3k"` won't substitute).
+/// `hash` function `(key, m) => index`, and a display `hash-repr` string in
+/// which `k` means the key and `m` the capacity (substituted as whole words —
+/// write them standalone, since `"3k"` will not substitute).
 ///
 /// The `"double"` strategy takes a second hash `hash2` for the probe step size
 /// (with its own `hash2-repr`); the other strategies ignore it. Seed the table

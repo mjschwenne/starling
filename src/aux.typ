@@ -371,7 +371,7 @@
   /// One frame's `step` metadata dict.
   /// -> dictionary
   step,
-  /// Optional `id -> content` map giving each node a display label (to match
+  /// Optional `id`-to-content map giving each node a display label (to match
   /// custom node labels; also used for the endpoints of edge elements). Ids
   /// not present fall back to the id string itself.
   /// -> dictionary

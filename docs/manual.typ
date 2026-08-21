@@ -2,17 +2,26 @@
 #import "@preview/cetz:0.5.2"
 #import "@preview/tidy:0.4.3"
 
+#import starling: (
+  anchor, annotate, apply-ops, aux-strip, avl, b24, blank-snapshot, bst,
+  canvas, commit, default-theme, figures, git, graph, hashmap, last,
+  make-renderer, overlay, rbt, render, result, role, set-alt, set-caption,
+  set-step, set-theme, skiplist, sort, stacked, style-edge, style-node, styles,
+  subslides, theme-ref, trie,
+)
+
 #set page(paper: "us-letter", margin: 1in)
 #set par(justify: true)
 #set heading(numbering: "1.")
 #show raw.where(block: true): set block(fill: luma(245), inset: 8pt, radius: 3pt, width: 100%)
+#show link: set text(fill: rgb("#2b6cb0"))
 
 #align(center)[
   #text(28pt, weight: "bold")[Starling]\
   #v(0.4em)
   #text(13pt, style: "italic")[Animated renderings of data structures for teaching]\
   #v(0.3em)
-  #text(11pt)[Manual for v0.2.0]
+  #text(11pt)[Manual for v1.0.0]
 ]
 
 #v(2em)
@@ -23,1130 +32,1272 @@
 
 = Introduction
 
-Starling renders animated data structures in Typst, built on top of
-#link("https://typst.app/universe/package/cetz")[cetz],
-#link("https://typst.app/universe/package/typsy")[typsy], and
-(optionally) #link("https://typst.app/universe/package/touying")[touying].
-The package is designed for a programming course: it ships a binary
-search tree today and is structured to grow to heaps, hash tables, and
-graphs without rewriting the animation kernel.
+Starling draws data structures, one step at a time, so a lecture can show
+_how_ an algorithm works rather than only what it produced. It ships nine
+structures — binary search trees, red-black trees, AVL trees, 2-3-4 trees,
+tries, weighted graphs, hash maps, the linear (distribution) sorts, and skip
+lists — plus a DSL for git commit graphs, and it is built on
+#link("https://typst.app/universe/package/cetz")[cetz]. Slide decks are a
+first-class target, but starling has no dependency on
+#link("https://typst.app/universe/package/touying")[touying]: every animation
+is a plain array of values you place however your document needs.
 
-Every animation in starling is built from the same primitive — an
-ordered array of `Frame` records. Each `Frame` carries a rendered cetz
-canvas, an optional textual caption, and free-form step metadata. The
-package supplies a few helpers to collapse the array into a final
-image, a vertical stack, or an array of subslide figures, but you are
-free to ignore them and lay frames out however your document needs.
+Every animation in starling is the same thing: an ordered array of *frames*.
+A frame carries a builder that draws one moment of the structure, a caption,
+step metadata, and alt text. Helpers collapse that array into a final image,
+a vertical stack, a per-subslide sequence, or whatever you assemble yourself.
+
+#block(
+  fill: rgb("#eef4fb"),
+  inset: 10pt,
+  radius: 3pt,
+  width: 100%,
+)[
+  *Coming from 0.3.x?* Version 1.0.0 is a rewrite of the public API: plain
+  dictionaries instead of classes, one namespace per data structure, and one
+  theme. Nothing from 0.3 keeps working. The
+  #link(label("migration"))[migration chapter] maps every old name to its
+  replacement.
+]
+
+== Installation
+
+```typ
+#import "@preview/starling:1.0.0" as starling
+```
+
+Typst 0.14 or later is required. The graphviz auto-layout helper pulls
+`@preview/diagraph-layout` — but only if you call it (@auto-layout), so
+projects that place their graphs by hand never fetch it.
 
 == Quick start
 
 ```typ
-#import "@preview/starling:0.2.0" as starling
-#import starling: bst
+#import "@preview/starling:1.0.0" as starling
+#import starling: bst, last, stacked
 
-#let t = bst(4, 1, 7, 3, 6)
+#let t = bst.new(4, 1, 7, 3, 6)
 ```
 
-#let t = starling.bst(4, 1, 7, 3, 6)
+The first value becomes the root; the rest are inserted in order. Every
+data structure lives in a namespace of plain functions, and the structure is
+always the first argument.
 
-The first argument becomes the root; the rest are inserted in order.
-For custom node labels, pass a #raw("(value, label)") 2-tuple in place
-of a bare value — e.g. #raw("bst((4, [FOUR]), 1, (7, [SEVEN]))").
-The lower-level constructor #raw("(BST.new)(value:, label:, left:,
-right:)") and the #raw("(t.insert-many)(..vals)") method are still
-available for finer control.
+#let t = bst.new(4, 1, 7, 3, 6)
 
-A static render of the tree, taking the final frame from `(t.display)()`:
+A static rendering — `display` returns a one-frame array, and `last` takes
+the final frame of any array:
 
-#align(center, starling.last((t.display)()))
+#align(center, last(bst.display(t)))
 
-A full search animation, stacked vertically with per-step captions:
+A search animation, stacked vertically with per-step captions:
 
-#align(center, starling.stacked((t.search-display)(6)))
+#align(center, stacked(bst.search-display(t, 6)))
 
-= Architecture
+And on a slide, one subslide per step:
 
-Starling is layered into three source files, each with a single
-responsibility:
+```typ
+#alternatives(..subslides(bst.search-display(t, 6)))
+```
+
+== The shape of the API
+
+Starling exports two kinds of name. *Namespaces* hold everything specific to
+one structure or vocabulary; the *flat layer* holds what is common to all of
+them.
 
 #table(
   columns: (auto, 1fr),
   inset: 6pt,
   align: (left, left),
-  table.header[*File*][*Role*],
-  [`src/anim-core.typ`],
-  [The structure-agnostic animation core — defines `Snapshot`,
-    `Frame`, the `Renderer` (with a pluggable draw backend),
-    `make-renderer`, `Op`, and `apply-ops`. Knows nothing about any
-    particular structure.],
-
-  [`src/tree-anim.typ`],
-  [The tree backend on the core — `draw-tree`, the cetz-tree
-    builders, `PathId`, `path-anchor`, and the tree-bound
-    `make-renderer` wrapper. Re-exports the core.],
-
-  [`src/bst.typ`],
-  [The BST class — implements pure operations (`insert`, `delete`,
-    `rotate`) and the `*-display` methods that build animations using
-    the kernel.],
-
-  [`src/graph-draw.typ`],
-  [The graph renderer on the core — `draw-graph`, `edge-key`,
-    `node-anchor`, and the graph-bound `make-graph-renderer` wrapper.
-    The graph analog of `tree-anim.typ`; knows drawing, not algorithms.],
-
-  [`src/graph.typ`],
-  [The Graph class — data plus the MST / Dijkstra / BFS / DFS
-    `*-display` algorithms. Split from its renderer, like `bst.typ` is
-    from `draw-tree`.],
-
-  [`src/graph-layout.typ`],
-  [Optional graphviz auto-layout (`auto-layout`) via `diagraph-layout`.
-    The only file referencing that dependency, and it does so with a
-    lazy import inside `auto-layout`'s body — so the dependency stays
-    optional even though `lib.typ` re-exports the function.],
-
-  [`src/git-graph.typ`],
-  [The git-graph DSL — a *stateful* cetz builder (`commit`, `branch`,
-    `merge`, `tag`, `branch-pointer`, `head-pointer`, `detached-commit`)
-    for drawing git commit graphs. Deliberately off the `Frame` stack;
-    surfaced under the `starling.git.*` namespace. Carries its own per-DS
-    theme (`default-git-theme` / `set-git-theme`).],
-
-  [`src/lib.typ`],
-  [The public surface — re-exports everything users need, plus the
-    render helpers (`last`, `stacked`, `figures`, `canvases-only`).],
+  table.header[*Namespace*][*Holds*],
+  [`bst` `rbt` `avl` `b24` `trie`], [Tree structures: pure operations, literal
+    builders, and the `*-display` animations.],
+  [`graph` `hashmap` `sort` `skiplist`], [The non-tree structures, same
+    contract.],
+  [`styles`], [The semantic style vocabulary — `attention`, `success`,
+    `ghost`, … (@styles).],
+  [`aux`], [Auxiliary-state strips: `aux-strip`, `aux-view-title` (@aux).],
+  [`git`], [The git commit-graph DSL (@git-graph). Its verbs (`commit`,
+    `branch`, `merge`) are too generic to go flat.],
 )
 
-This split lets us add a new data structure (e.g. a heap) by writing
-just a new file at the `bst.typ` layer; the kernel does not need to
-change. Conversely, a power user who wants to assemble custom
-animations can talk to the kernel directly without touching the BST
-class at all.
-
-== Snapshots, frames, and the renderer
-
-Four types do most of the work. Their roles are intentionally
-distinct:
+The flat layer, grouped by what it is for:
 
 #table(
   columns: (auto, 1fr),
   inset: 6pt,
   align: (left, left),
-  table.header[*Type*][*Role*],
-  [`Snapshot`],
-  [A _sparse style overlay_ for one moment in time — which nodes are
-    filled what colour, which edges are dashed or hidden, which notes
-    are attached to which nodes. Built up by chaining
-    `style-node` / `style-edge` / `note-node` calls. Pure data; no
-    theme awareness, no content.],
+  table.header[*Group*][*Names*],
+  [Frames on the page],
+  [`last`, `stacked`, `figures`, `subslides`, `canvas`, `aux-strip`],
 
-  [`TreeRenderer`],
-  [A tree plus an ordered list of snapshots plus optional caption /
-    step-metadata for each snapshot. The thing you build up while
-    describing an animation.],
+  [The op stream],
+  [`style-node`, `style-edge`, `annotate`, `set-alt`, `set-caption`,
+    `set-step`, `commit`, `apply-ops`, `blank-snapshot`, `apply-snapshot`],
+
+  [Frames and renderers],
+  [`make-renderer`, `render`, `overlay`, `result`],
+
+  [Theme],
+  [`default-theme`, `set-theme`, `theme-ref`, `role`],
+
+  [Drawing],
+  [`draw-tree`, `draw-graph`, `draw-hashmap`, `draw-array`, `draw-skiplist`,
+    `anchor`, `auto-layout`],
+)
+
+That is the whole surface; a conformance test asserts the list exactly, so
+nothing leaks into it by accident.
+
+== One contract, nine structures <ds-contract>
+
+Every data-structure module presents the same names, so knowing one means
+knowing them all:
+
+#table(
+  columns: (auto, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*Name*][*Role*],
+  [`new(..)`], [Build a structure from values. `bst.new(4, 1, 7)`,
+    `trie.new("cat", "car")`, `hashmap.new(7, strategy: "linear")`.],
+  [pure operations], [`insert`, `delete`, `contains`, … — each takes the
+    structure first and returns a *new* structure or a value. Nothing
+    mutates.],
+  [`describe(s)`], [A one-line string describing the structure. It is what
+    the animations' alt text opens with.],
+  [`check-invariants(s)`], [Returns `true`, or panics naming the broken
+    invariant.],
+  [`display(s, ..)`], [The structure as a single frame.],
+  [`<op>-display(s, ..)`], [One animation per operation, each returning an
+    array of frames.],
+  [`renderer(s, ..)`], [A renderer pre-painted with the structure's own
+    styling, for driving by hand with the op stream (@op-stream).],
+  [`anchor`, key helpers], [The cetz anchor sanitizer, plus the constructors
+    for that structure's element keys (@element-keys).],
+)
+
+Signature rules hold across all of them: the structure is the first
+positional argument; `theme:` is always a partial nested theme override
+(@theming); `node-style:` and `edge-style:` are the base style layers; and
+every animation is named `<op>-display` and nothing else is.
+
+= The animation model
+
+Four shapes do all the work, and all four are plain dictionaries you can
+inspect, slice, and rebuild.
+
+#table(
+  columns: (auto, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*Shape*][*Role*],
+  [Structure],
+  [The data — a tree node, a graph, a table. Carries a `kind` field and
+    nothing else that is starling's business. Every operation returns a new
+    one.],
+
+  [`Snapshot`],
+  [A _sparse style overlay_ for one moment: which elements are filled what
+    colour, which edges are dashed or hidden, which notes hang off which
+    nodes. `(nodes: (:), edges: (:))`, keyed by element key. Pure data — no
+    theme, no content.],
+
+  [`Renderer`],
+  [A structure, a draw backend, and an ordered list of snapshots, plus the
+    caption / step / alt metadata for each. What you build up when driving
+    an animation by hand.],
 
   [`Frame`],
-  [The _output_ record: `(render, caption, step, alt)`. `render` is a
-    builder function `(op-theme, render-theme) -> content` — not
-    pre-baked content — so callers can resolve theme state at layout
-    time and reuse the same animation across documents with different
-    themes. `TreeRenderer.render` produces an array of these, one per
-    snapshot. This is what `*-display` methods return.],
-
-  [Theme dict],
-  [One of three layers, in merge order: `render-theme` (structural
-    defaults like node fill, edge stroke, note colour), `op-theme`
-    (operation strokes/fills shared across data structures, like
-    `search-stroke`, `success-fill`, `traversal-palette`), and an
-    optional per-DS theme (e.g. `rbt-theme`'s red/black palette).
-    Frames are theme-agnostic until a render helper feeds resolved
-    themes into each frame's `render` builder.],
+  [The *output* record: `(builder, caption, step, alt, ..)`. `builder` is a
+    function `theme => content` — not baked content — so one frame array can
+    render against different themes without recomputing the animation. This
+    is what every `*-display` returns.],
 )
 
 The data flow, end to end:
 
 #align(center)[
-  `Snapshot` array #h(0.5em) → #h(0.5em) `TreeRenderer.render`\
-  #h(0.5em) → #h(0.5em) `Array(Frame)` _(builders, theme-agnostic)_\
-  #h(0.5em) → #h(0.5em) helper resolves theme state once\
-  #h(0.5em) → #h(0.5em) helper calls each `(f.render)(op, rt)`\
-  #h(0.5em) → #h(0.5em) document content
+  structure + snapshots #h(0.4em) → #h(0.4em) `render(renderer)` or a
+  `*-display`\
+  #h(0.4em) → #h(0.4em) `array(Frame)` _(builders; theme-agnostic)_\
+  #h(0.4em) → #h(0.4em) a helper resolves the theme once\
+  #h(0.4em) → #h(0.4em) each `(frame.builder)(theme)`\
+  #h(0.4em) → #h(0.4em) document content
 ]
 
-The shape matters: snapshots and frames are both pure data until the
-final step. That makes them inspectable, slicable, and composable —
-you can pull a frame out, look at its `step` metadata, swap its
-caption, or thread it into a custom layout without rendering. The
-theming-aware materialisation is concentrated at the helper boundary.
+The shape is load-bearing: because frames are data until the last step, you
+can pull one out, read its `step`, swap its caption, thread it into a custom
+layout, or overlay cetz commands on it, all without rendering anything.
 
-== Path identity
-
-Every node is identified by its position in the tree, encoded as a
-string of `"L"` and `"R"` characters from the root. The root is `""`,
-the right child of the root is `"R"`, the left child of `"R"` is
-`"RL"`, and so on. Edges are identified by the path of their _child_
-node — each child has exactly one parent, so this is unambiguous.
-
-Path identity is the linchpin that keeps node and edge styling
-independent of the tree's value or layout. It also means a
-node-highlighting animation built for one tree can be reused on a tree
-of the same shape with different values just by passing a different
-`tree` to `make-renderer`.
-
-The only places that interpret path characters are `PathId` (the
-refined string type), `_build-cetz-tree` (which walks `.left` and
-`.right`), and the BST's own `by-value` / `path-to` / `resolve`
-methods. Everywhere else treats paths as opaque keys, which leaves
-room to generalise — n-ary trees would use slash-separated child
-indices like `"0/1/2"` or arrays of ints, and only those four places
-need to change.
-
-== Sticky animation accumulation
-
-`make-renderer(tree, sticky: true)` is the common case: each new frame
-pushed via `r.push-frame()` starts from the previous frame's snapshot.
-That means a sequence like
-
-```typ
-#let r = starling.make-renderer(t, sticky: true)
-#let r = (r.push-with-node)("",  stroke: blue + 2pt)   // frame 1
-#let r = (r.push-with-node)("L", stroke: blue + 2pt)   // frame 2
-#let r = (r.push-with-node)("LR", stroke: blue + 2pt)  // frame 3
-```
-
-produces three frames where each highlights one more node than the
-last — frame 3 has all three highlights, not just `LR`. This matches
-the natural mental model for teaching ("we visited these nodes in
-order"). Set `sticky: false` if you want each frame to start fresh.
-
-Captions and `step` metadata do _not_ sticky-accumulate; each frame's
-caption is whatever was last set on that frame, with no carry-over.
-
-== The cetz integration
-
-The animation kernel renders each snapshot via `draw-tree`, which
-emits cetz draw commands using `cetz.tree.tree(...)` for layout. The
-key choice here is _not_ to wrap `draw-tree`'s output in `cetz.canvas`
-inside the kernel — that wrap happens one layer up, in
-`_render-canvas`. The two functions are split so a power user can
-write their own `cetz.canvas` block, call `draw-tree` inside it, and
-add their own cetz annotations alongside the tree (see
-@composing-with-cetz-annotations).
-
-Anchors for individual nodes are exposed by `path-anchor`, which
-translates an L/R path string into the cetz anchor name produced by
-`draw-tree`. The fact that this needs a translation function at all
-is a quirk worth flagging — see @path-based-anchors-and-the-cetz-tree-quirk.
-
-= Design decisions
-
-This section explains the major calls that shape the API. None of
-them are obvious from reading the code, but each was a conscious
-choice and the reasoning is load-bearing for anyone considering a
-refactor.
-
-== Why frames, not a wrap callback
-
-The original (v0.1) API let users configure `starling.configure(wrap:
-alternatives)` to bake touying's `alternatives` into the BST class via
-closure capture. Each `*-display` method internally called
-`wrap(..figs)` on the array of figures it generated.
-
-That approach was rigid in two ways. First, the rendering decision
-was made _inside_ the animation method, so the same animation could
-not appear as a static figure in handouts and as a subslide sequence
-in slides — you'd configure differently per context. Second, and
-worse, the animation was always one opaque blob: there was no way to
-weave the caption "6 \> 4" alongside other slide content while keeping
-the visual animation synchronised, because everything lived inside a
-single `alternatives` mark.
-
-The current API solves both: `*-display` returns the raw frame array,
-and the helpers (`last`, `stacked`, `figures`) collapse it however
-the caller wants. Wanting to lay captions in a sidebar while the
-animation plays? Pull them out yourself:
-
-```typ
-#let frames = (t.search-display)(6)
-#grid(columns: 2,
-  alternatives(..starling.figures(frames, caption: false)),
-  alternatives(..frames.map(f => f.caption)),
-)
-```
-
-A historical note worth preserving: closure-captured `wrap` was
-itself chosen over a state-based approach (`std.state`, typsy's
-`safe-state`) because touying's `alternatives` is a layout-time
-"mark" that touying rejects inside `context { ... }` blocks. With
-frames as plain data, that constraint no longer applies to the
-animation API — and state did become viable later for the theming
-layer (see _State for ergonomics, per-call for perf_ below).
-
-== Three theme layers, one per concern
-
-Theming is split into three dicts that each own a different concern:
-
-- *Render theme* (`default-render-theme`, in `anim-core.typ`) holds
-  structural defaults — node fill, node stroke, node text fill, edge
-  stroke, note fill, edge-tag fill (persistent edge labels like AVL
-  heights and graph weights), and note-bg (the fill drawn behind a
-  node's in-canvas annotations so they stay legible over edges;
-  defaults to `white`, set it to the page color on a dark background).
-  Anything any data structure would need to render at all.
-- *Op theme* (`default-op-theme`, in `op-theme.typ`) holds operation-
-  semantic strokes/fills/palettes that apply to _any_ data structure
-  with those operations — `search-stroke`, `attention-stroke`,
-  `success-stroke`, `settled-stroke`, `success-fill`, `danger-stroke`,
-  `reset-stroke`, `traversal-palette`. BST search and a hypothetical
-  hash-table search share the same `search-stroke` from this layer.
-- *Per-DS theme* (e.g. `default-rbt-theme`, in `rbt.typ`) holds
-  styling intrinsic to one data structure — the red/black palette for
-  RBTs is the canonical example. BST itself has no per-DS theme,
-  because BST nodes have no intrinsic differentiation.
-
-The split lets each layer own its own concerns. A new data
-structure (heap, trie, B-tree) brings its own per-DS theme dict if
-needed and reuses the render theme and op theme as-is. If operation
-strokes lived in a BST theme, every new data structure would either
-duplicate them or grow a coupling to BST.
-
-The render theme also has a clear "lowest in the chain" role:
-`draw-tree` falls back to it when neither a snapshot override nor a
-`make-renderer(default-node-style:, default-edge-style:)` argument
-specifies a property. So the merge order, lowest precedence first, is:
-`default-render-theme` → user render-theme override → op-theme /
-per-DS-theme overlays applied per snapshot → renderer defaults →
-per-snapshot per-path overrides. Each layer adds more specificity.
-
-Strokes throughout the op theme are full stroke dictionaries
-(`(paint:, thickness:, dash:)`), not bare colours. That lets users
-change any aspect of a stroke (dash pattern, cap, width) without us
-adding more theme keys for each possibility.
-
-== Frames carry builders, not pre-rendered content
-
-`Frame.render` is a function `(op-theme, render-theme) -> content`,
-not a piece of pre-baked content. This is so render helpers (`last`,
-`stacked`, `figures`) can resolve theme state _once per call_ and
-feed those resolved themes into every frame's builder, rather than
-each frame independently resolving theme inside its own context
-block.
-
-The frame-as-builder shape also has a non-perf benefit: an
-`Array(Frame)` is now a portable, theme-agnostic description of an
-animation. The same frames can render against different themes in
-different contexts without re-running the `*-display` method. That's
-a cleaner separation than the older `(canvas, caption, step)` shape,
-where `canvas` baked in whatever theme was active at construction
-time.
-
-A typsy quirk worth noting: typsy auto-injects `self` into any
-function-typed field on a class. To keep `(frame.render)(op, rt)`
-from getting a spurious third argument, the actual closure is stored
-as `_builder: (fn: ...)` — a singleton dict around the function — and
-exposed through a `render` method that dereferences it. Users only
-see `(frame.render)(op, rt)`; the dict wrap is private.
-
-RBT and any future per-DS theme are read inside the frame's builder
-itself, not by the lib.typ helpers. The helpers only resolve the two
-universal layers — op-theme and render-theme — and pass them in;
-per-DS themes are state-read on demand. That keeps the helper
-signature stable as more data structures land.
-
-== State for ergonomics, per-call for perf
-
-Theme overrides come in two flavours:
+== What a frame carries
 
 #table(
   columns: (auto, 1fr),
   inset: 6pt,
   align: (left, left),
-  table.header[*Form*][*Behaviour*],
-  [`set-op-theme((..))` / `set-render-theme((..))` / `set-rbt-theme((..))`],
-  [State-based. One declaration at the top of the document propagates
-    through every subsequent `*-display` call. Ergonomic and intent-
-    matching, but participates in Typst's state-convergence machinery
-    — see @theming-perf.],
-
-  [`(t.search-display)(v, theme: (..))`],
-  [Per-call. Overrides the theme for one call; ignores state for that
-    call. Verbose if you have many calls, but skips the state-cost
-    path entirely. Run at the no-state baseline.],
+  table.header[*Field*][*Meaning*],
+  [`builder`], [`theme => content`. The helpers call it; you rarely do
+    directly.],
+  [`caption`], [`none` or content — the textual narration of this step.],
+  [`step`], [Free-form metadata about the step; always has `kind`
+    (@step-kinds).],
+  [`alt`], [Alt text for this step, always an explicitly-set string. The
+    helpers wrap each canvas in an alt-carrying `figure`, so a deck compiled
+    to PDF/UA keeps its narration.],
+  [`extra`], [cetz commands appended inside the frame's canvas — what
+    `overlay` (@cetz) appends to.],
 )
 
-Both paths exist because there's no single answer. State is right
-for a document that uses one theme throughout — write
-`set-op-theme(my-palette)` once, forget about it. Per-call is right
-when compile speed dominates and the user is happy threading a `let
-palette = (..)` value through their calls. The library does not pick
-a winner.
+Captions run on a second channel from the drawing on purpose. A search frame
+labels the compared node _in the canvas_ with the comparison it just made,
+and _also_ carries "6 \> 4" as its caption. The inline note makes a single
+frame readable on its own; the caption is a parallel textual track for
+layouts that want narration somewhere else on the slide. It is also why
+`last` hides captions by default while `stacked` and `figures` show them.
 
-The cost being structural to Typst — not something starling can
-optimise away — meant choosing whether to expose state at all was a
-real call. Skipping state would have removed the perf footgun but
-also removed the ergonomic win. Exposing both, with the cost
-documented up-front, lets users decide.
+== Step kinds and the result <step-kinds>
 
-== Two-channel captions
+`step.kind` says what a frame is showing. A few kinds are universal —
+`static` (a one-frame `display`), `init`, `settled` (the terminal success of
+a mutation), and `found` / `not-found` (lookup outcomes) — and each structure
+adds its own where the semantics genuinely differ (`descend`, `probe`,
+`splice`, `rehash`, `visit`, …). Each module lists its full set in a comment
+at the top of its source.
 
-For `search-display` and `insert-display`, the comparison string
-("6 \> 4") appears in _two_ places:
+Every animation's *final* frame also carries `step.result`: the structure the
+operation produced. That is what `result(frames)` reads, and it is how an
+animation and the state it leaves behind stay in sync:
 
-- *Inline*, as a small note drawn beside the highlighted node in the
-  cetz canvas. This labels which comparison happened at which node
-  spatially.
-- *Caption*, as a textual track on the `Frame` record. This is what
-  `stacked` and `figures` render below the canvas, and what callers
-  pulling captions out for custom layouts read.
+```typ
+#let frames = bst.insert-display(t, 5)
+#stacked(frames)
+#let t = result(frames)     // t now has the 5 in it
+```
 
-The redundancy is deliberate. The inline note is part of the visual:
-when looking at a single frame, you should be able to see at a glance
-what the algorithm just did. The caption is a parallel _textual_
-track for layouts that want narration apart from the animation.
+For searches and traversals — which change nothing — `step.result` is the
+input structure, so the pattern is uniform.
 
-This is why `last(frames)` defaults to `caption: false` — the inline
-note already labels the node, so adding a caption block below the
-static figure would be redundant. `stacked` and `figures` default to
-`caption: true` because animated rendering invites the textual
-narrative.
+== Element keys <element-keys>
 
-== The six-frame rotation <the-six-frame-rotation>
+Every element a backend draws has a *key*: an opaque string that snapshots,
+op streams, and anchors all use to name it. The alphabet is the structure's
+business.
 
-`rotate-display` walks through rotation as six discrete frames:
-`init`, `pivots`, `break`, `restructure`, `connect`, `settle`. The
-sequence is calibrated for teaching: each frame answers exactly one
-question.
+#table(
+  columns: (auto, auto, 1fr),
+  inset: 6pt,
+  align: (left, left, left),
+  table.header[*Structure*][*Key*][*Meaning*],
+  [`bst` `rbt` `avl`], [`""`, `"L"`, `"RL"`], [The path from the root in
+    `L`/`R` characters. The root is the empty string.],
+  [`b24`], [`"01"`, `"01#1"`], [Child indices as digits; an optional `#i`
+    suffix addresses one key compartment of that node.],
+  [`trie`], [`""`, `"c"`, `"ca"`], [The prefix spelled by the edges down to
+    the node.],
+  [`graph`], [`"A"`, `graph.edge-key("A", "B")`], [The node id; edges are
+    `"u--v"` (undirected) or `"u->v"` (directed).],
+  [`hashmap`], [`hashmap.cell-key(3)`, `hashmap.entry-key(3, 1)`], [Slot 3;
+    entry 1 of bucket 3's chain (which also keys the link into it).],
+  [`sort`], [`sort.cell-key("count", 5)`], [Row and column of the cell;
+    `sort.entry-key(row, i, j)` for a bucket-chain entry.],
+  [`skiplist`], [`skiplist.box-key(2, 1)`], [Column 2's lane box at level 1;
+    also `data-key(col)` and `forward-key(col, level)`.],
+)
+
+An *edge* is keyed by its child in a tree (each child has exactly one
+parent, so this is unambiguous) and by `edge-key` in a graph.
+
+Because keys are opaque, an animation written against one structure works on
+any structure of the same shape: styling is independent of the values in the
+nodes. And because both the snapshot layer and the anchor layer use the same
+key, calling out a node in your own cetz code is `anchor(<the key>)` — see
+@cetz.
+
+= Putting frames on the page
+
+An animation is an array; these five helpers turn it into content. All of
+them except `canvas` wrap each canvas in a `figure` carrying that frame's
+alt text, which changes nothing visible but keeps the animation narrated for
+screen readers.
+
+#table(
+  columns: (auto, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*Helper*][*Gives you*],
+  [`last(frames)`], [The final frame alone — the static, print form. Takes a
+    lone frame too, so `last(frames.at(3))` needs no re-wrapping.],
+  [`stacked(frames)`], [Every frame stacked down the page with its caption —
+    the handout form.],
+  [`figures(frames)`], [An array of `figure`s, one per frame. Splat it into
+    touying's `alternatives(..)`.],
+  [`subslides(frames, ..)`], [An array of *compositions* — canvas, auxiliary
+    strip, and caption laid out together, one per step (@subslides).],
+  [`canvas(frame)`], [One frame's bare canvas, with no caption and *no alt
+    text*, for hand-built layouts where you own the accessibility.],
+)
+
+`last`, `stacked`, and `canvas` open one `context` and resolve the theme
+once for the whole call. `figures` and `subslides` cannot: touying lays each
+returned element out independently, so each opens its own.
+
+== Slides with `subslides` <subslides>
+
+`subslides` is the one to reach for in a deck. It composes each step's
+canvas with the algorithm's auxiliary state and the step's caption, so a
+slide is one call:
+
+```typ
+#alternatives(..subslides(graph.bfs-display(g, "A"), aux: "right"))
+```
+
+#let g-demo = graph.new(
+  (("A", 0, 0), ("B", -1.4, -1.4), ("C", 1.4, -1.4), ("D", 0, -2.8)),
+  edges: (("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")),
+)
+
+#align(center, subslides(
+  graph.bfs-display(g-demo, "A", sort-frontier: true),
+  aux: "right",
+  fit: 90%,
+).at(2))
+
+Its arguments: `aux:` places the strip (`none`, `"right"`, `"left"`, or
+`"below"`), `aux-view:` picks one view when a step carries several,
+`aux-size:` sets the strip's text size, `caption:` toggles the narration,
+and `fit:` scales the composition. `fit: 60%` is a plain scale; `fit: (20cm,
+12cm)` measures *every* frame in the animation and applies one common factor
+so the drawing keeps a constant size from subslide to subslide instead of
+resizing under each step.
+
+Composing that sandwich by hand — a `grid` of `canvas`, `aux-strip`, and
+`f.caption`, each in its own `alternatives` — is what decks used to do, and
+it both drops the alt text and lets the three columns drift apart between
+subslides. If you do want the pieces separately, they still step in lockstep
+because each `alternatives` gets the same number of children:
+
+```typ
+#let frames = graph.bfs-display(g, "A")
+#grid(
+  columns: (2fr, 1fr), column-gutter: 2em, align: horizon,
+  alternatives(..figures(frames, caption: false)),
+  stack(dir: ttb, spacing: 1.2em,
+    alternatives(..frames.map(f => aux-strip(f.step))),
+    alternatives(..frames.map(f => f.caption)),
+  ),
+)
+```
+
+== Auxiliary state <aux>
+
+The graph algorithms carry their bookkeeping — BFS's queue, DFS's stack,
+Prim's frontier, Kruskal's sorted edge list and disjoint sets, Dijkstra's
+priority queue and its `dist` / `prev` maps — in each frame's `step`.
+`aux-strip(frame.step)` renders it as placeable content beside the canvas:
+
+#let bfs-demo = graph.bfs-display(g-demo, "A", sort-frontier: true)
+#align(center, grid(
+  columns: (auto, auto),
+  column-gutter: 1.5em,
+  align: horizon,
+  canvas(bfs-demo.at(2)),
+  aux-strip(bfs-demo.at(2).step),
+))
+
+It is deliberately decoupled from the canvas, so a slide can put the graph
+on one side and the strip on the other. A frame that carries several views
+(Kruskal two, Dijkstra three) stacks them all under their headings by
+default; `view:` selects one, `title:` overrides whether the heading shows,
+and `labels:` supplies custom display labels per node id. The heading string
+itself is `aux.aux-view-title(kind)`, for rolling your own.
+
+== Reading step metadata
+
+`frame.step` is ordinary data, so a layout can dispatch on it — colouring
+the narration by what kind of step it is, for instance:
+
+```typ
+#let kind-colors = (compare: blue, inserted: green)
+#let narrated = frames.map(f => stack(dir: ttb, spacing: 0.5em,
+  canvas(f),
+  text(fill: kind-colors.at(f.step.kind, default: black), f.caption),
+))
+#alternatives(..narrated)
+```
+
+= Theming <theming>
+
+Starling has one theme: a nested dictionary with one section per concern.
+
+#table(
+  columns: (auto, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*Section*][*Holds*],
+  [`render`], [Structural defaults for an unstyled structure: `node-fill`,
+    `node-stroke`, `node-text-fill`, `edge-stroke`, `note-fill`,
+    `edge-tag-fill` (persistent edge labels — AVL heights, trie letters,
+    graph weights), `note-bg` (drawn behind in-canvas annotations so they
+    stay legible over edges; set it to your page colour on a tinted
+    background), and `elided-fill` / `elided-stroke` for an elided
+    subtree.],
+
+  [`op`], [Operation-semantic roles shared by every structure:
+    `search-stroke`, `attention-stroke`, `success-stroke`, `settled-stroke`,
+    `success-fill`, `danger-stroke`, `reset-stroke`, and
+    `traversal-palette`. BST search and hash-map probing read the same
+    `search-stroke` — the roles describe *operations*, not structures.],
+
+  [`rbt` `trie` `hashmap` `sort` `skiplist` `git`], [Styling intrinsic to one
+    structure: the red/black palette, the trie's word-end shading, the hash
+    map's tombstones and chains, the sort's count tint, the skip list's
+    sentinels and muted lanes, and the git DSL's branch colours. `bst`,
+    `avl`, `b24` and `graph` need none.],
+)
+
+Strokes throughout are full stroke dictionaries — `(paint:, thickness:,
+dash:)` — so any aspect can change without the theme growing another key.
+`default-theme` is the whole thing; read a value out of it with
+`default-theme.op.attention-stroke`.
+
+== The two override paths
+
+Both take a *partial* nested dict: only the sections and keys you name
+change, and an unknown section or key panics so a typo surfaces at once.
+
+```typ
+// Document-wide, from here on:
+#set-theme((
+  op: (search-stroke: (paint: teal, thickness: 2.5pt)),
+  render: (node-fill: yellow.lighten(85%)),
+))
+
+// Or for one call only:
+#stacked(bst.search-display(t, 6, theme: (op: (search-stroke: (paint: olive, thickness: 2pt)))))
+```
+
+#align(center, stacked(
+  bst.search-display(t, 6, theme: (
+    op: (search-stroke: (paint: olive, thickness: 2pt)),
+    render: (node-fill: olive.lighten(88%)),
+  )).slice(0, 2),
+))
+
+Precedence runs `default-theme` #sym.arrow.l `set-theme` state
+#sym.arrow.l a per-call `theme:` #sym.arrow.l the renderer's `node-style:` /
+`edge-style:` layers #sym.arrow.l the per-frame snapshot. A per-call
+override *layers on* the document's theme rather than replacing it, so
+naming two keys changes those two and leaves the rest of your palette alone.
+
+== Performance: state costs a layout pass <theming-perf>
+
+Typst's state machinery is what makes `set-theme` work: an update later in
+the document can affect renders earlier in document order, so Typst
+evaluates, propagates, and re-evaluates everything that observed the state.
+In practice, *using `set-theme` roughly doubles the compile time of the
+state-observed part of the document.* The cost is one extra layout pass, not
+one per read — a thousand reads cost the same as one.
+
+Starling pays that price at most once (there is a single state, where 0.3.x
+had eight), and only if you call `set-theme` at all. When compile speed
+matters more than the convenience, hoist a palette into a `let` and pass it
+per call:
+
+```typ
+#let palette = (op: (search-stroke: (paint: teal, thickness: 2.5pt)))
+#stacked(bst.search-display(t, 6, theme: palette))
+#stacked(bst.insert-display(t, 5, theme: palette))
+```
+
+== Theme references
+
+A style built ahead of time cannot know the theme that will be active when
+it is drawn — so it stores a *reference* instead of a colour. `role(key)` is
+a reference into the `op` section and `theme-ref(section, key)` into any
+section; the frame machinery resolves them just before the backend runs.
+
+```typ
+#style-node("LR", stroke: role("attention-stroke"))
+#style-node("LR", fill: theme-ref("rbt", "red-fill"))
+```
+
+This is what makes the style vocabulary below theme-aware, and it is
+available to your own op streams for the same reason.
+
+= The style vocabulary <styles>
+
+`styles.*` names *intents* rather than colours. Each helper is variadic over
+element keys and returns an op array, so they compose with `+` and drop
+straight into `apply-ops`:
+
+#table(
+  columns: (auto, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*Helper*][*Effect*],
+  [`styles.attention(..keys)`], ["Look here" — a rotation pivot, a deletion
+    target, the entry being polled.],
+  [`styles.search(..keys)`], [Part of a search or insert walk.],
+  [`styles.success(..keys)`], [Settled: the success fill plus the terminal
+    ring.],
+  [`styles.danger(..keys)`], [Broken, removed, or rejected.],
+  [`styles.subtree(..keys)`], [Elide a subtree: a grey triangle with the
+    incoming edge landing on its apex.],
+  [`styles.nullify(..keys)`], [Draw a nil child as a real #sym.emptyset
+    node.],
+  [`styles.ghost(..keys)`], [Invisible but space-reserving — the layout is
+    identical to the fully-drawn structure.],
+  [`styles.hidden(..keys)`], [Gone entirely, layout space released.],
+  [`styles.revealed(..keys)`], [Undo either of those on a sticky frame.],
+  [`styles.force-show(..keys)`], [Draw an edge into a phantom (nil)
+    position.],
+)
+
+`ghost` versus `hidden` is the progressive-reveal decision. Ghosting keeps
+every element's exact footprint, so revealing a subtree one node at a time
+never shifts what is already on the slide; hiding releases the space, so the
+drawing re-flows around the gap. On a slide you almost always want `ghost`.
+
+#let reveal-tree = bst.insert-many(bst.leaf(5), 2, 8, 1, 3, 7, 9)
+#let reveal-panel(name, ops) = stack(
+  dir: ttb,
+  spacing: 0.6em,
+  align(center, strong(name)),
+  scale(62%, reflow: true, last(render(apply-ops(
+    bst.renderer(reveal-tree, sticky: true),
+    ops + set-alt("A tree with its right subtree " + name + "."),
+  )))),
+)
+
+#align(center, grid(
+  columns: (1fr, 1fr, 1fr),
+  column-gutter: 1em,
+  align: center + top,
+  reveal-panel("full", ()),
+  reveal-panel("ghosted", styles.ghost("R", "RL", "RR")),
+  reveal-panel("hidden", styles.hidden("R", "RL", "RR")),
+))
+
+Structure-specific vocabulary lives in that structure's namespace, where it
+can name things only that structure has: `rbt.paint-red(..keys)` /
+`rbt.paint-black(..keys)` recolour nodes from the red-black palette,
+`rbt.double-black(..keys)` marks the missing-black bookkeeping of a
+deletion, and `avl.unbalanced(..keys, case: "LL")` rings an imbalanced node
+with its case.
+
+An elided subtree, a nullified child, and a double-black marker, all on one
+tree:
+
+#let vocab-tree = rbt.new(8, 4, 12, 2, 6)
+#align(center, last(render(apply-ops(
+  rbt.renderer(vocab-tree, sticky: true),
+  styles.subtree("LL")
+    + styles.nullify("LRL")
+    + styles.force-show("LRL")
+    + rbt.double-black("R")
+    + styles.attention("")
+    + set-alt("An elided subtree, a nil sentinel, and a double-black node."),
+))))
+
+= The op command stream <op-stream>
+
+When an animation doesn't fit any built-in `*-display` — a probe sequence
+you want narrated your way, a hand-built teaching fixture, a progressive
+reveal — build the frames yourself. The op stream is a small declarative
+language for that: each constructor returns an *array* of ops, so streams
+compose with `+`, and `apply-ops` folds one into a renderer.
+
+#table(
+  columns: (auto, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*Op*][*Does*],
+  [`style-node(..keys, ..style)`], [Style one or more nodes. Positional
+    arguments are element keys, named arguments the style —
+    `style-node("L", "RR", fill: red)` is two ops.],
+  [`style-edge(..keys, ..style)`], [The same for edges.],
+  [`annotate(key, note)`], [Attach a transient note beside a node.],
+  [`commit(caption:, step:, alt:)`], [Close the in-progress frame, attaching
+    metadata, and open a fresh one.],
+  [`set-caption(c)` `set-step(s)` `set-alt(a)`], [Set one piece of metadata
+    without committing — for the trailing frame, which has no `commit` after
+    it.],
+)
+
+The three pieces: a renderer from the structure's own namespace (so it comes
+pre-painted with that structure's styling), a stream, and `render`.
+
+```typ
+#let r = bst.renderer(t, sticky: true)
+#let frames = render(apply-ops(r,
+  style-node("", stroke: role("search-stroke"))
+    + annotate("", [6 > 4])
+    + commit(caption: [start at the root], alt: "Comparing 6 against 4."),
+  ))
+```
+
+`sticky: true` is what makes each frame start from the previous one's
+styling — the accumulate-as-you-go behaviour a walk wants. It is *off* by
+default, so an animation whose frames each stand alone needs no
+un-sticking. Captions, steps, and alt text never accumulate; each frame's
+are its own.
+
+#let op-tree = bst.new(4, 1, 7, 3, 6, 8)
+#let walk-frames = render(apply-ops(
+  bst.renderer(op-tree, sticky: true),
+  style-node("", stroke: role("search-stroke"))
+    + annotate("", [6 > 4])
+    + commit(caption: [start at the root], alt: "Comparing 6 against 4.")
+    + style-node("R", stroke: role("search-stroke"))
+    + annotate("R", [6 < 7])
+    + commit(caption: [go right], alt: "Comparing 6 against 7.")
+    + styles.success("RL")
+    + set-caption([found it])
+    + set-alt("Found 6."),
+))
+
+#align(center, stacked(walk-frames))
+
+Notice the third batch: `styles.success("RL")` is the vocabulary from
+@styles, which is nothing more than a pre-built op array, and the trailing
+frame closes with `set-caption` / `set-alt` rather than a `commit`.
+
+A note is transient by design even under `sticky: true` — pass `note: none`
+in a later batch to clear one that was inherited. There is no
+"clear everything" op; styling one key at a time is the whole model.
+
+== On a graph and on a hash map
+
+The same stream drives every backend; only the keys change. Each namespace
+exports the constructors for its own keys, so nothing is spelled by hand.
+
+```typ
+#let r = graph.renderer(g, sticky: true)
+#let frames = render(apply-ops(r,
+  styles.attention("A")
+    + style-edge(graph.edge-key("A", "C"), stroke: role("success-stroke"))
+    + commit(caption: [A #sym.arrow C (+4)], alt: "Relaxing A to C."),
+  ))
+```
+
+#let g-op = graph.new(
+  (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2)),
+  edges: (
+    ("A", "B", 7), ("B", "C", 2), ("A", "C", 4), ("C", "D", 5), ("B", "D", 1),
+  ),
+)
+
+#let hm-op = hashmap.new(7, strategy: "linear", entries: (14, 21))
+
+#align(center, grid(
+  columns: (auto, auto),
+  column-gutter: 2em,
+  align: horizon,
+  last(render(apply-ops(
+    graph.renderer(g-op, sticky: true),
+    styles.success("A")
+      + styles.attention("C")
+      + style-edge(graph.edge-key("A", "C"), stroke: role("success-stroke"))
+      + set-alt("Edge A to C committed."),
+  ))),
+  last(render(apply-ops(
+    hashmap.renderer(hm-op, sticky: true),
+    style-node(hashmap.cell-key(0), stroke: role("search-stroke"))
+      + style-node(hashmap.cell-key(1), stroke: role("search-stroke"))
+      + styles.success(hashmap.cell-key(2))
+      + set-alt("Probed slots 0 and 1, landed on 2."),
+  ))),
+))
+
+The graph renderer takes the same `positions:` / `scale:` / `layout:`
+arguments its displays do; the hash-map renderer takes `orientation:` and an
+optional `hash-box:`.
+
+= Composing with cetz <cetz>
+
+Two escape hatches lead from a starling drawing back to raw cetz: drawing a
+structure inside your own canvas, and appending commands to a frame's
+canvas. Both find elements through `anchor(<element key>)`.
+
+== `anchor` and the draw backends
+
+Each `draw-*` backend emits cetz drawables *without* wrapping them in a
+`cetz.canvas`, so you can compose them with your own commands. They read a
+plain `theme:` default rather than state, so no `context` is needed.
+
+```typ
+#import "@preview/cetz:0.5.2"
+
+#cetz.canvas({
+  starling.draw-tree(t, blank-snapshot())
+  // Selective import: cetz.draw has an `anchor` of its own, and a glob
+  // import would shadow starling's.
+  import cetz.draw: circle
+  circle(anchor("LR"), radius: 0.85, stroke: red + 2pt)
+})
+```
+
+#align(center, cetz.canvas({
+  starling.draw-tree(op-tree, blank-snapshot())
+  import cetz.draw: circle
+  circle(anchor("LR"), radius: 0.85, stroke: red + 2pt)
+  circle(anchor(""), radius: 0.85, stroke: blue + 2pt)
+}))
+
+`anchor(key)` is the one sanitizer for every backend: it turns an element
+key into the cetz element name that backend drew under (`"LR"` #sym.arrow
+`el-LR`, the root #sym.arrow `el-root`, `"c3:1"` #sym.arrow `el-c3-1`).
+Compass sub-anchors work as usual — `anchor("LR") + ".north"` — and
+`anchor(key, canvas: "t")` qualifies the name when the drawing sits inside a
+named group. Pass `name:` to any backend to create that group.
+
+The non-tree backends take the structure's *positioned* form, which is what
+turns a graph or a table into coordinates:
+
+```typ
+#let h = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3))
+#context cetz.canvas({
+  starling.draw-hashmap(hashmap.positioned(h), blank-snapshot())
+  import cetz.draw: circle, content
+  circle(anchor(hashmap.cell-key(2)), radius: 0.8, stroke: red + 2pt)
+  content(anchor(hashmap.entry-key(0, 1)) + ".east", anchor: "west", [ #sym.arrow.l tail])
+})
+```
+
+#let hm-anchor = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3))
+#align(center, context cetz.canvas({
+  starling.draw-hashmap(hashmap.positioned(hm-anchor), blank-snapshot())
+  import cetz.draw: circle, content
+  circle(anchor(hashmap.cell-key(2)), radius: 0.8, stroke: red + 2pt)
+  content(
+    anchor(hashmap.entry-key(0, 1)) + ".east",
+    anchor: "west",
+    [ #sym.arrow.l tail],
+  )
+}))
+
+== Overlaying a callout on a frame
+
+Reaching into an animation to annotate one step used to mean rebuilding its
+canvas by hand. `overlay(frames, at:, draw:)` appends cetz commands *inside*
+an existing frame's canvas — so the backend's anchors are in scope — and
+gives back the frame array:
+
+```typ
+#let frames = overlay(bst.search-display(t, 6), at: -1, draw: theme => {
+  import cetz.draw: content, line
+  line((rel: (-1.6, -1), to: anchor("RL")), anchor("RL") + ".south-west",
+       stroke: theme.op.attention-stroke, mark: (end: ">"))
+  content((rel: (-1.7, -1.1), to: anchor("RL")), [the hit], anchor: "north-east")
+})
+```
+
+#align(center, last(overlay(
+  bst.search-display(op-tree, 6),
+  at: -1,
+  draw: theme => {
+    import cetz.draw: content, line
+    line(
+      (rel: (-1.6, -1), to: anchor("RL")),
+      anchor("RL") + ".south-west",
+      stroke: theme.op.attention-stroke,
+      mark: (end: ">"),
+    )
+    content(
+      (rel: (-1.7, -1.1), to: anchor("RL")),
+      [the hit],
+      anchor: "north-east",
+    )
+  },
+)))
+
+`draw:` is either raw cetz commands or a function of the resolved theme, so
+a callout can wear the same colours the animation does. `at:` accepts
+negative indices; `-1` is the last frame.
+
+= Extending starling <extending>
+
+A draw backend is a plain function
+
+```typ
+(structure, snapshot, node-style: (:), edge-style: (:), theme: default-theme)
+  => cetz commands
+```
+
+and `make-renderer(structure, draw, ..)` is the documented way to plug one
+in. Everything else in the package — the five bundled backends included —
+goes through the same door: nothing about frames, snapshots, ops, themes, or
+the presentation helpers knows what a tree is.
+
+```typ
+#let draw-blobs(structure, snapshot, node-style: (:), edge-style: (:), theme: default-theme) = {
+  import cetz.draw: circle, content
+  for (i, item) in structure.items.enumerate() {
+    let style = node-style + snapshot.nodes.at(str(i), default: (:))
+    circle((i * 1.4, 0),
+      radius: 0.5,
+      fill: style.at("fill", default: theme.render.node-fill),
+      stroke: style.at("stroke", default: theme.render.node-stroke),
+      name: anchor(str(i)))
+    content((i * 1.4, 0), item)
+  }
+}
+
+#let r = make-renderer((items: ("a", "b", "c")), draw-blobs, sticky: true)
+#last(render(apply-ops(r, styles.success("1") + set-alt("The middle blob."))))
+```
+
+#let draw-blobs(
+  structure,
+  snapshot,
+  node-style: (:),
+  edge-style: (:),
+  theme: default-theme,
+) = {
+  import cetz.draw: circle, content
+  for (i, item) in structure.items.enumerate() {
+    let style = node-style + snapshot.nodes.at(str(i), default: (:))
+    circle(
+      (i * 1.4, 0),
+      radius: 0.5,
+      fill: style.at("fill", default: theme.render.node-fill),
+      stroke: style.at("stroke", default: theme.render.node-stroke),
+      name: anchor(str(i)),
+    )
+    content((i * 1.4, 0), item)
+  }
+}
+
+#align(center, last(render(apply-ops(
+  make-renderer((items: ("a", "b", "c")), draw-blobs, sticky: true),
+  styles.success("1") + set-alt("The middle blob."),
+))))
+
+Two conventions make a custom backend behave like a bundled one. Resolve
+each element's style as `node-style` #sym.arrow.l the snapshot's entry for
+that key, falling back to `theme.render` — the frame machinery has already
+resolved any theme references by the time it calls you. And name each
+element `anchor(<its key>)`, so callouts and `overlay` can find it.
+
+For a whole animation rather than a hand-driven renderer, `make-frames`
+takes a list of specs — each a structure, a `build: theme => snapshot`
+closure, and the frame's metadata — and is what every `*-display` in the
+package is built on.
+
+= Binary search trees
+
+`bst` is the plainest structure in the package and the one to read first:
+the others differ from it only where their algorithms do.
+
+Build one from values with `new` (first value is the root, the rest are
+inserted in order), or write a tree literal with `node` / `leaf` when the
+*shape* is the point — a fixture for a specific fix-up case, say:
+
+```typ
+#let t = bst.new(4, 1, 7, 3, 6, 8)
+#let fixture = bst.node(4, bst.node(1, none, bst.leaf(3)), bst.leaf(7))
+```
+
+Values may carry a display label: pass `(value, label)` in place of a bare
+value, or `label:` on `insert` / `node`. The label is drawn; the value still
+orders the tree.
+
+#let tour = bst.new(4, 1, 7, 3, 6, 8)
+
+Pure operations — `insert`, `insert-many`, `delete`, `rotate`, `contains`,
+`by-value`, `path-to`, `resolve`, the four traversals, `describe`, and
+`check-invariants` — return new trees or plain values, and are what the
+animations are built on.
+
+== Static display
+
+#align(center, last(bst.display(tour)))
+
+== Search
+
+`search-display(t, v)` walks the search path, highlighting each node it
+visits and labelling it with the comparison it made. The terminal frame is
+`found` or `not-found`.
+
+#align(center, stacked(bst.search-display(tour, 6)))
+
+== Insert
+
+`insert-display(t, v, label: auto)` walks the same path, then shows the new
+node spliced in and settled.
+
+#align(center, stacked(bst.insert-display(tour, 5)))
+
+== Delete
+
+`delete-display(t, v)` dispatches on the target's children — leaf, one
+child, or two. The two-child case is the interesting one: it marks the
+target, descends to the in-order predecessor, transfers the value, and then
+excises the emptied node.
+
+Pass `search: true` to precede the deletion with a search-style walk to the
+target (its comparison notes are cleared on the first deletion frame, so they
+do not compete with the deletion highlights). The default opens straight on
+the deletion, which is what you want when that, not the lookup, is the
+lesson. In `rbt` and `avl` the same flag means one frame per comparison
+instead of a single frame lighting the whole path.
+
+#align(center, stacked(bst.delete-display(tour, 4)))
+
+== Rotate
+
+`rotate-display(t, child)` rotates `child` up into its parent's place —
+anywhere in the tree, not only at the root — inferring the direction from
+where `child` sits. Six frames, each answering exactly one question:
 
 #table(
   columns: (auto, 1fr),
   inset: 6pt,
   align: (left, left),
   table.header[*`step.kind`*][*Question answered*],
-  [`init`], [What's the starting tree?],
+  [`init`], [What is the starting tree?],
   [`pivots`], [Which two nodes are rotating?],
   [`break`], [Which edges are about to disappear?],
-  [`restructure`], [What does the new shape look like, edges aside?],
+  [`restructure`], [What is the new shape, edges aside?],
   [`connect`], [Where do the new edges go?],
-  [`settle`], [What does the final, clean tree look like?],
+  [`settled`], [What does the finished tree look like?],
 )
 
-An earlier draft had a "dashed red" intermediate between
-`pivots` and `break` (edges going dashed before disappearing). That
-was dropped because the orange pivot highlight already cues the eye
-to those edges — the extra frame added length without information.
+`restructure` is the load-bearing frame: it shows the new positions forming
+while the moved edges are still hidden, so the shape change lands separately
+from the reconnection.
 
-The `restructure` frame is the load-bearing one: it shows the new
-tree shape with the rotated edges still hidden, so the student can
-see the new positions form _before_ the edges connect. Without it,
-the rotation would collapse into one cut from "broken" to "rotated +
-highlighted edges", which is too much information at once.
-
-== Path-based anchors and the cetz tree quirk <path-based-anchors-and-the-cetz-tree-quirk>
-
-`cetz.tree.tree` numbers its nodes internally as `0`, `0-0`, `0-1`,
-`0-0-1`, ... — sibling indices joined by hyphens, with the root being
-`0`. Starling configures cetz-tree's `group-name-prefix` to `"node-"`,
-so the resulting anchor names look like `node-0-0-1`. The whole tree
-also sits inside an outer named group (`"tree"` by default), so the
-fully qualified anchor for path `"LR"` is `tree.node-0-0-1`.
-
-Two things made me reach for `path-anchor` rather than letting users
-type that out:
-
-1. The user thinks in `"LR"`, not `"0-0-1"`. The translation is
-  mechanical (`L → 0`, `R → 1`, prepend the root `0`) but it's
-  error-prone to do by hand.
-2. The naming scheme is a cetz-tree implementation detail. Wrapping
-  it in `path-anchor(path, tree-name:, prefix:)` lets us swap to a
-  different naming scheme later (e.g. if we drop cetz-tree for a
-  custom layout) without churn at every annotation call site.
-
-Phantom siblings (used to off-centre lone children — see
-`_build-cetz-tree`) also get cetz-tree-internal anchor names like
-`node-0-0-0`, but they are hidden at draw time and you generally
-should not annotate them.
-
-= BST animations tour
-
-The BST class provides five `*-display` methods. Each returns
-`Array(Frame)`; the examples below pass the result to `starling.stacked`
-to render every frame vertically with its caption.
-
-We'll use the same sample tree throughout this section, seeded via
-the #raw("bst(..vals)") factory (first arg = root, rest are
-inserted):
-
-```typ
-#let t = bst(4, 1, 7, 3, 6, 8)
-```
-
-#let tour = starling.bst(4, 1, 7, 3, 6, 8)
-
-== Static display
-
-`(t.display)()` returns a one-element frame array — the unmodified
-tree, with no step metadata.
-
-#align(center, starling.last((tour.display)()))
-
-== Search
-
-`(t.search-display)(v)` walks the search path, highlighting each
-node visited and labelling it with the comparison made. `step.kind`
-is `"init"` for the initial frame and `"compare"` for each step;
-`step.found` records whether the value was reached.
-
-#align(center, starling.stacked((tour.search-display)(6)))
-
-== Insert
-
-`(t.insert-display)(v)` walks the search path as for `search-display`,
-then transitions to the after-tree with the new node highlighted via
-`success-stroke` / `success-fill`. `step.kind` is `"init"`, `"compare"`
-(per search step), and finally `"inserted"`.
-
-#align(center, starling.stacked((tour.insert-display)(5)))
-
-== Delete
-
-`(t.delete-display)(v)` has three internal cases — leaf, one-child,
-and two-children — and dispatches on the target's children. `step.kind`
-ranges over `"init"`, `"highlight"`, `"break"`, `"descend"`,
-`"transfer"`, and `"settle"` depending on case.
-
-The two-children deletion is the most complex: it highlights the
-target, descends into the left subtree to find the in-order
-predecessor, annotates the value transfer, then jumps to the after-tree
-with the new root of the affected subtree highlighted via `success-stroke`.
-
-#align(center, starling.stacked((tour.delete-display)(4)))
-
-== Rotate
-
-`(t.rotate-display)(c)` rotates around node `c` — any node in the
-tree with a parent, not just a direct child of the root. The
-direction (left/right) is inferred from `c`'s position in the BST.
-The six-frame sequence is described in @the-six-frame-rotation.
-
-#align(center, starling.stacked((tour.rotate-display)((tour.resolve)("L"))))
+#align(center, stacked(bst.rotate-display(tour, bst.resolve(tour, "L"))))
 
 == Traversals
 
-`(t.in-order-display)()`, `(t.pre-order-display)()`,
-`(t.post-order-display)()`, and `(t.level-order-display)()` animate
-the four standard traversals. Each returns one frame per visit (plus
-the initial frame): the visited node is filled with the next color in
-a perceptually-uniform palette (magma by default) and tagged with a
-numbered badge marking its visit order, and the caption accumulates
-the running output sequence. `step.kind` is `"init"` for the initial
-frame and `"visit"` thereafter, with `step.value` and `step.index`
-(1-indexed) recording each visit. Switch palettes via the theme
-system (see #link(label("theming"))[Theming]) — either doc-wide with
-`set-op-theme((traversal-palette: color.map.viridis))` or per-call
-with `(t.in-order-display)(theme: (traversal-palette: ...))`.
+The four `*-order-display` animations emit one frame per visit. The visited
+node takes the next colour from the op theme's `traversal-palette` and a
+numbered badge, and the caption accumulates the output sequence. The final
+frame therefore carries the algorithm's whole colour signature, which makes
+the four worth showing side by side:
 
-Pure-data variants `(t.in-order)()`, `(t.pre-order)()`,
-`(t.post-order)()`, and `(t.level-order)()` return the visit sequence
-as an array of path strings without producing any animation, in case
-you want to drive a custom layout.
-
-#align(center, starling.stacked((tour.in-order-display)()))
-
-The final frame of each traversal carries the algorithm's full color
-signature. Laying all four out side-by-side gives a fast visual
-comparison — especially useful as a recall cue in review material
-where students already understand the algorithms and the gradient
-pattern reads as "oh right, post-order goes leaves-cool to
-root-warm":
-
-#let traversal-panel(label, frames) = block(breakable: false, stack(
+#let traversal-panel(name, frames) = block(breakable: false, stack(
   dir: ttb,
   spacing: 0.4em,
-  align(center, strong(label)),
-  starling.last(frames, caption: true),
+  align(center, strong(name)),
+  last(frames, caption: true),
 ))
 
 #align(center, grid(
   columns: 2,
   gutter: 1.5em,
-  traversal-panel([In-order], (tour.in-order-display)()), traversal-panel([Pre-order], (tour.pre-order-display)()),
-  traversal-panel([Post-order], (tour.post-order-display)()),
-  traversal-panel([Level-order], (tour.level-order-display)()),
+  traversal-panel([In-order], bst.in-order-display(tour)),
+  traversal-panel([Pre-order], bst.pre-order-display(tour)),
+  traversal-panel([Post-order], bst.post-order-display(tour)),
+  traversal-panel([Level-order], bst.level-order-display(tour)),
 ))
 
-= RBT animations tour
+The pure `bst.in-order(t)` and friends return the visit order as an array of
+paths, for driving a layout of your own.
 
-The `RBT` class ships three `*-display` methods today: `display`,
-`insert-display`, and `delete-display`. Each returns `Array(Frame)`
-in the same shape as the BST methods, so the render helpers
-(`last`, `stacked`, `figures`) and the caption / `step` /
-`alt` conventions carry over unchanged. The rbt-theme palette (red
-and black fill, stroke, and text-fill) is layered on top of the
-render theme so every frame's nodes wear their semantic colors
-automatically; operation-specific highlights from the op-theme
-(search-stroke on descent, attention-stroke on fix-up pivots,
-settled / success strokes on resolution) compose on top.
+= Red-black trees
 
-The sample tree throughout this section is seeded via the
-#raw("rbt(..vals)") factory — first arg becomes the (black) root,
-the rest are inserted in order so the CLRS fix-ups produce a clean
-balanced shape with a mix of red and black nodes:
+`rbt` adds a colour bit per node and the invariants that make it balanced.
+Its palette is the theme's `rbt` section, so every frame's nodes wear their
+semantic colour automatically and the operation highlights compose on top.
+
+Literals here are `rbt.red(v, ..children)` and `rbt.black(v, ..children)` —
+which is exactly how the textbook fixtures read:
 
 ```typ
-#let t = rbt(8, 4, 12, 2, 6, 10, 14, 1)
+#let t = rbt.new(8, 4, 12, 2, 6, 10, 14, 1)
+#let violation = rbt.black(8, rbt.red(4, rbt.red(2), none), rbt.black(12))
 ```
 
-#let rbt-tour = starling.rbt(8, 4, 12, 2, 6, 10, 14, 1)
+#let rbt-tour = rbt.new(8, 4, 12, 2, 6, 10, 14, 1)
 
-For finer control, the lower-level
-#raw("(RBT.new)(value:, label:, red:, left:, right:)") constructor
-plus #raw("(t.insert-many)(..vals)") method are still available —
-the root takes a #raw("red:") argument because a single-node tree
-also carries a colour (it must be black after every public
-operation).
+Every display takes `bits: true`, which tags each node with its black-height
+bit (`0` red, `1` black) so a reader can count black height down any path:
 
-== Static display
-
-`(t.display)()` returns a one-element frame array — the unmodified
-tree, with every node coloured by its `red` field from the active
-rbt-theme palette.
-
-#align(center, starling.last((rbt-tour.display)()))
-
-== Insert
-
-`(t.insert-display)(v)` traces the CLRS insertion algorithm: a BST
-descent records each visited node, the new value splices in as a
-red leaf, then a fix-up loop walks back up the tree applying Case 1
-(uncle red — recolour parent and uncle black, grandparent red,
-continue at the grandparent), Case 2 (zigzag — rotate around the
-parent to straighten the red-red pair), and Case 3 (straight line
-— rotate around the grandparent and swap its colour with the new
-subtree root). The root is blackened at the end if it ended up
-red. `step.kind` ranges over `"init"`, `"descend"`, `"insert"`,
-`"check"`, `"recolor"`, `"rotate-zigzag"`, `"rotate-recolor"`, and
-`"blacken-root"`.
-
-Inserting 0 walks down to the red leaf 1, splices a red 0 beneath
-it, then resolves the red-red pair via a straight-line Case 3
-(rotate around the grandparent 2, swap its colour with the new
-subtree root 1):
-
-#align(center, starling.stacked((rbt-tour.insert-display)(0)))
-
-== Delete
-
-`(t.delete-display)(v)` traces a BST search for the target, the
-in-order predecessor walk if the target has two children, the
-value transfer, the structural excise, and the four-case
-rebalancing loop. `step.kind` covers `"init"`, `"descend"` (a
-single frame highlighting the full search path; pass
-`search: true` for one `"compare"` frame per step instead),
-`"not-found"`, `"mark-target"`, `"find-predecessor"`, `"transfer"`,
-`"excise"`, `"paint-black-promoted"`, `"paint-black-db"`, and the
-fix-up cases. Cases 1, 3, and 4 each emit two frames — a
-rotation-only intermediate (`"case-1-rotate"`, `"case-3-rotate"`,
-`"case-4-rotate"`) followed by the recolor (`"case-1"`, `"case-3"`,
-`"case-4"`) — so the structural pivot lands separately from the
-color swap. Case 2 is a pure recolor and emits a single `"case-2"`
-frame.
-
-Excising a black node leaves the subtree one black short of the
-rest of the tree. The animation marks that imbalance with a small
-filled circle at the child end of the affected edge — the textbook
-convention. The circle stays in place across each fix-up step that
-doesn't resolve the missing black; it disappears once a Case 4
-rotation drains it or a red ancestor absorbs it. Deleting the black
-leaf 6 takes the Case 4 branch directly (sibling 2 is black, far
-nephew 1 is red):
-
-#align(center, starling.stacked((rbt-tour.delete-display)(6)))
-
-== Theming the red/black palette
-
-The rbt-theme palette lives in its own state, separate from the
-render theme and op theme, with `default-rbt-theme` as the seed and
-`set-rbt-theme` / a per-call `theme:` argument as the two override
-paths. Recognised keys are `red-fill`, `red-stroke`,
-`red-text-fill`, `black-fill`, `black-stroke`, and
-`black-text-fill`; unknown keys panic so typos surface immediately.
-
-Set the palette document-wide via `set-rbt-theme` (state-based,
-participates in the layout-pass cost — see @theming-perf):
-
-```typ
-#import "@preview/starling:0.2.0": RBT, set-rbt-theme
-
-#set-rbt-theme((
-  red-fill: orange,
-  red-stroke: orange.darken(20%),
-  black-fill: navy,
-  black-stroke: navy,
-))
-```
-
-Or per-call to skip state and run at the no-state baseline:
-
-```typ
-(t.display)(theme: (red-fill: red.darken(20%)))
-```
-
-= AVL animations tour
-
-The `AVL` class is a height-balanced BST. Each node carries an extra
-`height` field; after every public operation the height is up-to-date
-and #raw("|h(left) - h(right)|") (the *balance factor*) is at most 1.
-Imbalances are repaired with single or double rotations, dispatched on
-four cases (LL, RR, LR, RL) — the same ones every textbook walks
-through.
-
-`AVL` ships the standard suite of `*-display` methods (`display`,
-`search-display`, `insert-display`, `delete-display`,
-`rotate-display`, `fixup-display`, and the four `*-order-display`
-traversals), all returning `Array(Frame)` so the render helpers and
-caption / `step` / `alt` conventions carry across unchanged. AVL has
-no per-DS theme — animation strokes come from the op-theme, structural
-defaults from the render theme.
-
-The sample tree throughout this section is seeded via the
-#raw("avl(..vals)") factory — first arg becomes the root, the rest
-are inserted in order so the AVL rebalancing produces a clean balanced
-shape:
-
-```typ
-#let t = avl(5, 3, 7, 2, 4, 6, 8, 1, 9)
-```
-
-#let avl-tour = starling.avl(5, 3, 7, 2, 4, 6, 8, 1, 9)
-
-For finer control, the lower-level
-#raw("(AVL.new)(value:, label:, height:, left:, right:)") constructor
-plus #raw("(t.insert-many)(..vals)") method are still available — the
-root takes a #raw("height:") argument because a single-node tree
-already has height 1.
-
-== Static display
-
-`(t.display)()` returns a one-element frame array — the unmodified
-tree. Pass `factors: true` to tag every node with its signed balance
-factor (e.g. #raw("\"+1\""), #raw("\"0\""), #raw("\"-1\"")), drawn
-just west of the node so it doesn't compete with the label or the
-operation `note` slot. The tag layer is reused by every `*-display`
-method as a base layer (off by default; opt in per call).
-
-#grid(
+#align(center, grid(
   columns: 2,
   gutter: 1.5em,
-  align: center,
-  starling.last((avl-tour.display)()), starling.last((avl-tour.display)(factors: true)),
-)
+  align: center + horizon,
+  last(rbt.display(rbt-tour)),
+  last(rbt.display(rbt-tour, bits: true)),
+))
 
 == Insert
 
-`(t.insert-display)(v)` traces the AVL insertion algorithm. A BST
-descent records each visited node, the new leaf appears with height 1,
-then the climb back to the root recomputes each ancestor's height
-in turn. On the first ancestor whose balance factor reaches ±2, the
-animation labels the imbalance case (LL/LR/RR/RL), applies a child
-rotation if the case is a zigzag (LR or RL), and finishes with the
-single rotation at the imbalanced node. After a single insertion the
-subtree's height returns to its pre-insert value, so the climb stops
-there. `step.kind` ranges over #raw("\"init\""), #raw("\"descend\""),
-#raw("\"insert\""), #raw("\"recompute\""), #raw("\"check\""),
-#raw("\"rotate-zigzag\""), and #raw("\"rotate-finish\"").
+`insert-display(t, v)` traces the CLRS insertion: a search descent, the new
+value spliced in as a red leaf, then the fix-up loop — Case 1 (red uncle:
+recolour and continue at the grandparent), Case 2 (zigzag: rotate the parent
+to straighten the red-red pair), Case 3 (straight line: rotate the
+grandparent and swap colours) — and a final blackening of the root if it
+ended up red.
 
-Inserting 0 into the sample tree triggers an LL fix-up at node 2
-(after the climb sees node 1's height grow). The fix-up is a single
-right rotation:
-
-#align(center, starling.stacked((avl-tour.insert-display)(0, factors: true)))
-
-The zigzag cases (LR/RL) emit an extra `rotate-zigzag` frame between
-`check` and `rotate-finish` for the child rotation that straightens the
-configuration before the final rotation at the imbalanced node.
+#align(center, stacked(rbt.insert-display(rbt-tour, 0)))
 
 == Delete
 
-`(t.delete-display)(v)` traces a BST search for the target, the
-in-order predecessor walk if the target has two children, the value
-transfer, the structural excise, and then a climb that recomputes
-heights and rotates at every imbalanced ancestor. Unlike insert, a
-single deletion can trigger several rotations on the way up — the
-loop runs to the root. `step.kind` covers #raw("\"init\""),
-#raw("\"descend\"") (single frame; pass `search: true` for one
-#raw("\"compare\"") per step instead), #raw("\"not-found\""),
-#raw("\"mark-target\""), #raw("\"find-predecessor\""),
-#raw("\"transfer\""), #raw("\"excise\""), and the same
-#raw("\"recompute\"") / #raw("\"check\"") /
-#raw("\"rotate-zigzag\"") / #raw("\"rotate-finish\"") events insert
-emits.
+`delete-display(t, v)` traces the search, the predecessor walk when the
+target has two children, the transfer, the excise, and the four-case
+rebalancing loop. Cases 1, 3, and 4 each emit the rotation and the recolour
+as separate frames, so the structural pivot lands apart from the colour
+swap; Case 2 is a pure recolour and emits one.
 
-Deleting 3 from the sample tree takes the two-child branch
-(predecessor transfer from 2) and stays balanced — the climb
-recomputes heights without triggering any rotation:
+Excising a black node leaves its subtree one black short of the rest of the
+tree, and the animation marks that with the textbook filled circle at the
+child end of the affected edge. It persists across every fix-up step that
+does not resolve it, and disappears when a Case 4 rotation drains it or a
+red ancestor absorbs it.
 
-#align(center, starling.stacked((avl-tour.delete-display)(3, factors: true)))
+#align(center, stacked(rbt.delete-display(rbt-tour, 6)))
 
-== Rotate
+== Fix-ups from a hand-built tree
 
-`(t.rotate-display)(c)` is the same six-frame structural rotation
-animation BST exposes, with heights refreshed in the after-tree. AVL
-rebalancing in `insert` / `delete` does *not* go through this method —
-the case-dispatch rotations are applied directly so the animation can
-narrate the recompute-then-rotate logic.
+`fixup-display(t, violation-path)` runs the red-red fix-up on a tree you
+built yourself, with `violation-path` naming the *lower* of the two reds.
+The tree is deliberately not validated: the whole point is to show
+configurations a single `insert` cannot produce — a red-red in the middle of
+a tree, or a multi-level Case 1 propagation that ends by blackening the
+root.
 
-== Fix-up
-
-`(t.fixup-display)(violation-path)` runs the AVL fix-up climb from a
-hand-constructed (possibly invalid) tree. The tree is *not* validated:
-this is intended for teaching configurations that can't arise from a
-single insert or delete — for example, multiple imbalances on one
-spine where the inner rotation propagates the imbalance up. The climb
-walks every proper prefix of `violation-path` deepest-first, emitting
-the same `recompute` / `check` / `rotate-zigzag` / `rotate-finish`
-events that insert and delete use.
-
-== Traversals
-
-`(t.in-order-display)()`, `(t.pre-order-display)()`,
-`(t.post-order-display)()`, and `(t.level-order-display)()` work
-exactly like their BST counterparts — one frame per visit, gradient
-fill from the op-theme's `traversal-palette`, running output sequence
-in the caption. Pass `factors: true` on any traversal to layer the
-balance-factor tags under the per-visit highlights.
-
-= B24 animations tour
-
-The `B24` class is a 2-3-4 tree (a B-tree of order 4) — every internal
-node holds 1, 2, or 3 keys (so 2, 3, or 4 children) and every leaf
-sits at the same depth. The node renderer for this data structure is
-the subdivided rectangle shape `"btree-node"`, which scales its width
-with the number of keys; per-key compartments are individually
-addressable via the `"<path>#<i>"` path syntax and the `key-styles`
-slot on `NodeStyle`.
-
-`B24` exposes the standard suite of `*-display` methods (`display`,
-`search-display`, `insert-display`, `delete-display`, and the four
-`*-order-display` traversals). Insert and delete accept a
-#raw("strategy:") argument that switches between two textbook
-algorithms:
-
-- *Top-down* (the default): preventive — split any 3-key node on the
-  way down for insert; refill any 1-key node on the way down for
-  delete. Single-pass recursion.
-- *Bottom-up*: reactive — walk to the leaf first, then propagate
-  splits or merges back up through the descent path.
-
-Both produce valid 2-3-4 trees containing the same keys but they can
-produce structurally different *shapes* — bottom-up promotes a key
-from the *post-overflow* 4-key state (so the freshly inserted key may
-itself be promoted), while top-down promotes the middle of the
-*pre-insert* 3-key state. There is no per-DS theme — animation strokes
-come from the op-theme; structural defaults from the render theme.
-
-The sample tree throughout this section is seeded via the
-#raw("b24(..vals)") factory:
-
-```typ
-#let t = b24(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
-```
-
-#let b24-tour = starling.b24(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
-
-For finer control, the lower-level
-#raw("(B24.new)(keys:, labels:, children:)") constructor lets you
-hand-build a tree with any compartment count at every depth — useful
-for fixtures that demonstrate a specific fix-up case.
-
-== Static display
-
-`(t.display)()` returns a one-frame array — the unmodified tree.
-Compartment widths scale with key count, and edges fan out from the
-gap anchors (`gap-0` through `gap-k`) on the parent's south face.
-
-#align(center, starling.last((b24-tour.display)()))
-
-== Search
-
-`(t.search-display)(v)` highlights one key compartment per comparison.
-The descent path stays visible as the search progresses (sticky search
-strokes); the inline note at each visited node carries the comparison
-text. Misses end at the leaf without panicking — the final frame
-reports that the value isn't in the tree.
-
-#align(center, starling.stacked((b24-tour.search-display)(19)))
-
-== Insert
-
-`(t.insert-display)(v, strategy: ..)` traces the full insertion
-algorithm. Top-down splits trigger a `td-pre-split-attention` frame
-that outlines a full node about to be split, then a `split-done`
-frame showing the promoted key with its two new child edges. The
-final `settled` frame highlights the inserted compartment.
-
-#align(center, starling.stacked((b24-tour.insert-display)(13)))
-
-The bottom-up variant runs the descent first, then animates the leaf
-insertion plus any cascading splits:
-
-#align(center, starling.stacked((b24-tour.insert-display)(13, strategy: "bottom-up")))
-
-== Delete
-
-`(t.delete-display)(v, strategy: ..)` traces the deletion algorithm.
-Top-down's preventive `td-pre-fix-attention` frame outlines a 1-key
-descent target before the fix; subsequent `td-borrow-left` /
-`td-borrow-right` / `td-merge` frames carry out the rotation or merge.
-Internal-key deletions visit a `td-target` highlight, swap with the
-predecessor (`td-pred-swap`), then continue the descent to remove the
-predecessor's old value from its leaf.
-
-#align(center, starling.stacked((b24-tour.delete-display)(15)))
-
-== Traversals
-
-The four traversal animations sample the op-theme's
-`traversal-palette` across the per-compartment visit order — each
-visited compartment gets a fill from the gradient and the caption
-accumulates the output sequence. In-order on a 2-3-4 tree threads
-keys with their flanking subtrees (child[0], key[0], child[1], key[1],
-…, child[k]); pre- and post-order group all of a node's keys at the
-node-visit point.
-
-#align(center, starling.last((b24-tour.in-order-display)()))
-
-= Trie animations tour
-
-The `Trie` class is a prefix tree — an n-ary tree that stores a *set of
-strings*. Unlike the other trees, a node carries no ordering key of its
-own: its identity is the prefix spelled by the *edges* from the root
-down to it (the root is the empty prefix). A node is a *word end*
-(terminal) when a stored word finishes there.
-
-Two teaching-relevant conventions follow from that:
-
-- *Letters live on the edges.* Each edge is drawn with the character
-  that leads into its child (in the render theme's `edge-tag-fill`
-  colour, the same persistent-label slot AVL heights and graph weights
-  use). Reading the edges from the root spells each prefix.
-- *Nodes show their word-end bit.* Because the letters are already on
-  the edges, a node's drawn value is its terminal bit — #raw("\"1\"")
-  when a stored word ends there, #raw("\"0\"") for an interior prefix —
-  and terminal nodes are additionally *shaded* via the trie's own
-  per-DS palette (`default-trie-theme`).
-
-`Trie` rides the shared tree backend (`draw-tree`) with ordinary circle
-nodes, so no new renderer is needed; the `tree-anim` trie builder
-extends each child's path by its letter. Paths are therefore plain
-prefix strings (`""`, `"c"`, `"ca"`, `"cat"`) — the core keys
-everything by opaque strings, so this needs no change to `PathId`.
-
-`Trie` exposes `display`, `search-display`, `insert-display`, and
-`delete-display`. The sample trie throughout this section is seeded via
-the #raw("trie(..words)") factory:
-
-```typ
-#let t = trie("cat", "car", "card", "dog", "do")
-```
-
-#let trie-tour = starling.trie("cat", "car", "card", "dog", "do")
-
-== Static display
-
-`(t.display)()` returns a one-frame array. Note that `"do"` is both a
-stored word (its node reads #raw("\"1\"") and is shaded) *and* an
-interior node with a child leading to `"dog"` — a word end need not be
-a leaf.
-
-#align(center, starling.last((trie-tour.display)()))
-
-== Search
-
-`(t.search-display)(word)` walks the query one character at a time,
-lighting up each matched edge and node in the op-theme's
-`search-stroke`. There are three outcomes: reaching a terminal node
-(*found*, ringed in `settled-stroke` + `success-fill`), reaching an
-interior node (a *prefix only*, not a stored word), or hitting a
-character with no matching edge (a *miss*, ringing the last matched
-node in `danger-stroke`).
-
-#align(center, starling.stacked((trie-tour.search-display)("card")))
-
-A prefix that isn't a stored word ends on the neutral "prefix only"
-frame:
-
-#align(center, starling.stacked((trie-tour.search-display)("ca")))
-
-== Insert
-
-`(t.insert-display)(word)` first walks the longest existing prefix
-(search-style), then *grows the remaining suffix one node per frame* —
-each new node appears as a #raw("\"0\"") in `success-stroke` — and
-finally flips the endpoint to a word end (#raw("\"1\""), shaded,
-`success-fill` + `settled-stroke`). Inserting a word whose path is
-brand new grows a whole chain:
-
-#align(center, starling.stacked((trie-tour.insert-display)("bat")))
-
-When the word is already an existing prefix, only the terminal bit
-flips — no new nodes:
-
-#align(center, starling.stacked((trie-tour.insert-display)("ca")))
-
-== Delete
-
-`(t.delete-display)(word)` walks to the word's terminal node, clears
-its word-end mark (bit #raw("\"1\"")→#raw("\"0\"")), then *prunes the
-dead branch one node per frame* (each removed node flashes
-`danger-stroke` before it vanishes). Pruning stops at the first
-ancestor that is itself a word end or that has another child. Deleting
-`"dog"` prunes the whole `d→o→g` chain back to `"do"`, which stays a
-stored word:
-
-#align(center, starling.stacked((trie-tour.delete-display)("dog")))
-
-When the target has children (it's a prefix of another word), the
-unmark is the only change — nothing is pruned:
-
-#align(center, starling.stacked((trie-tour.delete-display)("car")))
-
-== Recolouring word ends
-
-Terminal shading is the trie's only intrinsic styling, so it lives in a
-per-DS palette. Override it document-wide with `set-trie-theme(..)` or
-per call with `(t.display)(theme: (..))`:
-
-#align(center, starling.last((trie-tour.display)(
-  theme: (terminal-fill: rgb("#6b46c1"), terminal-stroke: black),
+#align(center, stacked(rbt.fixup-display(
+  rbt.black(10, rbt.red(5, rbt.red(3), none), rbt.black(15)),
+  "LL",
 )))
 
-= Graph animations tour
+`rbt` also has `search-display` and the four traversals, which behave
+exactly as the BST's do while keeping the red-black colouring underneath.
 
-The `Graph` class is the first non-tree structure in starling: an
-undirected-or-directed weighted graph for teaching minimum spanning
-trees (Prim and Kruskal), Dijkstra's shortest paths, and breadth- and
-depth-first traversals. It rides the same `Frame` / op-theme /
-render-theme stack as the trees, so every render helper, theming knob,
-and touying composition works unchanged. There is no per-DS theme —
-animation strokes come from the op-theme, structural defaults from the
-render theme.
+= AVL trees
 
-Unlike trees, graphs have no root and no path-from-root, so node
-identity is a plain string id and edges are keyed by
-#raw("edge-key(u, v, directed:)") (sorted `"u--v"` when undirected,
-`"u->v"` when directed). The renderer (`graph-draw.typ`, the
-`draw-graph` backend) is split from the `Graph` class (`graph.typ`,
-data plus algorithms) exactly as `draw-tree` is split from the tree
-classes — both inject their backend into the shared `Renderer` in
-`anim-core.typ`.
+`avl` is a height-balanced BST: every node carries its `height`, and after
+any operation no node's two subtrees differ in height by more than one.
+Imbalances are repaired by the four textbook cases — LL, RR, LR, RL.
+
+`avl.node(v, ..children, height: auto)` computes the height for you, which
+is the recursion nobody should be writing by hand. Pass `height:` explicitly
+only to build a *deliberately stale* tree — a spine caught mid-operation, so
+that `fixup-display` has something to fix.
+
+#let avl-tour = avl.new(5, 3, 7, 2, 4, 6, 8, 1, 9)
+
+Two display flags make the balance visible. `factors: true` tags every node
+with its signed balance factor; `heights: true` labels each non-root edge
+with the height of the subtree below it (the root has no incoming edge, and
+its children's labels make its own factor readable anyway).
+
+#align(center, grid(
+  columns: 3,
+  gutter: 1.2em,
+  align: center + horizon,
+  last(avl.display(avl-tour)),
+  last(avl.display(avl-tour, factors: true)),
+  last(avl.display(avl-tour, heights: true)),
+))
+
+== Insert
+
+The descent and the splice are the BST's; what follows is AVL's. The climb
+back to the root recomputes each ancestor's height in turn, and at the first
+node whose balance factor reaches #sym.plus.minus 2 the animation names the
+case, applies the child rotation if it is a zigzag (LR or RL), and finishes
+with the rotation at the imbalanced node. One insertion restores the
+subtree's original height, so the climb stops there.
+
+#align(center, stacked(avl.insert-display(avl-tour, 0, factors: true)))
+
+== Delete
+
+Delete runs the same climb, but a deletion can shorten a subtree — so
+several ancestors may need rotating, and the loop runs all the way to the
+root.
+
+#align(center, stacked(avl.delete-display(avl-tour, 3, factors: true)))
+
+== Rotate and fix-up
+
+`rotate-display(t, child)` is the same six-frame structural rotation the BST
+has, with heights refreshed afterwards. It is *not* what `insert` and
+`delete` use internally — those narrate recompute-then-rotate case by case.
+
+`fixup-display(t, violation-path)` runs the climb on a hand-built tree,
+walking every proper prefix of `violation-path` deepest-first. With
+`avl.node`'s `height:` escape hatch you can write down the stale spine a
+mid-operation tree really has:
+
+#let avl-stale = avl.node(
+  5,
+  avl.node(3, avl.node(2, avl.leaf(1), none, height: 2), none, height: 3),
+  avl.leaf(7),
+  height: 4,
+)
+
+#align(center, stacked(avl.fixup-display(avl-stale, "LLL", factors: true)))
+
+Search and the four traversals come from the same shared implementation the
+BST uses, and take `factors:` / `heights:` like everything else here.
+
+= 2-3-4 trees
+
+`b24` is a B-tree of order 4: every node holds one, two, or three keys (so
+two, three, or four children) and every leaf sits at the same depth. Nodes
+draw as subdivided rectangles that widen with their key count, and an
+individual compartment is addressed by suffixing its node's path with
+`#<i>` — `"01#1"` is the middle key of the leftmost grandchild.
+
+```typ
+#let t = b24.new(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
+#let fixture = b24.node((10, 20), b24.leaf(1, 5), b24.leaf(12), b24.leaf(25, 30))
+```
+
+#let b24-tour = b24.new(10, 5, 15, 1, 7, 12, 20, 25, 30, 17, 19)
+
+#align(center, last(b24.display(b24-tour)))
+
+== Two strategies
+
+`insert` and `delete` (and their displays) take `strategy:`:
+
+- *`"top-down"`* (the default) is preventive and single-pass: split any
+  3-key node on the way down when inserting; refill any 1-key node on the
+  way down when deleting.
+- *`"bottom-up"`* is reactive: walk to the leaf first, then propagate splits
+  or merges back up the descent path.
+
+Both produce valid 2-3-4 trees with the same keys, but the *shapes* can
+legitimately differ — bottom-up promotes from the post-overflow 4-key state,
+so the freshly inserted key may itself be promoted, while top-down promotes
+the middle of the pre-insert 3-key state.
+
+#align(center, stacked(b24.insert-display(b24-tour, 13)))
+
+The same insertion, bottom-up:
+
+#align(center, stacked(b24.insert-display(b24-tour, 13, strategy: "bottom-up")))
+
+== Search and delete
+
+Search highlights one compartment per comparison and leaves the descent lit
+behind it. Delete narrates the preventive fix (borrow left, borrow right, or
+merge) before each step down, and an internal-key deletion swaps with its
+predecessor and keeps descending to remove that key from its leaf.
+
+#align(center, stacked(b24.search-display(b24-tour, 19)))
+
+#align(center, stacked(b24.delete-display(b24-tour, 15)))
+
+The four traversals sample the traversal palette across the *compartment*
+visit order — in-order threads each key between its flanking subtrees, while
+pre- and post-order group a node's keys at the node visit.
+
+#align(center, last(b24.in-order-display(b24-tour)))
+
+= Tries
+
+`trie` stores a *set of strings*. A node has no key of its own: its identity
+is the prefix spelled by the edges from the root down to it, which gives the
+drawing its two teaching conventions.
+
+- *Letters live on the edges*, drawn in the render theme's `edge-tag-fill` —
+  the same persistent-label slot AVL heights and graph weights use. Reading
+  the edges spells the prefix.
+- *Nodes show their word-end bit* — `1` when a stored word ends there, `0`
+  for an interior prefix — and word-end nodes are shaded from the theme's
+  `trie` section.
+
+#let trie-tour = trie.new("cat", "car", "card", "dog", "do")
+
+#align(center, last(trie.display(trie-tour)))
+
+Note that `"do"` is both a stored word and an interior node on the way to
+`"dog"`: a word end need not be a leaf.
+
+== Search
+
+`search-display(t, word)` walks one character at a time and ends in one of
+three ways: at a word end (*found*), at an interior node (*a prefix only*),
+or at a character with no matching edge (*a miss*, ringing the last node it
+did match).
+
+#align(center, stacked(trie.search-display(trie-tour, "card")))
+
+#align(center, stacked(trie.search-display(trie-tour, "ca")))
+
+== Insert and delete
+
+Insert walks the longest existing prefix, then grows the remaining suffix
+one node per frame before flipping the endpoint's bit. Delete unmarks the
+word end and then prunes the dead branch one node per frame, stopping at the
+first ancestor that is itself a word end or has another child.
+
+#align(center, stacked(trie.insert-display(trie-tour, "bat")))
+
+#align(center, stacked(trie.delete-display(trie-tour, "dog")))
+
+Both take the shapes that change nothing gracefully: inserting an existing
+prefix only flips a bit, and deleting a word that other words extend only
+unmarks it.
+
+= Graphs
+
+`graph` is an undirected-or-directed weighted graph with animations for
+Prim's and Kruskal's minimum spanning trees, Dijkstra's shortest paths, and
+breadth- and depth-first traversal. It has no root, so nodes are named by
+plain string ids and edges by `graph.edge-key(u, v)`.
 
 == Construction and layout
 
-Layout is decoupled from rendering: the `Graph` carries node positions
-(in cetz units) and the renderer simply draws nodes there. The
-#raw("graph(..)") factory takes placed nodes and weighted edges:
+Layout is decoupled from drawing: the graph carries node positions in cetz
+units and the backend draws nodes there.
 
 ```typ
-#let g = graph(
+#let g = graph.new(
   (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2)),
   edges: (("A", "B", 7), ("B", "C", 2), ("A", "C", 4),
           ("C", "D", 5), ("B", "D", 1)),
 )
 ```
 
-Both nodes and edges accept optional custom *labels* — text drawn in
-place of the id (for a node) or the weight (for an edge). A node spec
-is a bare id, an #raw("(id, label)") 2-tuple (label, no manual
-position — pairs with `auto-layout`), an #raw("(id, x, y)") tuple, or
-an #raw("(id, x, y, label)") tuple. An edge's third slot dispatches by
-type: a *number* is the weight, a *string or content* is a label drawn
-in its place; an #raw("(u, v, weight, label)") 4-tuple sets both — the
-numeric weight still drives Dijkstra and the MSTs while the label is
-what's shown.
+A node spec is a bare id, an `(id, label)` pair (label but no position —
+pair it with auto-layout), an `(id, x, y)` triple, or `(id, x, y, label)`.
+An edge's third slot dispatches on type: a *number* is the weight, a *string
+or content* is a label drawn in its place, and the four-slot form
+`(u, v, weight, label)` sets both — so an algorithm can run on the numeric
+weight while the drawing shows `4 ms`.
 
-```typ
-#let g = graph(
-  ("A", ("B", [Server]), ("C", 1.5, 2.4)),  // B is auto-laid-out
-  edges: (
-    ("A", "B", 7),          // weight 7
-    ("B", "C", [TLS]),       // label "TLS", no weight shown
-    ("A", "C", 4, [4 ms]),   // weight 4 for algorithms, shown as "4 ms"
-  ),
-)
-```
-
-#let g-tour = starling.graph(
+#let g-tour = graph.new(
   (("A", 0, 0), ("B", 3, 0.4), ("C", 1.5, 2.4), ("D", 4.5, 2.2)),
   edges: (
-    ("A", "B", 7),
-    ("B", "C", 2),
-    ("A", "C", 4),
-    ("C", "D", 5),
-    ("B", "D", 1),
+    ("A", "B", 7), ("B", "C", 2), ("A", "C", 4), ("C", "D", 5), ("B", "D", 1),
   ),
 )
 
-Hand-placement is the first-class path — small teaching graphs read
-best when you control the layout. For larger graphs, the optional
-`auto-layout` helper (below) computes positions with graphviz.
+#align(center, last(graph.display(g-tour)))
 
-Every display method takes a `scale:` factor (default `1`) that
-multiplies all node coordinates about the origin, spreading the nodes
-apart while their drawn size — circles, labels, edge weights — stays
-fixed. It's the manual-layout analog of `auto-layout`'s `unit:`: reach
-for it when a hand-placed graph is too cramped (e.g. on a wide slide)
-without wanting to rescale the whole figure or edit every coordinate.
+Hand placement is the first-class path — small teaching graphs read best
+when you control the layout — and every display takes `scale:` (default `1`)
+to multiply the coordinates while the drawn node size stays fixed. Reach for
+it when a hand-placed graph is too cramped for a wide slide; to resize
+everything together, wrap the result in Typst's own `scale` instead.
 
-```typ
-#last((g.display)(scale: 1.6))           // 1.6× the gaps, same node size
-#last((g.dijkstra-display)("A", scale: 1.4))
-```
+== Adjacency tables
 
-To instead resize the *whole* figure — nodes, spacing, and text
-together — wrap the result in Typst's `scale`:
-#raw("#scale(140%, reflow: true, last((g.display)()))").
+`adjacency-matrix(g)` and `adjacency-list(g)` return placeable Typst tables
+rather than frames — no cetz, no animation. They show 1/0 presence and bare
+neighbour ids by default; `weights: true` shows each edge's display label
+instead, marking non-edges with `none-marker` and empty rows with
+`empty-marker`. A directed graph reads row = source, column = target.
 
-== Static display
+#align(center, grid(
+  columns: (auto, auto),
+  column-gutter: 2em,
+  align: horizon,
+  graph.adjacency-matrix(g-tour, weights: true),
+  graph.adjacency-list(g-tour, weights: true),
+))
 
-`(g.display)()` returns a one-frame array. Edge weights are drawn at
-each edge midpoint; a directed graph gets arrowheads.
-
-#align(center, starling.last((g-tour.display)()))
-
-== Tabular representations
-
-Besides the drawn graph, `(g.adjacency-matrix)()` and
-`(g.adjacency-list)()` render the structure as plain Typst tables — no
-cetz, no animation. Unlike the `*-display` methods they return
-*placeable content directly* (not an `Array(Frame)`), so drop them
-straight into the document; wrap them in a `figure` yourself if you want
-a caption or alt text. Both still honor the render theme — header cells
-take the node fill and a bold node-text-fill, the rules the node stroke.
-
-By default the matrix shows 1/0 *presence* and the list shows bare
-neighbor ids. Pass `weights: true` to show each edge's display label
-instead (its label if set, else its numeric weight); the matrix then
-marks non-edges with `none-marker` (`·`) and the list appends the weight
-in parentheses:
-
-#grid(
-  columns: (1fr, 1fr),
-  align: horizon + center,
-  (g-tour.adjacency-matrix)(weights: true), (g-tour.adjacency-list)(weights: true),
-)
-
-For a *directed* graph the matrix is asymmetric — row = source, column =
-target — and the list gives each node's out-neighbors (a sink shows the
-`empty-marker`, `—`). An undirected graph gives a symmetric matrix and
-lists every incident neighbor. A self-loop lands on the matrix diagonal
-and appears once in the list. Absent matrix cells (the `0`s or
-`none-marker`) and empty rows are drawn muted so the populated entries
-read first.
-
-// Lay each frame out as its canvas beside its aux strip, one row per
-// frame stacked down the page (so a long MST animation doesn't overflow
-// horizontally the way the BFS `aux-row` would).
+// One row per frame: the canvas beside its auxiliary strip.
 #let aux-rows(frames) = stack(
   dir: ttb,
   spacing: 0.8em,
@@ -1154,857 +1305,548 @@ read first.
     columns: (auto, auto),
     column-gutter: 1.5em,
     align: horizon,
-    starling.canvases-only((f,)).first(), starling.aux-strip(f.step),
+    canvas(f),
+    aux-strip(f.step),
   )),
 )
 
 == Prim's minimum spanning tree
 
-`(g.mst-prim-display)(start)` grows the tree from `start`. Each
-selection shows the frontier (crossing edges in the search stroke) with
-the lightest edge picked out in the attention stroke, then commits it
-to the tree (success stroke) and settles the newly reached node. The
-caption tracks the running tree weight. A terminal *prune* frame then
-hides every non-tree edge, so the animation ends on the spanning tree
-alone (the same close as BFS/DFS `spanning-tree` mode).
+`prim-display(g, start)` grows the tree from `start`. Each round shows the
+frontier — the crossing edges — with the lightest picked out, commits it,
+and settles the newly reached node, while the caption tracks the running
+weight. A terminal *prune* frame then hides every non-tree edge, so the
+animation ends on the spanning tree alone.
 
-#align(center, starling.stacked((g-tour.mst-prim-display)("A")))
+#align(center, stacked(graph.prim-display(g-tour, "A")))
 
-Prim's bookkeeping is a *priority queue* of the crossing edges, and
-`aux-strip(frame.step)` renders it beside the canvas — the candidate
-edges stacked vertically (a queue's natural orientation, and it stays
-narrow when the frontier is wide), sorted by weight with the `min` on
-top and the chosen edge ringed in the attention stroke, so the pop is
-legible step by step. Here are the two selection rounds where the
-frontier reorders:
+Prim's bookkeeping is a priority queue of crossing edges, and `aux-strip`
+renders it beside the canvas — min on top, the chosen edge ringed:
 
-#align(center, aux-rows((g-tour.mst-prim-display)("A").slice(1, 4)))
+#align(center, aux-rows(graph.prim-display(g-tour, "A").slice(1, 3)))
 
 == Kruskal's minimum spanning tree
 
-`(g.mst-kruskal-display)()` considers edges in weight order, adding
-each unless it would join two nodes already in the same component (a
-cycle, drawn in the danger stroke). The union-find forest is shown by
-*node color*: same color means same set, and colors merge as the
-components do — no extra dependency, and robust to any layout. As with
-Prim, a terminal *prune* frame hides the non-tree edges to finish on the
-spanning tree.
+`kruskal-display(g)` considers edges in weight order, adding each unless it
+would close a cycle. The union-find forest shows as *node colour*: same
+colour means same set, and colours merge as components do.
 
-#align(center, starling.stacked((g-tour.mst-kruskal-display)()))
+#align(center, stacked(graph.kruskal-display(g-tour)))
 
-Kruskal carries *two* auxiliary structures, and `aux-strip(frame.step)`
-stacks both: the sorted edge list — every edge in weight order, a cursor
-(▲) under the one being considered, each tagged added / rejected /
-pending — and the disjoint-set partition (one bordered group per
-component, merging as edges are added). The edge labels are stacked
-vertically (endpoints over the weight) so the list stays compact even
-with many edges. A committed edge (three components remain) and a later
-cycle-rejected edge (all merged):
+Kruskal carries two auxiliary views, and `aux-strip` stacks both: the sorted
+edge list with a cursor under the edge being considered and each edge tagged
+added / rejected / pending, and the disjoint-set partition. Pass
+`view: "partition"` to place one alone.
 
-#let kruskal-frames = (g-tour.mst-kruskal-display)()
+#let kruskal-frames = graph.kruskal-display(g-tour)
 #align(center, aux-rows((kruskal-frames.at(2), kruskal-frames.at(8))))
-
-Pass `view:` to render just one of them for separate placement — e.g.
-`aux-strip(frame.step, view: "partition")` for the components alone.
 
 == Dijkstra's shortest paths
 
-`(g.dijkstra-display)(source, target: ..)` carries each node's
-tentative distance in its note slot (∞ until reached). It models the
-*priority queue* explicitly, the way students implement it: the queue
-starts with the `source` alone and each improving relaxation *adds a
-fresh `(node, dist)` entry* rather than decreasing an existing key — so
-a node can sit in the queue several times. Each round *polls* the
-queue's minimum (`Visit`, attention stroke, then settled), *updates* its
-unvisited neighbours (`Update neighbors of …`, search stroke), and grows
-the shortest-path tree in the success stroke. Polling a stale duplicate
-for an already-visited node produces a `Skip` frame (ringed in the
-danger stroke) — the reason the `if u is not visited` guard exists.
-Ties are broken alphabetically by node id. With a `target` the search
-stops early and the path is highlighted. It works on directed graphs:
+`dijkstra-display(g, source, target: none)` models the priority queue the
+way students implement it: the queue starts with `source` alone, and each
+improving relaxation *adds a fresh `(node, dist)` entry* rather than
+decreasing a key — so a node can sit in the queue several times. Each round
+polls the minimum, marks it visited, and relaxes its unvisited neighbours.
+Polling a stale duplicate for an already-visited node produces a *skip*
+frame, which is the reason the `if u is not visited` guard exists. Ties
+break alphabetically.
 
-#let dg-tour = starling.graph(
+#let dg-tour = graph.new(
   (("S", 0, 0), ("A", 2.5, 1.2), ("B", 2.5, -1.2), ("T", 5, 0)),
   edges: (
-    ("S", "A", 1),
-    ("S", "B", 4),
-    ("A", "B", 1),
-    ("A", "T", 5),
-    ("B", "T", 1),
+    ("S", "A", 1), ("S", "B", 4), ("A", "B", 1), ("A", "T", 5), ("B", "T", 1),
   ),
   directed: true,
 )
 
-#align(center, starling.stacked((dg-tour.dijkstra-display)("S", target: "T")))
+#align(center, stacked(graph.dijkstra-display(dg-tour, "S", target: "T")))
 
-Dijkstra carries *three* auxiliary structures, and `aux-strip(frame.step)`
-stacks all three: the priority queue of `(node, dist)` entries (min on
-top, the polled entry ringed — chosen on a visit, discarded on a skip,
-and freshly added entries in the success fill), and the `dist` and `prev`
-maps (one node-keyed cell each, the value just updated highlighted).
-Pass `view:` — `"dist-pq"`, `"dist-map"`, or `"prev-map"` — to place one
-on its own. A single view is untitled by default (the "Distances" /
-"Predecessors" headings only appear when views are stacked); pass
-`title: true` to keep the heading, or recover the string yourself with
-`aux-view-title("dist-map")` for a custom-styled label. Here a full run
-(no `target`, so the terminal skip frames show) over its first update
-rounds:
+Three auxiliary views ride along — the queue, the `dist` map, and the `prev`
+map — selectable with `view: "dist-pq"` / `"dist-map"` / `"prev-map"`:
 
-#align(center, aux-rows((dg-tour.dijkstra-display)("S").slice(2, 5)))
+#align(center, aux-rows(graph.dijkstra-display(dg-tour, "S").slice(2, 4)))
 
-Two flags tailor the canvas. `node-distances: false` drops the on-canvas
-distance notes — useful when the `dist` aux map already carries them and
-you want the graph itself uncluttered. `reconstruct: true` (which needs a
-`target`) appends the `ConstructShortestPath` phase: instead of lighting
-the whole path up at once, it walks `prev` back from the end, prepending
-one node per frame (the newcomer ringed in the attention stroke, the
-route growing in the settled stroke) while the `prev` aux map traces the
-chain it reads. The reconstruction of the `S`–`T` path, distances off:
+Two flags tailor the canvas. `node-distances: false` drops the tentative
+distances from the nodes, for when the `dist` view already carries them.
+`reconstruct: true` (which needs a `target`) appends the path-reconstruction
+phase: instead of lighting the whole path at once, it walks `prev` backwards
+from the target, prepending one node per frame while the `prev` view traces
+the chain it reads.
 
 #align(center, aux-rows(
-  (dg-tour.dijkstra-display)("S", target: "T", node-distances: false, reconstruct: true).slice(-4),
+  graph
+    .dijkstra-display(
+      dg-tour,
+      "S",
+      target: "T",
+      node-distances: false,
+      reconstruct: true,
+    )
+    .slice(-3),
 ))
 
 == Traversals
 
-`(g.bfs-display)(start)` and `(g.dfs-display)(start)` sample the
-op-theme's `traversal-palette` across the visit order — each visited
-node gets a fill from the gradient and a 1-indexed badge, and the
-caption accumulates the visit sequence (the same pattern as the tree
-`*-order-display` methods). The final frame wears the full visit
-signature:
+`bfs-display(g, start)` and `dfs-display(g, start)` sample the traversal
+palette across the visit order, badge each node with its 1-indexed position,
+and accumulate the sequence in the caption — the same vocabulary as the tree
+traversals.
 
-#grid(
+#align(center, grid(
   columns: (1fr, 1fr),
   align: center,
-  starling.last((g-tour.bfs-display)("A")), starling.last((g-tour.dfs-display)("A")),
-)
+  last(graph.bfs-display(g-tour, "A")),
+  last(graph.dfs-display(g-tour, "A")),
+))
 
-Pass a `target:` node id to either method to turn the traversal into a
-*search* that stops the moment the target is visited (mirroring
-`dijkstra-display`'s `target:`). The visit gradient builds up only over
-the nodes examined before the target, and a terminal frame states the
-outcome: on success the target gains a `settled-stroke` ring and a
-`Found <t>` caption; if the target is unreachable the search visits the
-whole reachable component and ends with a `<t> not found` frame.
+Three flags:
 
-#align(center, starling.stacked((g-tour.bfs-display)("A", target: "D")))
+- `target:` turns the traversal into a *search* that stops the moment the
+  target is visited, ending on `Found <t>` — or, if it is unreachable, on
+  `<t> not found` after the whole component.
+- `sort-frontier: true` enqueues each node's unseen neighbours in ascending
+  id order instead of edge-declaration order, for a deterministic walk.
+  (The sort is lexicographic, so `"10"` precedes `"2"`.)
+- `spanning-tree: true` renders the *traversal tree* instead of the palette
+  walk: each node joins with a uniform commit style and its discovery edge
+  lights up, accumulating into the BFS or DFS spanning tree, and a final
+  frame prunes the cross edges away. It covers the whole component, so it
+  takes no `target:`.
 
-By default each node's neighbours enter the queue / stack in
-edge-declaration order. Pass `sort-frontier: true` to instead visit them
-in ascending node-id order — a lexicographic string sort, so `"A"`
-before `"B"` and `"0"` before `"1"` — giving a deterministic traversal
-that doesn't depend on the order edges were added. (Being lexicographic,
-`"10"` sorts before `"2"`; single-character ids sort as expected.)
-
-=== Spanning trees
-
-Pass `spanning-tree: true` to either method to render the *traversal
-tree* rather than the palette walk. Instead of shading nodes across the
-`traversal-palette`, each node joins the tree with a uniform commit style
-(`success-fill` + `settled-stroke`) and its *discovery edge* — the edge
-from the node that first reached it — lights up in `success-stroke`. The
-highlighted edges accumulate into the BFS / DFS spanning tree of the
-reachable component (the same visual vocabulary as `mst-prim-display`,
-just committing edges in traversal order rather than by weight). Combine
-with `sort-frontier: true` to pin the tree's shape deterministically. The
-mode spans the whole reachable component, so it doesn't take a `target:`.
-A final frame then prunes every non-tree edge — hiding the cross edges
-and their weights — so the animation ends on the spanning tree by itself
-(that terminal frame is what `last` shows below).
-
-#grid(
+#align(center, grid(
   columns: (1fr, 1fr),
   align: center,
-  starling.last((g-tour.bfs-display)("A", spanning-tree: true)),
-  starling.last((g-tour.dfs-display)("A", spanning-tree: true)),
-)
+  last(graph.bfs-display(g-tour, "A", spanning-tree: true)),
+  last(graph.dfs-display(g-tour, "A", spanning-tree: true)),
+))
 
-=== Tracking the queue / stack
+Every frame carries the queue or stack in its `step`, and the DFS stack is
+faithful to the iterative algorithm — the same id can appear twice, because
+a node may be pushed again before an earlier copy is popped:
 
-BFS and DFS are driven by a helper structure — a FIFO queue and a LIFO
-stack respectively — and a common sticking point for students is
-tracking its contents step by step. Every `bfs-display` / `dfs-display`
-frame records that structure's state in its `step` metadata, and
-`aux-strip(frame.step)` renders it as a placeable strip of boxes (the
-front and rear ends marked on a queue, the `top` push/pop end on a
-stack). The same `aux-strip` helper also serves the MST displays (the
-Prim frontier and the two Kruskal views) and Dijkstra (its priority
-queue plus the `dist` and `prev` maps), above; it dispatches on the
-kind of auxiliary state each `step` carries. It returns
-ordinary content, not a `Frame`, so you lay it out wherever you want —
-this is deliberately decoupled from the graph canvas so a touying slide
-can put the graph on one side and the strip on the other:
-
-```typ
-#let frames = (g.bfs-display)("A")
-#grid(
-  columns: (2fr, 1fr),
-  alternatives(..starling.canvases-only(frames)),
-  alternatives(..frames.map(f => aux-strip(f.step))),
-)
-```
-
-Statically, pairing each canvas with its strip shows the queue draining
-and refilling across the traversal:
-
-#let aux-row(frames) = grid(
-  columns: frames.len(),
-  column-gutter: 1em,
-  align: center + top,
-  ..frames.map(f => stack(
-    dir: ttb,
-    spacing: 0.5em,
-    starling.canvases-only((f,)).first(),
-    starling.aux-strip(f.step),
-  )),
-)
-
-#align(center, aux-row((g-tour.bfs-display)("A")))
-
-The DFS stack is shown *faithfully*: because the iterative algorithm can
-push a node before an earlier copy is popped, the same id may appear
-twice in the strip — exactly the state a hand-trace would produce. Pass
-a `labels:` `(id -> content)` map to `aux-strip` when your nodes carry
-custom display labels.
+#align(center, aux-rows(graph.dfs-display(g-tour, "A").slice(2, 4)))
 
 == Node shapes and sizing
 
-The default circular node is sized for short ids. Longer labels — names,
-words, multi-character keys — overflow it. Pass a `node-style:` dict to
-any display to restyle *every* node at once; it sits beneath the
-per-frame algorithm styling, so shape and size persist while fills and
-strokes animate on top.
+The default circle is sized for short ids. Pass `node-style:` to any display
+to restyle every node at once — it sits beneath the per-frame algorithm
+styling, so shape and size persist while fills and strokes animate on top.
+`shape` takes `"circle"`, `"ellipse"`, or `"rectangle"`; `autosize: true`
+fits each node to its own label; `r` or `rx` / `ry` pin a size instead.
+Edges trim to whatever boundary the shape defines, so arrowheads stay flush.
 
-- `shape` accepts `"circle"` (default), `"ellipse"`, or
-  `"rectangle"`/`"square"`.
-- `autosize: true` fits the node to its own label (measured at render
-  time), so each node is exactly as wide as it needs to be.
-- For a fixed size, set `rx`/`ry` (ellipse / rectangle half-extents) or
-  `r` (circle radius) in cetz units instead, plus `pad-x`/`pad-y` to
-  loosen or tighten an autosize fit.
-
-Edges trim to whatever boundary the shape defines, so arrowheads and
-edge ends stay flush against a wide ellipse just as they do a circle.
-
-#let g-people = starling.graph(
+#let g-people = graph.new(
   (
-    ("A", 0, 0, [Alice]),
-    ("B", 3, 0, [Bob]),
-    ("C", 1.5, 2.4, [Charlie]),
-    ("D", 4.5, 2.4, [Dan]),
+    ("A", 0, 0, [Alice]), ("B", 3, 0, [Bob]),
+    ("C", 1.5, 2.4, [Charlie]), ("D", 4.5, 2.4, [Dan]),
   ),
-  edges: (("A", "B", 1), ("A", "C", 1), ("B", "C", 1), ("B", "D", 1), ("C", "D", 1)),
+  edges: (
+    ("A", "B", 1), ("A", "C", 1), ("B", "C", 1), ("B", "D", 1), ("C", "D", 1),
+  ),
 )
 
-#align(center, starling.last((g-people.display)(
+#align(center, last(graph.display(
+  g-people,
   node-style: (shape: "ellipse", autosize: true),
 )))
 
-== Optional auto-layout with graphviz
+== Optional auto-layout with graphviz <auto-layout>
 
-For graphs too large to place by hand, `auto-layout` computes positions
-with graphviz via the `diagraph-layout` package — a WASM build, so no
-external binary is needed. It is re-exported from the package entrypoint
-alongside everything else, so import it the same way and feed its result
-to any display via the `positions:` argument:
-
-```typ
-#import "@preview/starling:0.3.0": graph, auto-layout, last
-
-// Position-less graph — bare ids, no coordinates.
-#let g = graph(("A", "B", "C"), edges: (("A", "B", 7), ("B", "C", 2)))
-#last((g.mst-prim-display)("A", positions: auto-layout(g)))
-```
-
-Or skip the intermediate map entirely: pass `layout: <engine>` to any
-display and it runs `auto-layout` for you, internally. Because the
-display knows the node labels, it feeds graphviz a per-node size
-estimate so wide labels get spread apart (and sets `overlap=false` so
-the force-directed engines honor those sizes rather than stacking
-nodes). This keeps the graph inline at the call site and removes the
-chance of pairing a positions map with the wrong graph:
+For graphs too large to place by hand, `auto-layout(g, engine:, unit:,
+sizes:)` computes positions with graphviz through the `diagraph-layout`
+package — a WASM build, so no external binary is involved. Feed its result
+to any display's `positions:`, or skip the intermediate map by passing
+`layout:` and letting the display call it:
 
 ```typ
-#last((g.display)(
-  node-style: (shape: "ellipse", autosize: true),
-  layout: "neato",          // the display calls auto-layout itself
-))
+#let g = graph.new(("A", "B", "C"), edges: (("A", "B", 7), ("B", "C", 2)))
+
+#last(graph.prim-display(g, "A", positions: auto-layout(g)))
+#last(graph.display(g, layout: "neato", node-style: (shape: "ellipse", autosize: true)))
 ```
 
-That size estimate is a cheap label-length heuristic computed *without*
-`measure`, whereas the drawn node is measured exactly — so the two only
-approximate each other. Graphviz's node margins absorb most of the
-slack; if spacing still looks off, spread the graph with the display's
-`scale:` or tighten/loosen it with `layout-unit:` (the per-unit point
-scale, mirroring `auto-layout`'s `unit:`). `layout:` defaults to `none`,
-in which case the display uses `positions:` and `diagraph-layout` is
-never touched.
+The `layout:` form feeds graphviz a per-node size estimate so wide labels
+get spread apart. That estimate is a cheap label-length heuristic computed
+without `measure`, whereas the drawn node is measured exactly — the two only
+approximate each other, and graphviz's margins absorb the slack. Tune the
+result with the display's `scale:` or with `layout-unit:`.
 
-Despite being on the `import starling` path, `diagraph-layout` stays an
-*optional* dependency: `auto-layout` carries its `diagraph-layout`
-import inside its own body, which Typst resolves lazily — only when the
-function is actually called (whether directly or through a display's
-`layout:` argument). Projects that only hand-place graphs never pull it
-in. (Typst has no subpath package import, so re-exporting from the
-entrypoint is the only way to reach `auto-layout`; the older
-`@preview/starling:<ver>/src/graph-layout.typ` form never worked.)
+`diagraph-layout` stays an *optional* dependency even though the entrypoint
+re-exports `auto-layout`: the import sits inside the function's body, which
+Typst resolves only when the function is actually called. Projects that hand
+place their graphs never fetch it.
 
-= Hash map animations tour
+= Hash maps
 
-A `HashMap` is a fixed-length array of `capacity` slots. Keys are placed
-by a *pluggable hash function* `(key, m) => index`, and collisions are
-resolved by one of four strategies chosen at construction:
+A `hashmap` is a fixed array of `capacity` slots, a *pluggable* hash
+function, and one of four collision strategies:
 
-- `"chaining"` — separate chaining; each slot holds a linked list of
-  entries.
-- `"linear"` — open addressing; on a collision probe `(h + i) mod m`.
-- `"quadratic"` — open addressing; on a collision probe `(h + i*i) mod m`.
-- `"double"` — open addressing; on a collision probe
-  `(h1 + i * h2) mod m`, taking the step size from a *second* hash `h2`.
+- `"chaining"` — each slot holds a list of entries.
+- `"linear"` — open addressing, probing `(h + i) mod m`.
+- `"quadratic"` — open addressing, probing `(h + i*i) mod m`.
+- `"double"` — open addressing, probing `(h1 + i * h2) mod m`, with the step
+  from a second hash.
 
-Unlike the trees and graphs, a hash table has no per-node layout to
-supply — the array geometry is fixed — so the display methods take only
-an `orientation:` (`"horizontal"`, the default, or `"vertical"`) and a
-`scale:`, alongside the usual `theme:` / `render-theme:`.
-
-== Construction
-
-Build one with the `hashmap(..)` factory. `entries:` seeds the table by
-inserting each item in order (a bare key, or a `(key, value)` pair):
+There is no layout to supply — the geometry follows from the capacity — so
+the displays take an `orientation:` (`"horizontal"`, the default, or
+`"vertical"`) instead of positions.
 
 ```typ
-#let h = hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13))
+#let h = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13))
 ```
 
-The hash function and the formula shown on screen are both configurable.
-`hash:` is any `(key, m) => index`; `hash-repr:` is its display form,
-with `k` (the key) and `m` (the capacity) substituted as whole words —
-so write them as standalone tokens (`"k mod m"`, `"(k * 31) mod m"`),
-not glued to a coefficient (`"3k"` would not substitute the `k`). The
-default is the division method `k mod m`. Double hashing takes a second
-pair, `hash2:` / `hash2-repr:`, for the probe step (default
-`1 + (k mod (m - 1))`, which stays nonzero and — when `m` is prime —
-coprime to `m`, so the probe visits every slot).
+`entries:` seeds the table by inserting each item in order (a bare key, or a
+`(key, value)` pair). `hash:` is any `(k, m) => index` and `hash-repr:` its
+on-screen form, with `k` and `m` substituted as whole words — so write them
+standalone (`"(k * 3) mod m"`), since `"3k"` will not substitute. Double
+hashing takes a second pair, `hash2:` / `hash2-repr:`, defaulting to
+`1 + (k mod (m - 1))`: nonzero, and coprime to a prime `m`, so the probe
+visits every slot.
 
-```typ
-#let h = hashmap(
-  8,
-  strategy: "linear",
-  hash: (k, m) => calc.rem(k * 3, m),
-  hash-repr: "(k * 3) mod m",
-)
-```
+#let hm-chain = hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13))
+#align(center, last(hashmap.display(hm-chain)))
 
-== Static display
+Empty slots are muted, a bucket's chain hangs below it, and a deleted
+open-addressing slot shows a tombstone. Entries carry a key and an optional
+value, drawn as a smaller second line.
 
-`display()` renders the current table as a single frame. Empty slots are
-muted; a bucket's chain hangs below it; a deleted open-addressing slot
-shows a tombstone (`×`).
-
-#align(center, starling.last(
-  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8, 13)).display)(),
-))
-
-The same table in `orientation: "vertical"` runs the array top-to-bottom
-(a memory-diagram look) with chains extending rightward.
-
-Entries carry both a key and an optional value: an inserted `(key, value)`
-pair (or `insert(key, value: ..)`) renders the value as a smaller second
-line under the key. By default the display methods *fit* each cell (and,
-for chaining, each entry box) to the widest label, so a wide label such as
-`(k1, v1)` — here set explicitly on each entry — is never clipped:
+By default the displays *fit* each cell to the widest label in the whole
+animation — in both width and height, so entries stay legible at slide font
+sizes, and so the table never resizes mid-animation as a label grows. That
+is `cell-width: "fit"`; a number pins an exact width in cetz units, and
+`auto` keeps a fixed footprint without measuring (which is what
+`positioned` defaults to, since that path can run outside a layout
+context).
 
 #{
-  let h = starling.hashmap(5, strategy: "linear")
-  let h = (h.insert)(3, value: "v1", label: "(k1, v1)")
-  let h = (h.insert)(8, value: "v2", label: "(k2, v2)")
-  align(center, starling.last((h.display)()))
+  let h = hashmap.new(5, strategy: "linear")
+  let h = hashmap.insert(h, 3, value: "v1", label: "(k1, v1)")
+  let h = hashmap.insert(h, 8, value: "v2", label: "(k2, v2)")
+  align(center, last(hashmap.display(h)))
 }
 
-The sizing is controlled by each display method's `cell-width:` argument:
-`"fit"` (the default) measures the labels and grows the cells to fit — in
-*both* width and height, so chaining entries stay legible at the larger
-font sizes of a slide deck (floored at the historical size, so numeric
-tables at the default font are unchanged); a number pins an exact cell
-width in cetz units; and `auto` keeps the fixed historical footprint
-without measuring — useful when you know the labels are short and want to
-skip the measurement pass. On the `positioned(..)`
-entry point (for hand-composed cetz canvases) `cell-width:` defaults to
-`auto`, since that path may render outside a layout context where `"fit"`
-cannot `measure`.
+== The hash box
 
-== Hash functions and the hash box
+Every `insert` / `search` / `delete` opens by computing the hash, and the
+animation draws a *hash box* — `h(<key>) = <formula> = <index>` — above the
+target slot with an arrow into it, so the key #sym.arrow bucket mapping is
+explicit before any probing starts.
 
-Every `insert` / `search` / `delete` opens by computing the hash. The
-animation draws a *hash box* — `h(<key>) = <formula> = <index>` — above
-the target slot with an arrow pointing at it, so the mapping from key to
-bucket is explicit before any probing begins.
+The opening frame invisibly reserves that box's exact footprint, and the
+terminal frames that drop it reserve it again, so every frame of the walk
+renders at the same canvas size and the table does not jump when the box
+appears or disappears on the next subslide. Top-align the canvas in your
+deck and the whole animation stays pinned.
 
-The opening frame (before the hash box appears) invisibly reserves the
-box's footprint, so all of the walk frames render at the same canvas size
-and the table doesn't jump when the box appears on the next subslide. Give
-the canvas a `top` alignment in your deck and the whole animation stays
-pinned in place.
+== Insertion, by strategy
 
-== Separate chaining
+Chaining hashes to a bucket, walks the chain comparing keys — so a repeated
+key updates in place — and appends at the tail:
 
-Insertion hashes to a bucket, walks the existing chain comparing keys
-(so a repeated key updates in place), and appends a new entry at the
-tail:
+#align(center, stacked(hashmap.insert-display(
+  hashmap.new(5, strategy: "chaining", entries: (5, 10, 7)),
+  20,
+)))
 
-#align(center, starling.stacked(
-  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7)).insert-display)(20),
-))
+Linear probing steps to the next slot until it finds a free one:
 
-== Linear probing
+#align(center, stacked(hashmap.insert-display(
+  hashmap.new(7, strategy: "linear", entries: (14, 21, 7)),
+  28,
+)))
 
-Open addressing keeps every entry in the array itself. On a collision,
-linear probing steps to the next slot, `(h + i) mod m`, until it finds a
-free one:
+Quadratic probing spreads the probes out, which reduces the primary
+clustering linear probing suffers. The trade-off is that its sequence visits
+only a subset of the slots: it can report the table *full* while empty slots
+remain — a genuine teaching point, and a terminal frame of its own.
 
-#align(center, starling.stacked(
-  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).insert-display)(28),
-))
+#align(center, stacked(hashmap.insert-display(
+  hashmap.new(7, strategy: "quadratic", entries: (0, 7, 14)),
+  21,
+)))
 
-== Quadratic probing
+Double hashing takes the *step size* from a second hash, so two keys that
+collide at the same home slot generally walk different slots afterwards. The
+hash box shows both.
 
-Quadratic probing spreads the probes out as `(h + i*i) mod m`, which
-reduces the primary clustering linear probing suffers. The trade-off is
-that the probe sequence visits only a subset of the slots: with these
-parameters it can report the table "full" for a key even while empty
-slots remain — a genuine teaching point, surfaced as a terminal *table
-full* frame.
-
-#align(center, starling.stacked(
-  (starling.hashmap(7, strategy: "quadratic", entries: (0, 7, 14)).insert-display)(21),
-))
-
-== Double hashing
-
-Double hashing keeps the entries in the array like the other open
-schemes, but the *step size* between probes comes from a second hash
-`h2(key)` rather than a fixed pattern — so two keys that collide at the
-same home slot generally walk different slots afterwards, avoiding the
-clustering of linear probing. The hash box shows both hashes: `h₁` (the
-home slot) and `h₂` (the step).
-
-#align(center, starling.stacked(
-  (starling.hashmap(7, strategy: "double", entries: (14, 21, 7)).insert-display)(28),
-))
+#align(center, stacked(hashmap.insert-display(
+  hashmap.new(7, strategy: "double", entries: (14, 21, 7)),
+  28,
+)))
 
 == Search
 
-`search-display` walks the same probe/chain sequence and ends on a hit
-(a settled ring) or a miss. Crucially, open-addressing search *stops at
-the first empty slot* but *steps over tombstones* — a lookup for a key
-whose slot sits past a deleted entry still finds it:
+Open-addressing search *stops at the first empty slot* but *steps over
+tombstones*, so a lookup for a key sitting past a deleted entry still finds
+it:
 
-#align(center, starling.stacked(
-  ((starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete)(21).search-display)(7),
-))
+#align(center, stacked(hashmap.search-display(
+  hashmap.delete(hashmap.new(7, strategy: "linear", entries: (14, 21, 7)), 21),
+  7,
+)))
 
-A chaining miss walks to the end of the bucket and rings a *phantom*
-"null" cell hung one past the last entry — the slot the search fell off
-the chain into — rather than the (keyless) bucket header:
+A chaining miss walks to the end of the bucket and rings a *phantom* null
+cell hung one past the last entry — the slot the search fell off the chain
+into — rather than the keyless bucket header, which would read as if the
+bucket itself were the miss.
 
-#align(center, starling.stacked(
-  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3, 8)).search-display)(15),
-))
+#align(center, stacked(hashmap.search-display(
+  hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3, 8)),
+  15,
+)))
 
-== Deletion and tombstones
+== Deletion, tombstones, and a deliberate bug
 
-Deletion is where the two collision families diverge. Chaining simply
-unlinks the entry and re-links the chain. Open addressing cannot blank
-the slot — that would truncate probe sequences that run through it — so
-it writes a *tombstone* (`×`) that search skips and insert may reuse:
+Chaining unlinks the entry and re-links the chain. Open addressing cannot
+blank the slot — that would truncate every probe sequence running through it
+— so it writes a *tombstone* that search skips and insert may reuse.
 
-#align(center, starling.stacked(
-  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete-display)(21),
-))
+#align(center, stacked(hashmap.delete-display(
+  hashmap.new(7, strategy: "linear", entries: (14, 21, 7)),
+  21,
+)))
 
-To *demonstrate why* that matters, `delete` and `delete-display` take
-`tombstone: false` — the naive open-addressing deletion that clears the
-slot to empty instead of tombstoning it. It's deliberately buggy: here
-14, 21 and 7 all hash to slot 0, so clearing 21 (slot 1) severs the
-probe chain, and a later search for 7 stops at the now-empty slot and
-wrongly reports a miss — even though 7 is still in slot 2. Keep the
-default (`tombstone: true`) in real code; the flag is a no-op for
-chaining, which has no tombstones.
+To show *why*, `delete` and `delete-display` take `tombstone: false`: the
+naive deletion that clears the slot instead. Here 14, 21 and 7 all hash to
+slot 0, so clearing 21 severs the probe chain and a later search for 7 stops
+at the hole and wrongly reports a miss — even though 7 is still in slot 2.
 
-#align(center, starling.stacked(
-  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete-display)(21, tombstone: false),
-))
-
-#let broken = (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).delete)(21, tombstone: false)
-#align(center, starling.stacked((broken.search-display)(7)))
+#let naive-hm = hashmap.new(7, strategy: "linear", entries: (14, 21, 7))
+#align(center, last(hashmap.delete-display(naive-hm, 21, tombstone: false)))
+#align(center, stacked(hashmap.search-display(
+  hashmap.delete(naive-hm, 21, tombstone: false),
+  7,
+)))
 
 == Resizing and rehashing
 
-`resize-display(new-cap)` allocates a larger array and replays every
-live entry through the hash under the new capacity, one entry per frame
-— so the load factor drops and old collisions frequently scatter apart:
+`resize-display(h, new-cap)` allocates a larger array and replays every live
+entry through the hash under the new capacity, one entry per frame, so the
+load factor drops and old collisions scatter:
 
-#align(center, starling.stacked(
-  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7, 3)).resize-display)(11),
-))
+#align(center, stacked(hashmap.resize-display(
+  hashmap.new(7, strategy: "linear", entries: (14, 21, 7, 3)),
+  11,
+)))
 
-To *demonstrate why* the rehash matters, `resize` and `resize-display`
-take `rehash: false` — the naive resize that grows the array but copies
-each entry into its *old* index instead of hashing it again (no hash box
-is shown, because nothing is hashed). It's deliberately buggy: 14, 21 and
-7 land back in slots 0, 1, 2, but the array is now length 11, so
-`h(7) = 7 mod 11 = 7` — a later search for 7 probes the empty slot 7 and
-wrongly reports a miss even though 7 is still sitting in slot 2. Keep the
-default (`rehash: true`) in real code. (`rehash: false` requires
-`new-cap >= capacity` so the old indices still fit.)
+The matching teaching bug is `rehash: false`: grow the array but copy each
+entry to its *old* index. 14, 21 and 7 land back in slots 0, 1, 2, but
+`h(7) = 7 mod 11 = 7` now — so a later search probes slot 7, finds it empty,
+and misses a key that is still in the table. (It needs `new-cap >=
+capacity`, so the old indices still fit.)
 
-#align(center, starling.stacked(
-  (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).resize-display)(11, rehash: false),
-))
+#let stale-hm = hashmap.resize(
+  hashmap.new(7, strategy: "linear", entries: (14, 21, 7)),
+  11,
+  rehash: false,
+)
+#align(center, last(hashmap.resize-display(
+  hashmap.new(7, strategy: "linear", entries: (14, 21, 7)),
+  11,
+  rehash: false,
+)))
+#align(center, stacked(hashmap.search-display(stale-hm, 7)))
 
-#let stale = (starling.hashmap(7, strategy: "linear", entries: (14, 21, 7)).resize)(11, rehash: false)
-#align(center, starling.stacked((stale.search-display)(7)))
+== Palette
 
-== Theming
+The `hashmap` theme section holds `empty-fill`, `index-fill`,
+`hash-box-fill` / `-stroke`, `tombstone-fill` / `-stroke`, and `chain-stroke`
+/ `chain-fill`:
 
-The hash map reuses the render theme (structural colours) and the op
-theme (probe/landing/miss strokes) unchanged, and adds its own palette,
-`default-hashmap-theme`, for what's intrinsic to a table: `empty-fill`,
-`index-fill`, `hash-box-fill`, `hash-box-stroke`, `tombstone-fill`,
-`tombstone-stroke`, `chain-stroke`, and `chain-fill`. Override it
-document-wide with `set-hashmap-theme(..)` or per call with the
-`theme:` argument (the per-call form skips the state read — see
-@theming-perf).
+#align(center, last(hashmap.display(
+  hashmap.new(5, strategy: "chaining", entries: (5, 10, 7, 3)),
+  theme: (hashmap: (empty-fill: rgb("#eef3ff"), index-fill: rgb("#3355aa"))),
+)))
 
-A per-call override (shown here, scoped so it doesn't leak into the rest
-of the manual) recolours a single display:
+= Linear sorts
 
-#align(center, starling.last(
-  (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3)).display)(
-    theme: (empty-fill: rgb("#eef3ff"), index-fill: rgb("#3355aa")),
-  ),
-))
-
-= Linear sorts tour
-
-A `Sort` wraps an array of non-negative integer keys and animates the two
-classic *linear* (distribution) sorts — counting sort and LSD radix sort.
-These sorts don't compare-and-swap elements; they *read a value, compute an
-index, and write a cell*, which is exactly the row-of-boxes-with-arrows
-vocabulary the animation kernel is built on. Unlike the trees and graphs
-there is no layout to supply — the rows are laid out on a fixed grid — so
-the display methods take only the usual `theme:` / `render-theme:` (plus
-`cell-width:`, which defaults to fitting the cells to their contents).
-
-Build one with the `sort(..)` factory, which accepts either a splat of
-numbers or a single array:
+`sort` animates the two *distribution* sorts — counting sort and LSD radix
+sort. They don't compare and swap; they read a value, compute an index, and
+write a cell, which is exactly the rows-of-boxes-with-arrows vocabulary the
+array backend draws.
 
 ```typ
-#let s = sort(3, 1, 4, 1, 5)   // or sort((3, 1, 4, 1, 5))
+#let s = sort.new(3, 1, 4, 1, 5)     // or sort.new((3, 1, 4, 1, 5))
 ```
 
-The pure methods `counting-sort(k:)` and `radix-sort(base:)` return the
-sorted array of keys (`sorted()` is the builtin-sort oracle); the
-`*-display` methods return the animation frames.
+Keys must be non-negative integers, because the value *is* an index into the
+count array. To sort an enumeration you would rather show by name, give an
+element as `(value: <int>, label: <content>)`: the integer orders it, the
+label is drawn, and the two may be mixed freely with bare integers. The pure
+`sort.counting(s, k: auto)` and `sort.radix(s, base: 10)` return the sorted
+keys (`sort.sorted(s)` is the built-in-sort oracle); the labels are a
+display concern.
 
-Each element may also be a `(value: <int>, label: <content>)` dict, to sort
-an *enumeration* — the integer `value` is the sort key and `label` is what's
-drawn (the same `value`/`label` split the BST uses). See
-@sort-enumerations.
-
-== Static display
-
-`display()` renders the array as a single indexed row:
-
-#align(center, starling.last((starling.sort(3, 1, 4, 1, 5, 9, 2, 6).display)()))
+#align(center, last(sort.display(sort.new(3, 1, 4, 1, 5, 9, 2, 6))))
 
 == Counting sort
 
-`counting-sort-display()` animates the stable, prefix-sum counting sort:
-first the *count* row is filled by sweeping the input (each value bumps the
-bucket it indexes), then the counts are turned into cumulative *end
-positions* by a prefix-sum sweep, and finally the input is walked
-*right-to-left* — the stability that radix sort relies on — placing each
-value at `output[count[value] - 1]` and decrementing. The count row is
-indexed *by value* (index `v` is bucket `v`), so the read arrows land on
-the bucket named by the element being read.
+`counting-display(s)` animates the stable, prefix-sum counting sort: sweep
+the input to fill the *count* row (indexed *by value*, so a read arrow lands
+on the bucket the element names), turn the counts into cumulative end
+positions, then walk the input *right to left* — the stability radix sort
+depends on — placing each value at `output[count[value] - 1]` and
+decrementing.
 
-#align(center, starling.stacked((starling.sort(1, 0, 2, 1).counting-sort-display)()))
+#align(center, stacked(sort.counting-display(sort.new(1, 0, 2, 1))))
 
-Passing `variant: "reconstruct"` animates the simpler intro version
-instead: build the histogram, then sweep the buckets in order and emit each
-value `count[v]` times into the output. It sorts, but — because it never
-uses the prefix sums or a right-to-left pass — it does not demonstrate
-stability.
+The count array is sized `max + 1` by default; pass `k:` to reserve a larger
+range. Three arguments change the telling:
 
-#align(center, starling.stacked(
-  (starling.sort(2, 0, 1, 2).counting-sort-display)(variant: "reconstruct"),
-))
+`variant: "reconstruct"` animates the intro version instead — build the
+histogram, then sweep the buckets and emit each value `count[v]` times. It
+sorts, but it uses neither the prefix sums nor a right-to-left pass, so it
+does not demonstrate stability. (It also rebuilds from the histogram alone,
+which is why it can only show the first-seen label per key: discarding
+element identity is precisely what makes it unstable.)
 
-The count array is sized `max + 1` by default (so its indices are the
-values `0..max`); pass an explicit `k:` to reserve a larger range.
+#align(center, stacked(sort.counting-display(
+  sort.new(2, 0, 1, 2),
+  variant: "reconstruct",
+)))
 
-The default animation reuses a single `count` row for both the histogram
-and the cumulative end positions — the prefix-sum sweep overwrites the
-histogram in place. Passing `separate-counts: true` (prefix variant only)
-instead keeps the raw histogram in the `count` row all pass and builds the
-cumulative prefix sums up in their own `cumulative` row below it; placement
-then decrements the `cumulative` row. It costs one extra row but keeps the
-original counts visible while the end positions are derived — the clearer
-telling of *why* the prefix sum gives each value's final slot.
+`separate-counts: true` keeps the raw histogram in the `count` row all pass
+and builds the cumulative sums in their own row below it, instead of
+overwriting the histogram in place. It costs a row and buys the clearer
+telling of *why* the prefix sum gives each value its slot.
 
-#align(center, starling.stacked(
-  (starling.sort(1, 0, 2, 1, 3).counting-sort-display)(separate-counts: true),
-))
+#align(center, stacked(sort.counting-display(
+  sort.new(1, 0, 2, 1, 3),
+  separate-counts: true,
+)))
 
-A third variant, `variant: "buckets"`, draws the count array as a
-*chaining hash table* (identity hash `h(v) = v`) rather than a histogram of
-numbers. Each element is *copied into the chain* of the bucket named by its
-value (appending at the tail), then the buckets are read left-to-right, each
-chain head-to-tail, into the output. It is deliberately space-inefficient —
-the whole element lives in the bucket, so a skewed distribution grows a long
-chain — but it makes the mechanism concrete: sorting *is* distributing into
-value-indexed buckets and concatenating them. Because elements append at the
-tail and are read head-first, it is stable. (The chains reuse the same
-hanging-chain look as the hash map's separate chaining.)
+`variant: "buckets"` draws the count array as a *chaining hash table* with
+the identity hash. Each element is copied into the tail of its value's
+chain, then the buckets are read left to right, each chain head to tail, into
+the output. It is deliberately space-inefficient — the whole element lives in
+the bucket — but it makes the mechanism concrete: sorting *is* distributing
+into value-indexed buckets and concatenating them. Tail-append plus head-first
+read means it is stable, and labels ride their chains faithfully.
 
-#align(center, starling.stacked(
-  (starling.sort(3, 1, 4, 1, 0).counting-sort-display)(variant: "buckets"),
-))
-
-Sorting an @sort-enumerations[enumeration] works here too — the labels ride
-their chains into the sorted output:
-
-#align(center, starling.stacked(
-  (
-    starling
-      .sort(
-        (value: 2, label: [Tue]),
-        (value: 0, label: [Sun]),
-        (value: 2, label: [Tue]),
-        (value: 1, label: [Mon]),
-      )
-      .counting-sort-display
-  )(variant: "buckets"),
-))
+#align(center, stacked(sort.counting-display(
+  sort.new(
+    (value: 2, label: [Tue]), (value: 0, label: [Sun]),
+    (value: 2, label: [Tue]), (value: 1, label: [Mon]),
+  ),
+  variant: "buckets",
+)))
 
 == Radix sort
 
-`radix-sort-display()` animates LSD radix sort as *one stable counting-sort
-pass per digit place* — ones, then tens, and so on — keyed on the extracted
-digit (so the count row has `base` buckets). Each input cell shows its
-digit for the active pass as a subscript, and the array emerges sorted
-after the most-significant pass. Because each pass is the stable counting
-sort above, radix is a thin wrapper over the same engine.
+`radix-display(s, base: 10)` is LSD radix sort as *one stable counting-sort
+pass per digit place*, keyed on the extracted digit — so the count row has
+`base` buckets and each input cell wears its digit for the active pass as a
+subscript. Because each pass is the counting sort above, radix is a thin
+wrapper over the same engine.
 
-#align(center, starling.stacked((starling.sort(23, 4, 8).radix-sort-display)()))
+#align(center, stacked(sort.radix-display(sort.new(23, 4, 8))))
 
-The radix `base:` defaults to `10`; any base `>= 2` works (a smaller base
-means more, narrower passes).
+Labels travel with their keys through every pass, so an enumeration comes
+out reordered by name:
 
-== Sorting enumerations <sort-enumerations>
+#align(center, stacked(sort.radix-display(sort.new(
+  (value: 23, label: [23kg]), (value: 4, label: [4kg]), (value: 8, label: [8kg]),
+))))
 
-Counting and radix sort are not comparison sorts — the value is used *as an
-index* into the count array (and, for radix, decomposed into digits), so the
-sort key must be a non-negative integer. To sort an *enumeration* whose
-elements you'd rather show by name (weekdays, ranks, priorities), give each
-element as a `(value: <int>, label: <content>)` dict: the integer `value` is
-the ordinal the sort buckets on, and `label` is the arbitrary content drawn
-in the cell. The label rides along with its key through placement, so the
-output row shows the reordered labels — not just the sorted ordinals:
+The `sort` theme section holds `empty-fill`, `index-fill`, `row-label-fill`,
+`count-fill` (the histogram and bucket tint), `active-digit-fill` (the radix
+subscript), and `chain-stroke`.
 
-#align(center, starling.stacked(
-  (
-    starling
-      .sort(
-        (value: 3, label: [Wed]),
-        (value: 1, label: [Mon]),
-        (value: 0, label: [Sun]),
-        (value: 2, label: [Tue]),
-      )
-      .counting-sort-display
-  )(),
-))
+= Skip lists
 
-Radix works the same way — the digit subscripts read off the integer key
-while the label travels to the sorted output:
-
-#align(center, starling.stacked(
-  (
-    starling
-      .sort(
-        (value: 23, label: [23kg]),
-        (value: 4, label: [4kg]),
-        (value: 8, label: [8kg]),
-      )
-      .radix-sort-display
-  )(),
-))
-
-A bare integer element is shorthand for `(value: n, label: auto)`, where an
-`auto` label draws the key itself — so the all-integer forms above are just
-the common case of this same mechanism, and you can freely mix the two
-(`sort(3, (value: 1, label: [one]), 2)`).
-
-The pure `counting-sort()` / `radix-sort()` methods still return the sorted
-integer *keys* (the correctness oracle); the labels are a display-only
-concern of the `*-display` animations.
-
-One caveat with `variant: "reconstruct"`: that variant rebuilds the output
-from the histogram alone — the bucket index (a key) is all it has, so it
-cannot tell which original element each emitted copy was. With duplicate
-keys but distinct labels it therefore shows the *first-seen* label for each
-key on every copy. This is not a rendering gap but the very reason
-reconstruct is the *unstable* variant (it discards element identity); the
-stable prefix counting sort and radix preserve per-element labels.
-
-== Theming
-
-Linear sorts reuse the render theme (structural colours) and the op theme
-(the read / active-bucket / placement strokes) unchanged, and add their own
-palette, `default-sort-theme`: `empty-fill`, `index-fill`, `row-label-fill`,
-`count-fill` (the histogram- and bucket-cell tint), `active-digit-fill` (the
-radix subscript), and `chain-stroke` (the connector colour for the buckets
-variant's chains). Override it document-wide with `set-sort-theme(..)` or per call
-with the `theme:` argument (the per-call form skips the state read — see
-@theming-perf).
-
-#align(center, starling.last(
-  (starling.sort(4, 2, 5, 1).counting-sort-display)(
-    theme: (count-fill: rgb("#eef3ff"), active-digit-fill: rgb("#c0392b")),
-  ),
-))
-
-= Skip list tour
-
-A `Skiplist` is a sorted set of integer keys stored as a probabilistic
-multi-level linked list: every key sits at level 0, and each also rises
-through a random tower of "express lanes" that let a search skip ahead.
-It draws as a *sparse grid* — a left header sentinel, one column per key,
-an optional `NIL` tail — with horizontal forward pointers at each level
-skipping over the columns whose towers don't reach that high. Level 0 is
-at the bottom; towers rise. Ordering is by the integer `key`; an optional
-`label` rides along for display (the `value` / `label` split shared with
-the `BST`).
-
-== Construction
-
-Build one with the `skiplist(..)` factory. Each element is a bare integer
-(its own key) or a `(value:, label:, height:)` dict. Tower heights come
-from one of two sources: an *explicit* `height`, or a *deterministic coin
-flip* seeded off `seed:` (grown with probability `p`, default `1/2`,
-capped at `max-level`). The seeded flips are reproducible, so a document
-renders the same every time.
+A `skiplist` is a sorted set of non-negative integer keys stored as a
+probabilistic multi-level linked list: every key sits at level 0 and each
+also rises through a tower of express lanes that let a search skip ahead. It
+draws as a sparse grid — a header sentinel, one column per key, an optional
+`NIL` tail — with forward pointers at each level skipping the columns whose
+towers don't reach that high.
 
 ```typ
-#let s = skiplist(3, 1, 4, 7, 5, seed: 7)          // random towers
-#let s = skiplist(                                   // pinned towers
+#let s = skiplist.new(3, 1, 4, 7, 5, seed: 7)        // coin-flipped towers
+#let s = skiplist.new(                                // pinned towers
   (value: 2, height: 1), (value: 5, height: 3),
   (value: 8, height: 1), (value: 12, height: 2),
 )
 ```
 
-== Static display
+Tower heights come from an explicit `height` or from a *deterministic*
+seeded coin flip (grown with probability `p`, default one half, capped at
+`max-level`), so a document renders the same every time. Forward pointers
+are not stored: at level #sym.ell the list is exactly the subsequence of
+nodes whose towers reach that high, so the backend derives them.
 
-`display()` renders the current list as a single frame. A node's tower is
-one flush column of *pointer cells* — one per level it reaches — sitting
-above a separate *data box* that holds the key, drawn once below the whole
-tower. Since no forward pointer attaches to the data box, a link never
-crosses the key. The header is the empty tower on the left (with a `head`
-caption), and all forward pointers terminate at the `NIL` sentinel (pass
-`nil: false` to drop it).
-
-#let sl = starling.skiplist(
-  (value: 2, height: 1),
-  (value: 5, height: 3),
-  (value: 8, height: 1),
-  (value: 12, height: 2),
-  (value: 17, height: 1),
-  (value: 20, height: 2),
+#let sl = skiplist.new(
+  (value: 2, height: 1), (value: 5, height: 3), (value: 8, height: 1),
+  (value: 12, height: 2), (value: 17, height: 1), (value: 20, height: 2),
 )
 
-#align(center, starling.last((sl.display)()))
+#align(center, last(skiplist.display(sl)))
+
+A node's tower is one flush column of *pointer cells*, one per level it
+reaches, sitting above a separate *data box* that holds the key. Because no
+forward pointer attaches to the data box, a link never crosses a key.
 
 == Search
 
-`search-display(key)` animates the classic top-left descent: at each
-level, move right while the next node's key is below the target, and drop
-down a level the moment it would overshoot. The whole descent stays lit —
-every box stepped on and pointer followed accumulates into a `search-stroke`
-trail, while the current comparison target is picked out in `attention-stroke`
-— so the finished animation reads as one continuous path. It ends *found*
-(the whole tower ringed) or *not found* (a danger ring on the successor).
+`search-display(s, key)` animates the top-left descent: move right while the
+next key is below the target, drop a level the moment it would overshoot.
+The whole descent stays lit — every box stepped on and pointer followed
+accumulates into a trail, while the current comparison is picked out — so
+the finished animation reads as one continuous path.
 
-#align(center, starling.stacked((sl.search-display)(17)))
+#align(center, stacked(skiplist.search-display(sl, 17)))
 
-== Insert
+== Insert and delete
 
-`insert-display(key, height: ..)` is a single top-down pass: the new node
-stays an invisible *ghost* (its column reserved so the grid doesn't shift)
-until the descent first reaches its top lane, where it *materializes*, and
-then it is spliced in *as the search descends* — each lane woven in the
-moment the descent lands on that lane's predecessor, from the fastest lane
-down to level 0, highlighting the two rewired pointers. No separate splice
-phase, no backtracking. A lane the node isn't yet linked on is drawn *muted*
-with the list's pointer running *over* it, so it's clear the node isn't part
-of the list at that level yet. Omit `height:` to take a seeded coin flip (the
-same one the pure `insert` would pick). The final frame:
+Both are *interleaved single passes*: the pointer surgery happens as the
+descent reaches each lane, because the descent lands on the target's
+predecessor on every lane it occupies. There is no separate splice phase and
+no backtracking.
 
-#align(center, starling.stacked((sl.insert-display)(9, height: 3)))
+On insert the new node stays a *ghost* — its column reserved, so the grid
+never shifts — until the descent first reaches its top lane, where it
+materializes; each lower lane is then woven in as the descent lands on it. A
+lane the node isn't linked on yet is drawn muted with the list's pointer
+running *over* it, so it is clear the list still skips past it there.
 
-== Delete
+#align(center, stacked(skiplist.insert-display(sl, 9, height: 3)))
 
-`delete-display(key)` is the symmetric single pass: because the top-down
-descent lands on the target's predecessor on every lane the target
-occupies, each lane is unlinked *as the search reaches it* — the
-predecessor bypasses the target, top→bottom — with no separate unlink
-phase. Each bypassed lane goes *muted* with the bypass pointer running
-*over* the target's box there. The node is left detached in place (shown in
-the danger stroke) so it reads clearly as removed. A miss ends on a single
-danger frame.
+Delete is the mirror image: each lane is unlinked as the descent reaches it,
+the predecessor bypassing the target from the top down, and the node is left
+detached in place so it reads as removed rather than vanishing.
 
-#align(center, starling.stacked((sl.delete-display)(5)))
+#align(center, stacked(skiplist.delete-display(sl, 5)))
 
-== Theming
+`delete-display(s, key, search: false)` drops the pure navigation frames and
+keeps the surgery — "the pointer work without the walk that found it".
 
-Skip lists reuse the render theme (structural colours) and the op theme
-(search / splice / unlink strokes) unchanged, and add their own palette,
-`default-skiplist-theme`: `header-fill` / `-stroke` / `-text-fill`,
-`nil-fill` / `-stroke` / `-text-fill`, `index-fill` (the `head` caption),
-and `pointer-stroke` (the default forward-pointer colour). Override it
-document-wide with `set-skiplist-theme(..)` or per call with the `theme:`
-argument (the per-call form skips the state read — see @theming-perf).
+The `skiplist` theme section holds the header and `NIL` palettes,
+`index-fill` (the `head` caption), `pointer-stroke`, and the `unlinked-*`
+trio that mutes a lane the node isn't linked on.
 
-#align(center, starling.last(
-  (sl.display)(theme: (
-    header-fill: rgb("#e8f7ee"),
-    header-stroke: rgb("#2f855a"),
-    pointer-stroke: rgb("#3355aa"),
-  )),
-))
+#align(center, last(skiplist.display(sl, theme: (skiplist: (
+  header-fill: rgb("#e8f7ee"),
+  header-stroke: rgb("#2f855a"),
+  pointer-stroke: rgb("#3355aa"),
+)))))
 
-= Git graph
+= Git commit graphs <git-graph>
 
-The `git-graph` DSL draws git commit graphs — commits, branches, merges,
-tags, and HEAD/branch pointers. It is the one part of starling that does
-*not* ride the `Frame` / `Renderer` / `*-display` stack: rather than an
-immutable structure animated step by step, it is a *stateful, imperative
-cetz builder*. You call `commit` / `branch` / `merge` inside a
-`git-graph({ .. })` block and the commands mutate cetz's canvas context
-as they draw. Consequently the frame helpers (`last`, `stacked`,
-`figures`) do not apply here — you place a `git-graph` block directly
-inside a `cetz.canvas(..)`. Animation is touying-native instead: put
-`pause` / `alternatives(..)` markers inside the canvas body, or redraw a
-commit dot with `git-highlight`.
+The `git` namespace draws git histories — commits, branches, merges, tags,
+and HEAD/branch pointers. It is the one part of starling that does *not*
+ride the frame stack: rather than an immutable structure animated step by
+step, it is a *stateful, imperative cetz builder*. You call `commit` /
+`branch` / `merge` inside a `git-graph({ .. })` block and the verbs mutate
+cetz's canvas context as they draw, so the presentation helpers do not apply
+— you place the block directly inside a `cetz.canvas`.
 
-Because its verbs use generic names (`commit`, `branch`, `merge`, `tag`,
-`checkout`), they live behind a `git` namespace rather than being
-re-exported flat, so `import starling: *` never collides with them:
+Its verbs have names too generic to sit in the flat layer, so they stay
+behind the namespace:
 
 ```typ
 #import "@preview/cetz:0.5.2"
-#import "@preview/starling:0.3.0" as starling
+#import "@preview/starling:1.0.0" as starling
 #import starling: git
 
 #cetz.canvas(git.git-graph({
@@ -2022,709 +1864,311 @@ re-exported flat, so `import starling: *` never collides with them:
 }))
 ```
 
-#align(center, cetz.canvas(starling.git.git-graph({
-  starling.git.branch("main")
-  starling.git.commit("init")
-  starling.git.commit("work")
-  starling.git.branch("dev")
-  starling.git.commit("feature")
-  starling.git.checkout("main")
-  starling.git.commit("main work")
-  starling.git.merge("dev", message: "merge dev")
-  starling.git.branch-pointer("main")
-  starling.git.head-pointer()
-  starling.git.tag("v1.0")
+#align(center, cetz.canvas(git.git-graph({
+  git.branch("main")
+  git.commit("init")
+  git.commit("work")
+  git.branch("dev")
+  git.commit("feature")
+  git.checkout("main")
+  git.commit("main work")
+  git.merge("dev", message: "merge dev")
+  git.branch-pointer("main")
+  git.head-pointer()
+  git.tag("v1.0")
 })))
 
-You must create the initial branch (`branch("main")`) before the first
-`commit`. `merge(branch)` takes the *branch name* to merge in; `commit`,
-`branch`, and `merge` accept a `name:` so later annotations survive
-reordering. `detached-commit(from, msg, name)` draws an orphan dot and
-`head-pointer(target: name)` hangs a detached HEAD off it.
+Create the initial branch before the first commit. `merge(branch)` takes the
+*branch name* to merge in; `commit`, `branch`, and `merge` accept a `name:`
+so later annotations survive reordering; `detached-commit(from, msg, name)`
+draws an orphan dot for `head-pointer(target: name)` to hang off; and
+`background-lanes()` rules each branch's lane.
 
-Pass `direction: "left-to-right"` to `git-graph` to lay commits out
-rightward (lanes spread downward) instead of the default upward stacking;
-sensible label angles/anchors switch automatically.
+Animation is touying-native: put `pause` or `alternatives(..)` markers
+inside the canvas body, or redraw a dot with `git-highlight`. Pass
+`direction: "left-to-right"` to lay commits out rightward instead of upward;
+the label angles and anchors switch with it.
 
-== Theming the git graph
+#align(center, cetz.canvas(git.git-graph(
+  direction: "left-to-right",
+  {
+    git.branch("main")
+    git.commit("a")
+    git.branch("topic")
+    git.commit("b")
+    git.checkout("main")
+    git.commit("c")
+    git.background-lanes()
+  },
+)))
 
-git-graph carries its own per-DS theme, `default-git-theme`, exactly like
-the RBT palette (see @theming). Its keys are the branch `colors` palette
-and the `lane-style` / `graph-style` / `commit-style` / `tag-style` /
-`pointer-style` sub-dicts. Override document-wide with `set-git-theme(..)`
-or per-call with `git-graph(theme: (..))`:
+Styling comes from the theme's `git` section — the branch `colors` palette
+plus the `lane-style` / `graph-style` / `commit-style` / `tag-style` /
+`pointer-style` sub-dicts — and a per-call `theme:` layers over the document
+theme exactly like any display's:
 
 ```typ
-// Document-wide (state — persists for the rest of the document):
-#starling.set-git-theme((graph-style: (stroke: (thickness: 0.4em), radius: 0.15)))
-
-// Per-call (bypasses state entirely — the perf escape hatch):
-#cetz.canvas(git.git-graph(
-  theme: (colors: (teal, maroon, olive)),
-  { git.branch("main"); git.commit("a"); .. },
-))
+#cetz.canvas(git.git-graph(theme: (git: (colors: (teal, maroon, olive))), history))
 ```
 
-Merging is *shallow* at the top level: overriding `commit-style` replaces
-the whole sub-dict, so pass a complete style dict for the role you change.
-As elsewhere in starling, the state path costs an extra layout pass (see
-@theming-perf) — prefer the per-call `theme:` argument on hot paths.
+Because those sub-styles are dicts, overriding one replaces it whole: pass a
+complete dict for the role you change. Behavioural arguments —
+`direction:`, `commit-spacing:`, `lane-spacing:` — are *not* theme; they
+stay arguments of `git-graph`.
 
-= Theming <theming>
+= Migrating from 0.3.x <migration>
 
-Starling exposes three theme layers so document authors can match
-starling's palette to their own document style:
+Version 1.0.0 replaced typsy classes with plain dictionaries and namespaced
+the API per structure. There are no shims: old names are gone, and the
+compiler will tell you so. The mapping is mechanical.
 
-- *Render theme* (#raw("default-render-theme")) — the structural
-  defaults the renderer falls back on for the unstyled tree:
-  `node-fill`, `node-stroke`, `node-text-fill`, `edge-stroke`,
-  `note-fill`.
-- *Op theme* (#raw("default-op-theme")) — the operation-semantic
-  colors and strokes that any data structure's `*-display` methods use
-  to communicate operation state: `search-stroke`, `attention-stroke`,
-  `success-stroke`, `settled-stroke`, `success-fill`, `danger-stroke`,
-  `reset-stroke`, `traversal-palette`. Shared across data structures —
-  BST search, RBT search, and a future heap delete all read the same
-  `search-stroke`. Strokes are full stroke dicts
-  (`(paint:, thickness:, dash:)`) so any aspect — color, width, dash —
-  is overridable without adding more keys.
-- *Per-DS theme* — styling intrinsic to one data structure. RBT has
-  #raw("default-rbt-theme") with `red-fill`, `red-stroke`,
-  `red-text-fill`, `black-fill`, `black-stroke`, `black-text-fill` for
-  the red/black palette. BST has no per-DS theme of its own because
-  BST nodes carry no intrinsic styling.
+#table(
+  columns: (1fr, 1fr),
+  inset: 6pt,
+  align: (left, left),
+  table.header[*0.3.x*][*1.0.0*],
+  [`bst(16, 11, 29)`], [`bst.new(16, 11, 29)` — plus `bst.node` / `bst.leaf`
+    for literals],
+  [`(t.insert)(5)`], [`bst.insert(t, 5)`],
+  [`(t.insert-display)(5)`], [`bst.insert-display(t, 5)`],
+  [`(t.insert-display)(5)` then `(t = (t.insert)(5))`],
+  [`let f = bst.insert-display(t, 5)` then `t = result(f)`],
 
-== Setting a theme for the whole document
+  [`(Op.StyleNode.new)(path: p, style: (fill: red))`],
+  [`style-node(p, fill: red)`],
 
-Call any combination of `set-render-theme`, `set-op-theme`, and the
-per-DS setters (e.g. `set-rbt-theme`) once near the top of your
-document. Each override is state-based and scoped by Typst's normal
-layout flow, so it propagates to every subsequent `*-display` call.
+  [`(Op.Commit.new)(alt: a)`], [`commit(alt: a)`],
+  [`(Op.Highlight.new)(path: p, color: c)`], [`style-node(p, stroke: c + 2pt)`],
+  [`Op.ClearNotes`], [`style-node(key, note: none)` on the keys to clear],
+  [`starling.make-renderer(t)`], [`bst.renderer(t, sticky: true)` — `sticky`
+    now defaults to `false`],
+  [`(r.render)()`], [`render(r)`],
+  [`paint-rbt(make-renderer(t), t, bits: true)`], [`rbt.renderer(t, bits: true)`],
+  [`paint-trie(r, t)`], [`trie.renderer(t)`],
+  [`theme:` (op-theme, on bst/avl/b24/graph)], [`theme: (op: (..))`],
+  [`theme:` (palette, on rbt/trie/hashmap/sort/skiplist)], [`theme: (rbt: (..))`
+    and so on],
+  [`render-theme: (..)`], [`theme: (render: (..))`],
+  [`set-op-theme(..)`, `set-render-theme(..)`, `set-rbt-theme(..)`, …],
+  [`set-theme((op: .., render: .., rbt: ..))` — one state, one setter],
 
-```typ
-#import "@preview/starling:0.1.0": BST, set-op-theme, set-render-theme
+  [`default-op-theme.attention-stroke`], [`default-theme.op.attention-stroke`],
+  [`path-anchor(p, tree-name: "t")`], [`anchor(p, canvas: "t")`],
+  [`node-anchor(id)`, `cell-anchor(i)`, `array-cell-anchor(r, c)`,
+    `sl-box-anchor(c, l)`],
+  [`anchor(<the key>)`, via that module's key constructor],
 
-#set-op-theme((
-  search-stroke: (paint: teal, thickness: 2.5pt),
-  success-stroke: (paint: olive, thickness: 2.5pt),
-  settled-stroke: (paint: olive, thickness: 3.5pt),
-  success-fill: olive.lighten(75%),
-))
-#set-render-theme((node-fill: yellow.lighten(85%)))
-```
-
-Pass a partial dictionary — only the keys you list are changed.
-Unknown keys panic so typos surface immediately rather than silently
-falling back to defaults.
-
-== Per-call overrides
-
-For one-off variations, every `*-display` method accepts `theme:`
-and `render-theme:` arguments. A partial dict is merged into the
-defaults and used in place of the state value for that call only.
-
-```typ
-(t.search-display)(6, theme: (search-stroke: (paint: olive, thickness: 2pt)))
-```
-
-== Performance: state-based theming costs a layout pass <theming-perf>
-
-Typst's state machinery is what makes `set-op-theme` / `set-render-theme`
-work: a `state.update` later in the document can affect renders earlier
-in document order, so Typst evaluates the document, propagates state,
-and re-evaluates anything that observed it. In practice that means
-*using either state setter roughly doubles the compile time of the
-state-observed portion of the document* — a small fixed cost on top of
-each tree, plus a full extra layout pass through everything that placed
-a starling render helper or rendered a frame's `render` builder against
-that state.
-
-Concretely, a 50-tree synthetic benchmark goes from ~1.85s to ~3.1s
-when `set-op-theme` is added. The cost scales with document size, not
-with the number of state reads (one read or a thousand is the same),
-because the price is "Typst does a second layout pass", not "the read
-is slow".
-
-This is a structural property of Typst's state model, not something
-starling can work around without giving up state. If compile speed
-matters more than the ergonomic win, hoist your theme dict into a
-plain `let` and pass it to each `*-display` call via the per-call
-`theme:` argument — that path skips state entirely and runs at the
-no-state baseline:
-
-```typ
-#let palette = (
-  search-stroke: (paint: teal, thickness: 2.5pt),
-  success-stroke: (paint: olive, thickness: 2.5pt),
-  // ...
+  [`cell-key(i)` / `entry-key(i, j)`], [`hashmap.cell-key(i)` /
+    `hashmap.entry-key(i, j)`],
+  [`array-cell-key(row, col)`], [`sort.cell-key(row, col)`],
+  [`array-arrow-key(id)`], [deleted — the id *is* the key],
+  [`sl-box-key` / `sl-forward-key` / `sl-data-key`], [`skiplist.box-key` /
+    `.forward-key` / `.data-key`],
+  [`mst-prim-display` / `mst-kruskal-display`], [`graph.prim-display` /
+    `graph.kruskal-display`],
+  [`counting-sort-display` / `radix-sort-display`], [`sort.counting-display` /
+    `sort.radix-display`; the pure ops are `sort.counting` / `sort.radix`],
+  [`canvases-only(frames)`], [`frames.map(f => canvas(f))` — or better,
+    `subslides(frames)`],
+  [`concat-frames`, `GraphNodeId`, `TreeRenderer`, `Op.Highlight`,
+    `Op.ClearNotes`],
+  [deleted],
 )
 
-#starling.stacked((t.search-display)(6, theme: palette))
-#starling.stacked((t.insert-display)(5, theme: palette))
-// ...
-```
+Four behaviour changes are worth knowing before you convert a deck.
 
-This is the usual perf/ergonomics tradeoff: `set-op-theme` is one
-declaration at the top of the document and "just works"; per-call
-`theme:` is more typing but avoids the extra pass.
+*Renderers no longer accumulate by default.* `sticky` was `true` in the old
+tree-bound `make-renderer`; it is `false` now, so an op stream that expects
+each frame to build on the last must say `sticky: true`.
 
-= Touying composition examples
+*A per-call `theme:` layers over the document theme* rather than replacing
+it. Before, passing `theme:` reset the palette to the defaults and skipped
+`set-*-theme` entirely; now naming two keys changes those two and leaves the
+rest of your theme alone.
 
-Starling is layout-agnostic. In a touying deck, the simplest use
-splats `figures` into `alternatives`:
+*Every animation's last frame carries `step.result`.* The old pattern of
+writing each operation twice — once for the frames, once to advance the
+variable — is what `result(frames)` replaces.
 
-```typ
-#import "@preview/touying:0.7.3": *
-#import "@preview/starling:0.2.0" as starling
-#import starling: BST
+*Alt text is always set explicitly*, and captions are always content (the
+sort and trie captions that used to be strings are not any more). Nothing
+derives alt from a caption.
 
-== Searching
-#alternatives(..starling.figures((t.search-display)(6)))
-```
+Two smaller notes. `import cetz.draw: *` inside a canvas now shadows
+starling's `anchor`, since cetz has an `anchor` of its own — import
+selectively. And there is no `Op` enum: the constructors are top-level
+functions, each returning an array, so streams compose with `+`.
 
-Each frame becomes a subslide; touying handles the rest.
-
-== Captions in a sidebar
-
-When the visual animation should sit alongside synchronised text
-elsewhere on the slide, pull the captions out separately:
-
-```typ
-== Searching for 6
-#let frames = (t.search-display)(6)
-#grid(columns: 2, column-gutter: 2em,
-  alternatives(..starling.figures(frames, caption: false)),
-  alternatives(..frames.map(f => f.caption)),
-)
-```
-
-Both `alternatives` calls produce the same number of subslides, so
-they step in lockstep.
-
-== A live queue / stack beside the graph
-
-For BFS and DFS, `aux-strip` turns each frame's helper structure into a
-strip you can place anywhere on the slide. Drive three `alternatives`
-off the same frame array — the graph canvas, the queue strip, and the
-caption — and they share one subslide count, so the whole slide advances
-together as you step through it:
-
-```typ
-== Breadth-first search
-#let frames = (g.bfs-display)("A")
-#grid(columns: (2fr, 1fr), column-gutter: 2em, align: horizon,
-  alternatives(..starling.canvases-only(frames)),
-  stack(dir: ttb, spacing: 1.2em,
-    alternatives(..frames.map(f => starling.aux-strip(f.step))),
-    alternatives(..frames.map(f => f.caption)),
-  ),
-)
-```
-
-Each `alternatives` child here is independent content (the strip and the
-canvas resolve their own theme state), which is exactly what touying
-wants — the layout-time `alternatives` mark sits *outside* every
-`context` block, never inside one. Swap `bfs-display` for `dfs-display`
-to watch the stack instead; the duplicate entries it shows are faithful
-to the iterative algorithm.
-
-== Driving layout from step metadata
-
-`frame.step` is free-form per-method metadata. For example, a slide
-that wants to colour-code its narration by step kind:
-
-```typ
-#let kind-colors = (compare: blue, inserted: green)
-
-#let captioned-frames = frames.map(f => figure(context {
-  let op = starling._op-theme-state.get()
-  let rt = starling._render-theme-state.get()
-  let color = kind-colors.at(f.step.kind, default: black)
-  stack(dir: ttb, spacing: 0.5em,
-    (f.render)(op, rt), text(fill: color, f.caption))
-}))
-
-#alternatives(..captioned-frames)
-```
-
-#raw("frame.render") is a builder #raw("(op, rt) => content") rather
-than pre-baked content, so themes resolve at layout time. The
-#raw("context") block above reads the active themes and feeds them
-in; if you don't need state-driven theming, you can call
-#raw("(f.render)(starling.default-op-theme, starling.default-render-theme)")
-without the wrapper.
-
-= Composing with cetz annotations <composing-with-cetz-annotations>
-
-For callouts or overlays that need to track specific nodes, drop down
-to the cetz layer. `draw-tree(tree, snapshot, ...)` emits the tree's
-cetz drawables without wrapping them in `cetz.canvas`, so you can
-compose them with your own draw commands in a shared canvas.
-`path-anchor(path)` translates an L/R path string to the cetz anchor
-name of the corresponding node.
-
-```typ
-#import "@preview/cetz:0.5.2"
-
-#cetz.canvas({
-  starling.draw-tree(t, starling.blank-snapshot())
-  import cetz.draw: *
-  circle(starling.path-anchor("LR"), radius: 0.85, stroke: red + 2pt)
+// tidy emits a heading per function and per parameter, so the reference
+// would otherwise number five levels deep. Keep numbers on the sections a
+// reader navigates by and drop them below that.
+#set heading(numbering: (..n) => if n.pos().len() <= 3 {
+  numbering("1.", ..n.pos())
 })
-```
-
-#align(center, cetz.canvas({
-  starling.draw-tree(tour, starling.blank-snapshot())
-  import cetz.draw: *
-  circle(starling.path-anchor("LR"), radius: 0.85, stroke: red + 2pt)
-}))
-
-The same trick combines with frame canvases: each frame's `canvas` is
-itself a `cetz.canvas` block, so for static "annotate the final
-frame" use you can either render once via `draw-tree` (as above) or
-extract the cetz block from a frame and add to it externally.
-
-Graphs and hash maps expose the same escape hatch. `draw-graph` /
-`draw-hashmap` emit drawables without a canvas, and each structure has
-its own anchor helper: `node-anchor(id)` for a graph node,
-`cell-anchor(i)` for a hash-map slot, and `entry-anchor(i, j)` for a
-chaining entry (depth `j` of bucket `i`). Feed the renderer the
-structure's positioned form — `(g.positioned)()` for a graph,
-`(h.positioned)()` for a hash map (which also takes `orientation:` and
-an optional `hash-box:`). Compass sub-anchors (`.north`, `.south`,
-`.east`, `.west`) follow each shape's bounding box, so a callout can
-track any face:
-
-```typ
-#let h = hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3))
-#cetz.canvas({
-  starling.draw-hashmap((h.positioned)(), starling.blank-snapshot())
-  import cetz.draw: *
-  circle(starling.cell-anchor(2), radius: 0.8, stroke: red + 2pt)
-  content(starling.entry-anchor(0, 1) + ".east", anchor: "west", [ ← tail])
-})
-```
-
-#align(center, cetz.canvas({
-  starling.draw-hashmap(
-    (starling.hashmap(5, strategy: "chaining", entries: (5, 10, 7, 3)).positioned)(),
-    starling.blank-snapshot(),
-  )
-  import cetz.draw: *
-  circle(starling.cell-anchor(2), radius: 0.8, stroke: red + 2pt)
-  content(starling.entry-anchor(0, 1) + ".east", anchor: "west", [ ← tail])
-}))
-
-= The Op command stream
-
-For animations that don't fit the BST's built-in methods — say, a
-custom hash-table probe sequence or a graph traversal — drop down to
-the `Op` command stream. Build a sequence of declarative ops and fold
-them into a renderer with `apply-ops`:
-
-```typ
-#let r = starling.make-renderer(t, sticky: true)
-#let r = (r.with-caption)([start at root])
-#let r = starling.apply-ops(r, (
-  (starling.Op.Highlight.new)(path: "", color: blue),
-  (starling.Op.Annotate.new)(path: "", text: [1 < 4]),
-  (starling.Op.Commit.new)(
-    alt: "Comparing the target 1 against the root 4.",
-  ),
-))
-#let r = (r.with-caption)([descend left])
-#let r = starling.apply-ops(r, (
-  (starling.Op.ClearNotes.new)(),
-  (starling.Op.Highlight.new)(path: "L", color: blue),
-  (starling.Op.StyleEdge.new)(path: "L", style: (stroke: blue + 2pt)),
-  (starling.Op.StyleNode.new)(path: "L", style: (fill: green.lighten(70%))),
-  (starling.Op.Annotate.new)(path: "L", text: [1 = 1]),
-  (starling.Op.Alt.new)(
-    text: "Descended into the left subtree; 1 matches the left child.",
-  ),
-))
-#starling.stacked((r.render)())
-```
-
-#let op-r = (starling.make-renderer)(tour, sticky: true)
-#let op-r = (op-r.with-caption)([start at root])
-#let op-r = (starling.apply-ops)(op-r, (
-  (starling.Op.Highlight.new)(path: "", color: blue),
-  (starling.Op.Annotate.new)(path: "", text: [1 < 4]),
-  (starling.Op.Commit.new)(
-    alt: "Comparing the target 1 against the root 4.",
-  ),
-))
-#let op-r = (op-r.with-caption)([descend left])
-#let op-r = (starling.apply-ops)(op-r, (
-  (starling.Op.ClearNotes.new)(),
-  (starling.Op.Highlight.new)(path: "L", color: blue),
-  (starling.Op.StyleEdge.new)(path: "L", style: (stroke: blue + 2pt)),
-  (starling.Op.StyleNode.new)(path: "L", style: (fill: green.lighten(70%))),
-  (starling.Op.Annotate.new)(path: "L", text: [1 = 1]),
-  (starling.Op.Alt.new)(
-    text: "Descended into the left subtree; 1 matches the left child.",
-  ),
-))
-
-#align(center, starling.stacked((op-r.render)()))
-
-`Op.Commit` closes the current frame, attaches the supplied `alt` text
-to it, and opens a fresh blank frame. The `alt` argument is required
-so every frame the command stream produces carries accessible text.
-The trailing in-progress frame is kept implicitly — no final
-`Op.Commit` is needed — but use `Op.Alt(text)` (or `r.with-alt(...)`
-on the returned renderer) to give that last frame its alt text too.
-
-`Op.Caption` does _not_ exist; captions and step metadata are
-renderer-level, set via `r.with-caption(...)` / `r.with-step(...)`
-directly between Op batches. The split keeps each Op's responsibility
-narrow (modifying the current snapshot) and matches how the
-`*-display` methods are written internally.
-
-== On a graph
-
-The Op stream is structure-agnostic: an op's `path` is an opaque
-string, so the same machinery drives a graph. Address nodes by their
-id and edges by `edge-key(u, v)` (the canonical key the renderer uses
-— sorted `"u--v"` when undirected, `"u->v"` when directed), and build
-the renderer with `make-graph-renderer` over a positioned graph
-instead of `make-renderer`. Everything else — `Op.Highlight`,
-`Op.StyleEdge`, `Op.Annotate`, `Op.Commit` — is identical.
-
-This is the escape hatch for animations the built-in MST / Dijkstra /
-traversal displays don't cover. Here we trace a custom walk
-A → C → D, coloring each node and edge and carrying the running cost
-in the gold note slot (reusing the `g` from the graph tour above):
-
-```typ
-#let r = starling.make-graph-renderer((g.positioned)(), sticky: true)
-#let r = (r.with-caption)([start at A])
-#let r = starling.apply-ops(r, (
-  (starling.Op.Highlight.new)(path: "A", color: blue),
-  (starling.Op.Commit.new)(alt: "Start the walk at A."),
-))
-#let r = (r.with-caption)([A → C  (+4)])
-#let r = starling.apply-ops(r, (
-  (starling.Op.StyleEdge.new)(
-    path: starling.edge-key("A", "C"), style: (stroke: blue + 2pt),
-  ),
-  (starling.Op.Highlight.new)(path: "C", color: blue),
-  (starling.Op.Annotate.new)(path: "C", text: [4]),
-  (starling.Op.Commit.new)(alt: "Follow edge A–C (weight 4); cost so far 4."),
-))
-#let r = (r.with-caption)([C → D  (+5)])
-#let r = starling.apply-ops(r, (
-  (starling.Op.StyleEdge.new)(
-    path: starling.edge-key("C", "D"), style: (stroke: blue + 2pt),
-  ),
-  (starling.Op.Highlight.new)(path: "D", color: blue),
-  (starling.Op.Annotate.new)(path: "D", text: [9]),
-  (starling.Op.Alt.new)(text: "Follow edge C–D (weight 5); total cost 9."),
-))
-#starling.stacked((r.render)())
-```
-
-#let gop-r = starling.make-graph-renderer((g-tour.positioned)(), sticky: true)
-#let gop-r = (gop-r.with-caption)([start at A])
-#let gop-r = (starling.apply-ops)(gop-r, (
-  (starling.Op.Highlight.new)(path: "A", color: blue),
-  (starling.Op.Commit.new)(alt: "Start the walk at A."),
-))
-#let gop-r = (gop-r.with-caption)([A → C  (+4)])
-#let gop-r = (starling.apply-ops)(gop-r, (
-  (starling.Op.StyleEdge.new)(
-    path: starling.edge-key("A", "C"),
-    style: (stroke: blue + 2pt),
-  ),
-  (starling.Op.Highlight.new)(path: "C", color: blue),
-  (starling.Op.Annotate.new)(path: "C", text: [4]),
-  (starling.Op.Commit.new)(alt: "Follow edge A–C (weight 4); cost so far 4."),
-))
-#let gop-r = (gop-r.with-caption)([C → D  (+5)])
-#let gop-r = (starling.apply-ops)(gop-r, (
-  (starling.Op.StyleEdge.new)(
-    path: starling.edge-key("C", "D"),
-    style: (stroke: blue + 2pt),
-  ),
-  (starling.Op.Highlight.new)(path: "D", color: blue),
-  (starling.Op.Annotate.new)(path: "D", text: [9]),
-  (starling.Op.Alt.new)(text: "Follow edge C–D (weight 5); total cost 9."),
-))
-
-#align(center, starling.stacked((gop-r.render)()))
-
-`edge-key` is exported from the package so user code can compute the
-same key the renderer stores; for a directed graph pass
-`directed: true` to match. Node and edge ids never collide because
-they live in separate snapshot dictionaries, so `"A"` (a node) and
-`"A--C"` (an edge) address different things.
-
-`make-graph-renderer` takes a *positioned* graph, and `(g.positioned)()`
-defaults to the graph's own stored coordinates. To drive a manual op
-stream over a graphviz layout instead of hand-placed nodes, compute the
-positions with `auto-layout` first and thread them through
-`positioned`'s `positions:` argument before building the renderer — the
-same seam the displays' `layout:` argument uses internally, done by
-hand:
-
-```typ
-#let pos = starling.auto-layout(g, engine: "neato", sizes: auto)
-#let r = starling.make-graph-renderer(
-  (g.positioned)(positions: pos), sticky: true,
-)
-// ...then apply-ops exactly as above.
-```
-
-Pass `sizes: auto` so graphviz reserves room per node (it also sets
-`overlap=false`) when the nodes are `autosize`d; tune absolute spacing
-with `auto-layout`'s `unit:` or `positioned`'s `scale:`. Keeping this
-`auto-layout` call explicit is what preserves its laziness — the manual
-op-stream path never pulls `diagraph-layout` unless you make the call.
-
-== On a hash map
-
-The same escape hatch drives a hash map — reach for it to stage a probe
-sequence the built-in `insert-display` / `search-display` don't cover
-(a custom hash, a deliberately pathological collision run, a
-side-by-side comparison). Build the renderer with `make-hashmap-renderer`
-over `(h.positioned)()`, and address the structure with the *snapshot*
-keys (distinct from the cetz anchors above): `cell-key(i)` for slot `i`,
-and `entry-key(i, j)` for the chaining entry at depth `j` of bucket `i`.
-`entry-key(i, j)` also keys the chain *link* into that entry, so
-`Op.StyleEdge` recolors links. Everything else — `Op.Highlight`,
-`Op.StyleNode`, `Op.Annotate`, `Op.Commit` — is identical.
-
-Here we trace a linear-probing insert of 7 by hand, lighting each probed
-slot and landing the key:
-
-```typ
-#let h = hashmap(7, strategy: "linear", entries: (14, 21))
-#let r = starling.make-hashmap-renderer((h.positioned)(), sticky: true)
-#let r = (r.with-caption)([h(7) = 0])
-#let r = starling.apply-ops(r, (
-  (starling.Op.Highlight.new)(path: starling.cell-key(0), color: blue),
-  (starling.Op.Commit.new)(alt: "Probe slot 0; occupied by 14."),
-))
-#let r = (r.with-caption)([probe → slot 2])
-#let r = starling.apply-ops(r, (
-  (starling.Op.Highlight.new)(path: starling.cell-key(1), color: blue),
-  (starling.Op.Highlight.new)(path: starling.cell-key(2), color: blue),
-  (starling.Op.StyleNode.new)(
-    path: starling.cell-key(2), style: (fill: green.lighten(60%)),
-  ),
-  (starling.Op.Alt.new)(text: "Slots 1 (occupied) then 2 (free): land at 2."),
-))
-#starling.stacked((r.render)())
-```
-
-#let hop-h = starling.hashmap(7, strategy: "linear", entries: (14, 21))
-#let hop-r = starling.make-hashmap-renderer((hop-h.positioned)(), sticky: true)
-#let hop-r = (hop-r.with-caption)([h(7) = 0])
-#let hop-r = (starling.apply-ops)(hop-r, (
-  (starling.Op.Highlight.new)(path: starling.cell-key(0), color: blue),
-  (starling.Op.Commit.new)(alt: "Probe slot 0; occupied by 14."),
-))
-#let hop-r = (hop-r.with-caption)([probe → slot 2])
-#let hop-r = (starling.apply-ops)(hop-r, (
-  (starling.Op.Highlight.new)(path: starling.cell-key(1), color: blue),
-  (starling.Op.Highlight.new)(path: starling.cell-key(2), color: blue),
-  (starling.Op.StyleNode.new)(
-    path: starling.cell-key(2),
-    style: (fill: green.lighten(60%)),
-  ),
-  (starling.Op.Alt.new)(text: "Slots 1 (occupied) then 2 (free): land at 2."),
-))
-#align(center, starling.stacked((hop-r.render)()))
-
-== Custom shapes and edge anchors
-
-Two node-style and edge-style keys let you swap the default circular
-node for a triangle or rectangle and steer where the incoming or
-outgoing edge connects:
-
-- `shape` (node style) accepts `"circle"` (default), `"triangle"`
-  (apex up), or `"rectangle"`. The triangle and rectangle share a
-  1.4×1.2 bounding box; the circle keeps its 1.2×1.2 footprint.
-- `parent-anchor` / `child-anchor` (edge style) accept a cetz anchor
-  name like `"north"` or `"south"` and override the edge endpoint on
-  the parent or child side respectively. The default for both stays
-  the empirical fractional-distance trick that looks clean between
-  two circles.
-
-The canonical use case is using a triangle to stand in for an entire
-subtree — a common pattern when only the top-level shape matters and
-the details would clutter the slide. Because the triangle's apex sits
-at the `north` anchor of its bounding box, an incoming edge with
-`child-anchor: "north"` lands cleanly on the tip:
-
-```typ
-#let t = (starling.BST.new)(value: 5, label: auto, left: none, right: none)
-#let t = (t.insert-many)(2, 8, 1, 3)
-
-#let ops = (
-  (starling.Op.StyleNode.new)(path: "L", style: (shape: "triangle", fill: aqua.lighten(60%))),
-  (starling.Op.StyleEdge.new)(path: "L", style: (child-anchor: "north")),
-  (starling.Op.StyleNode.new)(path: "LL", style: (hide: true)),
-  (starling.Op.StyleNode.new)(path: "LR", style: (hide: true)),
-  (starling.Op.StyleEdge.new)(path: "LL", style: (hide: true)),
-  (starling.Op.StyleEdge.new)(path: "LR", style: (hide: true)),
-  (starling.Op.Alt.new)(text: "Left subtree summarised as a triangle."),
-)
-#let r = starling.apply-ops(starling.make-renderer(t, sticky: true), ops)
-#starling.last((r.render)())
-```
-
-#let subtree-tree = (starling.BST.new)(value: 5, label: auto, left: none, right: none)
-#let subtree-tree = (subtree-tree.insert-many)(2, 8, 1, 3)
-#let subtree-ops = (
-  (starling.Op.StyleNode.new)(
-    path: "L",
-    style: (shape: "triangle", fill: aqua.lighten(60%)),
-  ),
-  (starling.Op.StyleEdge.new)(path: "L", style: (child-anchor: "north")),
-  (starling.Op.StyleNode.new)(path: "LL", style: (hide: true)),
-  (starling.Op.StyleNode.new)(path: "LR", style: (hide: true)),
-  (starling.Op.StyleEdge.new)(path: "LL", style: (hide: true)),
-  (starling.Op.StyleEdge.new)(path: "LR", style: (hide: true)),
-  (starling.Op.Alt.new)(text: "Left subtree summarised as a triangle."),
-)
-#let subtree-r = (starling.apply-ops)(
-  starling.make-renderer(subtree-tree, sticky: true),
-  subtree-ops,
-)
-
-#align(center, starling.last((subtree-r.render)()))
-
-Shape and anchor are deliberately independent — the library doesn't
-auto-set `child-anchor: "north"` when you switch a node to a triangle,
-because there are legitimate uses for the default endpoint behavior
-even on non-circular shapes (e.g. a labelled rectangle whose edges you
-want pulled toward its center rather than flush against its top).
-When you want flush meeting points, set the anchors yourself.
 
 = API reference
 
-The remainder of this manual is an auto-generated reference, produced
-by the `tidy` package from doc-comments in the source.
+The rest of this manual is generated by
+#link("https://typst.app/universe/package/tidy")[tidy] from the doc comments
+in the source. Names starting with `_` are private and do not appear.
 
-#let lib-docs = tidy.parse-module(
-  read("/src/lib.typ"),
-  name: "Render helpers",
-  label-prefix: "lib-",
-  scope: (starling: starling, cetz: cetz),
+The nine data-structure namespaces come first, then the shared machinery
+they are built on, then the drawing layer. Where a module's names are
+reachable under a namespace, the heading says which — `bst.insert`,
+`styles.ghost`, `git.commit`.
+
+#let api(path, name) = tidy.show-module(
+  tidy.parse-module(
+    read(path),
+    name: name,
+    label-prefix: name + "-",
+    scope: (starling: starling, cetz: cetz),
+  ),
+  style: tidy.styles.default,
+  show-module-name: false,
 )
 
-#let core-docs = tidy.parse-module(
-  read("/src/anim-core.typ"),
-  name: "Animation core",
-  label-prefix: "core-",
-  scope: (starling: starling, cetz: cetz),
-)
+== `bst` — binary search trees
 
-#let anim-docs = tidy.parse-module(
-  read("/src/tree-anim.typ"),
-  name: "Tree backend",
-  label-prefix: "anim-",
-  scope: (starling: starling, cetz: cetz),
-)
+#api("/src/ds/bst.typ", "bst")
 
-#let graph-docs = tidy.parse-module(
-  read("/src/graph.typ"),
-  name: "Graph",
-  label-prefix: "graph-",
-  scope: (starling: starling, cetz: cetz),
-)
+== `rbt` — red-black trees
 
-#let gdraw-docs = tidy.parse-module(
-  read("/src/graph-draw.typ"),
-  name: "Graph renderer",
-  label-prefix: "gdraw-",
-  scope: (starling: starling, cetz: cetz),
-)
+#api("/src/ds/rbt.typ", "rbt")
 
-#let glayout-docs = tidy.parse-module(
-  read("/src/graph-layout.typ"),
-  name: "Graph auto-layout",
-  label-prefix: "glayout-",
-  scope: (starling: starling, cetz: cetz),
-)
+== `avl` — AVL trees
 
-#let git-docs = tidy.parse-module(
-  read("/src/git-graph.typ"),
-  name: "Git graph",
-  label-prefix: "git-",
-  scope: (starling: starling, cetz: cetz),
-)
+#api("/src/ds/avl.typ", "avl")
 
-#let hashmap-docs = tidy.parse-module(
-  read("/src/hashmap.typ"),
-  name: "Hash map",
-  label-prefix: "hashmap-",
-  scope: (starling: starling, cetz: cetz),
-)
+== `b24` — 2-3-4 trees
 
-#let hdraw-docs = tidy.parse-module(
-  read("/src/hashmap-draw.typ"),
-  name: "Hash map renderer",
-  label-prefix: "hdraw-",
-  scope: (starling: starling, cetz: cetz),
-)
+#api("/src/ds/b24.typ", "b24")
 
-#let skiplist-docs = tidy.parse-module(
-  read("/src/skiplist.typ"),
-  name: "Skip list",
-  label-prefix: "skiplist-",
-  scope: (starling: starling, cetz: cetz),
-)
+== `trie` — tries
 
-#let sldraw-docs = tidy.parse-module(
-  read("/src/skiplist-draw.typ"),
-  name: "Skip list renderer",
-  label-prefix: "sldraw-",
-  scope: (starling: starling, cetz: cetz),
-)
+#api("/src/ds/trie.typ", "trie")
 
-== Render helpers
+== Shared binary-tree operations
 
-#tidy.show-module(lib-docs, style: tidy.styles.default, show-module-name: false)
+These live in `ds/tree-common.typ` and are re-exported by `bst`, `rbt`, and
+`avl` — `bst.contains`, `avl.in-order`, and so on. The `render-*` helpers
+are the shared animation bodies those modules build their displays from.
 
-== Animation core
+#api("/src/ds/tree-common.typ", "tree-common")
 
-#tidy.show-module(core-docs, style: tidy.styles.default, show-module-name: false)
+== `graph` — weighted graphs
 
-== Tree backend
+#api("/src/ds/graph.typ", "graph")
 
-#tidy.show-module(anim-docs, style: tidy.styles.default, show-module-name: false)
+== `hashmap` — hash maps
 
-== Graph
+#api("/src/ds/hashmap.typ", "hashmap")
 
-#tidy.show-module(graph-docs, style: tidy.styles.default, show-module-name: false)
+== `sort` — linear sorts
 
-== Graph renderer
+#api("/src/ds/sort.typ", "sort")
 
-#tidy.show-module(gdraw-docs, style: tidy.styles.default, show-module-name: false)
+== `skiplist` — skip lists
+
+#api("/src/ds/skiplist.typ", "skiplist")
+
+== `styles` — the semantic style vocabulary
+
+#api("/src/styles.typ", "styles")
+
+== Presentation helpers
+
+Exported flat: `last`, `stacked`, `figures`, `subslides`, `canvas`.
+
+#api("/src/slides.typ", "slides")
+
+== `aux` — auxiliary state strips
+
+`aux-strip` is also exported flat.
+
+#api("/src/aux.typ", "aux")
+
+== The op command stream
+
+Exported flat: `style-node`, `style-edge`, `annotate`, `commit`, `set-alt`,
+`set-caption`, `set-step`, `apply-ops`.
+
+#api("/src/core/ops.typ", "ops")
+
+== Frames and renderers
+
+Exported flat: `make-renderer`, `render`, `overlay`, `result`. The rest is
+what a custom draw backend or a hand-built display talks to.
+
+#api("/src/core/frame.typ", "frame")
+
+== Snapshots
+
+Exported flat: `blank-snapshot`, `apply-snapshot`.
+
+#api("/src/core/snapshot.typ", "snapshot")
+
+== Styles and style keys
+
+Exported flat: `theme-ref`, `role`. The node- and edge-style key allowlists
+below are the complete vocabulary a snapshot may use.
+
+#api("/src/core/style.typ", "style")
+
+== Theme
+
+Exported flat: `default-theme`, `set-theme`.
+
+#api("/src/core/theme.typ", "theme")
+
+== Drawing utilities
+
+Exported flat: `anchor`. The rest is shared geometry and measurement the
+backends use, and what a custom backend should reuse.
+
+#api("/src/core/draw-util.typ", "draw-util")
+
+== Alt-text helpers
+
+The string builders every display's alt text goes through, so the narration
+reads the same across structures.
+
+#api("/src/core/text.typ", "text")
+
+== Draw backends
+
+Each of these is exported flat (`draw-tree`, `draw-graph`, …) and can be
+called inside a `cetz.canvas` of your own, with no `context` needed.
+
+=== `draw-tree`
+
+#api("/src/draw/tree.typ", "draw-tree")
+
+=== `draw-graph`
+
+#api("/src/draw/graph.typ", "draw-graph")
+
+=== `draw-hashmap`
+
+#api("/src/draw/hashmap.typ", "draw-hashmap")
+
+=== `draw-array`
+
+The backend behind `sort`; `sort.cell-key` and `sort.entry-key` are
+re-exported from here.
+
+#api("/src/draw/array.typ", "draw-array")
+
+=== `draw-skiplist`
+
+#api("/src/draw/skiplist.typ", "draw-skiplist")
 
 == Graph auto-layout
 
-#tidy.show-module(glayout-docs, style: tidy.styles.default, show-module-name: false)
+Exported flat: `auto-layout`.
 
-== Git graph
+#api("/src/graph-layout.typ", "graph-layout")
 
-#tidy.show-module(git-docs, style: tidy.styles.default, show-module-name: false)
+== `git` — the commit-graph DSL
 
-== Hash map
-
-#tidy.show-module(hashmap-docs, style: tidy.styles.default, show-module-name: false)
-
-== Hash map renderer
-
-#tidy.show-module(hdraw-docs, style: tidy.styles.default, show-module-name: false)
-
-== Skip list
-
-#tidy.show-module(skiplist-docs, style: tidy.styles.default, show-module-name: false)
-
-== Skip list renderer
-
-#tidy.show-module(sldraw-docs, style: tidy.styles.default, show-module-name: false)
+#api("/src/git-graph.typ", "git")

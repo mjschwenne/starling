@@ -131,6 +131,10 @@
   })
 }
 
+/// Rule a dashed lane along every branch, from its label to just past the
+/// last commit — the backdrop that makes which lane a commit sits on
+/// obvious. Call it after the history, so every branch exists. Styled by
+/// the theme's `git.lane-style`.
 #let background-lanes() = {
   _graph-props(props => {
     for branch-name in props.branches.keys() {
@@ -183,6 +187,11 @@
   })
 }
 
+/// Start a branch and check it out. The first call must come before the
+/// first `commit`; later ones fork from the current tip (or from `from:`, a
+/// cetz anchor). `color:` pins this branch's colour, `colors:` replaces the
+/// palette it is drawn from (the theme's `git.colors` by default), and
+/// `edge-name:` names the fork line for later annotation.
 #let branch(name, color: auto, colors: auto, edge-name: none, from: auto) = {
   if type(name) != str {
     name = name.text
@@ -259,6 +268,7 @@
   })
 }
 
+/// Make `branch` the active one, so subsequent commits land on its lane.
 #let checkout(branch) = {
   _set-graph-props(props => {
     if branch not in props.branches {
@@ -270,6 +280,10 @@
   _d.anchor("head", branch + "/head")
 }
 
+/// Draw a commit on the active branch, with `message` beside its dot.
+/// `branch:` checks that branch out first; `name:` gives the dot a cetz
+/// anchor name of your choosing (otherwise it is `commit-id-<n>`), which is
+/// what later annotations and `merge` refer to.
 #let commit(message, branch: auto, name: none, edge-name: none) = {
   if branch != auto {
     checkout(branch)
@@ -349,6 +363,7 @@
   })
 }
 
+/// Hang a tag label off the current tip, in the theme's `git.tag-style`.
 #let tag(message) = {
   _graph-props(props => {
     let txt = props.tag-style.at("decorator")(message)
@@ -358,12 +373,10 @@
   })
 }
 
-// Draws a tilted colored label at the tip of `name`. Mirrors the
-// commit-message decoration through the dot: same +45deg tilt, but the
-// label extends NE (bottom-to-top mode) or NW (left-to-right mode).
-//
-// The drawn label is registered as the cetz anchor "branch-pointer-<name>"
-// so head-pointer can stack against its rotated bounding box.
+/// Draw a branch pointer — the branch's name in its own colour — at the tip
+/// of `name`. It mirrors the commit message through the dot: the same tilt,
+/// but extending away from it. The label registers the cetz anchor
+/// `branch-pointer-<name>`, which is what `head-pointer` stacks against.
 #let branch-pointer(name, padding: auto, anchor: auto, angle: auto) = {
   _set-graph-props(props => {
     let drawn = props.pointer-drawn
@@ -398,14 +411,11 @@
   })
 }
 
-// Draws a "HEAD" label at the tip of `branch` (default: active branch).
-// By default stacks along the rotated bounding box of `branch`'s pointer
-// label (drawn by a previous `branch-pointer(branch)` call). Pass
-// `after: none` to place it at the dot instead, or `after: "other"` to
-// stack past a different branch's pointer.
-//
-// Pass `target:` (any cetz anchor name) to point HEAD at an arbitrary
-// commit instead of a branch tip — useful for detached-HEAD demos.
+/// Draw the `HEAD` label at the tip of `branch:` (default: the active one).
+/// It stacks past that branch's pointer label when one was drawn; pass
+/// `after: none` to anchor it at the dot instead, or `after: "<branch>"` to
+/// stack past a different branch's pointer. Pass `target:` (any cetz anchor
+/// name) to point HEAD at an arbitrary commit — a detached HEAD.
 #let head-pointer(
   branch: auto,
   target: none,
@@ -462,14 +472,12 @@
   })
 }
 
-// Draws an orphan commit dot offset from `from` (a cetz anchor — typically
-// a `commit-id-N` or a custom commit `name:`). The dot is colored `color`
-// (gray by default to suggest it is unreachable) and is connected back to
-// `from` with a same-color line. The dot is registered as `name` so a
-// later `head-pointer(target: name)` can hang HEAD off it.
-//
-// Unlike `commit()`, the dot is not on any lane, does not advance the
-// commit counter, and is not registered in `ref-branch-map`.
+/// Draw an orphan commit dot `offset` from `from` (a cetz anchor — a
+/// `commit-id-<n>` or a commit's own `name:`), joined back to it by a line
+/// in the same colour (grey by default, to read as unreachable). The dot is
+/// registered as `name`, so `head-pointer(target: name)` can hang a
+/// detached HEAD off it. Unlike `commit` it joins no lane, advances no
+/// counter, and is not a merge target.
 #let detached-commit(
   from,
   message,
@@ -540,6 +548,10 @@
   })
 }
 
+/// Merge `commit-id` — a branch name, or a commit's `name:` — into the
+/// active branch, drawing the merge commit and the incoming edge.
+/// `fast-forward: true` draws the tip as a fast-forward instead of a merge
+/// dot.
 #let merge(commit-id, message: [], name: none, edge-name: none, fast-forward: false) = {
   commit(message, name: name)
   if fast-forward {
@@ -584,9 +596,9 @@
 }
 
 
-// Highlight a commit by redrawing its dot in a different fill, on a higher
-// layer so it covers the original. Pair with touying alternatives() to flip
-// the highlight on and off across subslides.
+/// Redraw a commit's dot in `fill`, on a layer above the original, to pick
+/// it out. Pair it with touying's `alternatives(..)` to flip a highlight on
+/// and off across subslides.
 #let git-highlight(commit-name, fill: yellow) = {
   _d.on-layer(_layers.COMMIT + 10, _d.content(
     commit-name,
@@ -594,28 +606,22 @@
   ))
 }
 
-// Trade-off on the `name:` parameter:
-//   - name: none (default) — no _d.group wrapper. Anchors created inside
-//     (commit-id-N, branch labels, named edges, ...) live at the canvas
-//     scope. Touying (pause,) / alternatives() markers inside the body are
-//     visible to the outer reducer, so animation works.
-//   - name: "x" — wraps the body in _d.group(name: "x"). Anchors are
-//     namespaced as "x.commit-id-N" and reachable from outside the block,
-//     but (pause,) inside the body is swallowed by the group and animation
-//     breaks. Pick per slide: external anchors OR in-block animation.
-//
-// `direction:` accepts "bottom-to-top" (default) or "left-to-right". When
-// left-to-right is selected, sensible defaults for commit/tag label angles
-// and anchors are applied unless the caller passes their own commit-style
-// or tag-style dict.
-//
-// Styling comes from the one theme's `git:` section. `theme:` is a partial
-// nested override — `git-graph(theme: (git: (colors: (teal, maroon))))` —
-// merged over the ambient theme, exactly like a `*-display`'s `theme:`.
-// The read happens inside the deferred `set-ctx` closure, where cetz
-// supplies the context a state read needs. Precedence, lowest to highest:
-//   default-theme -> set-theme state -> theme: -> direction defaults -> ..style
+/// The block every other verb is called inside: it seeds cetz's canvas
+/// context with the resolved theme and layout defaults, then draws `graph`.
+/// Place it directly in a `cetz.canvas`.
+///
+/// `theme:` is a partial nested theme override (`theme: (git: (..))`),
+/// layered over the document's theme like any display's. `..style` takes
+/// the behavioural knobs — `direction:` (`"bottom-to-top"`, the default, or
+/// `"left-to-right"`), `commit-spacing:`, `lane-spacing:` — which are
+/// deliberately not theme. `name:` wraps the drawing in a named cetz group
+/// so its anchors are reachable from outside, at the cost of swallowing
+/// touying `pause` markers inside the body.
 #let git-graph(graph, name: none, theme: (:), ..style) = {
+  // The theme is read inside the deferred `set-ctx` closure below, the one
+  // place a cetz builder has the context a state read needs. Precedence,
+  // lowest first: default-theme -> set-theme state -> theme: -> the
+  // direction defaults -> ..style.
   let style-named = style.named()
   let direction = style-named.at("direction", default: "bottom-to-top")
   _d.set-ctx(ctx => {

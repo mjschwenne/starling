@@ -157,7 +157,7 @@
   merge-into(base, ov)
 }
 
-/// Drop the `note` / `note-fill` slots from every style in a `key -> style`
+/// Drop the `note` / `note-fill` slots from every style in a `key`-to-style
 /// dict. The operation-note slot is transient; sticky animations clear it
 /// between phases while keeping the structural highlights.
 #let strip-notes(styles) = {
@@ -225,7 +225,7 @@
   } else { style }
 }
 
-/// Resolve theme references in a whole `key -> style` map.
+/// Resolve theme references in a whole `key`-to-style map.
 #let resolve-refs-map(styles, theme) = {
   let out = (:)
   for (k, style) in styles.pairs() { out.insert(k, resolve-refs(style, theme)) }

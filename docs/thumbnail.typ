@@ -1,5 +1,5 @@
 #import "/src/lib.typ" as starling
-#import starling: BST
+#import starling: bst, figures
 
 #set page(height: auto, margin: 5mm, fill: none)
 
@@ -9,12 +9,11 @@
 
 #set text(22pt)
 
-#let tree = (BST.new)(value: 5, label: auto, left: none, right: none)
-#let tree = (tree.insert-many)(1, 10)
-#let frames = (tree.insert-display)(7)
+#let tree = bst.insert-many(bst.leaf(5), 1, 10)
+#let frames = bst.insert-display(tree, 7)
 #grid(
   columns: 3,
   column-gutter: 1em,
   row-gutter: 1em,
-  ..starling.figures(frames, caption: false),
+  ..figures(frames, caption: false),
 )

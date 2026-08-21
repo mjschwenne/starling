@@ -16,15 +16,24 @@ doc:
 test *args:
   tt run --no-fail-fast {{ args }}
 
+# run only the assertion tests (the ones with nothing to eyeball)
+check:
+  tt run --no-fail-fast -e 'regex:"-ops$" | exact:core-ops | exact:api-conformance'
+
 # update test cases
 update *args:
   tt update {{ args }}
 
+# print the package name and version packaging will use
+version:
+  @grep -E '^(name|version) *=' typst.toml
+
 # package the library into the specified destination folder
+# (name and version are read from typst.toml by scripts/setup)
 package target:
   ./scripts/package "{{target}}"
 
-# install the library with the "@local" prefix
+# install the library with the "@local" prefix (as @local/starling/<version>)
 install: (package "@local")
 
 # install the library with the "@preview" prefix (for pre-release testing)

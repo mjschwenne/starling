@@ -2,11 +2,11 @@
 
 [package]
 name = "starling"
-version = "0.3.0"
+version = "1.0.0"
 entrypoint = "src/lib.typ"
 authors = ["Matt Schwennesen <mjschwenne@gmail.com>"]
 license = "GPL-3.0-or-later"
-description = "Animated renderings of data structures (binary search trees, 2-3-4 trees, and weighted graphs) for teaching."
+description = "Animated renderings of data structures (search trees, tries, graphs, hash maps, linear sorts, skip lists, and git commit graphs) for teaching."
 homepage = "https://github.com/mjschwenne/starling"
 repository = "https://github.com/mjschwenne/starling"
 keywords = ["data-structures", "animation", "education", "cetz", "graph", "git"]
