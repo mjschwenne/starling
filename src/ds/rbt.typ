@@ -1363,6 +1363,304 @@
   )
 }
 
+// The double-black dot, drawn on the edge into the node one black short.
+// The root has no incoming edge, so a root double-black shows nothing — it
+// is absorbed immediately anyway.
+#let _db-mark(cur, db) = if db == none or db == "" { cur } else {
+  with-edge(cur, db, _db-edge-style)
+}
+
+// The search trail, accumulated so each comparison frame shows the whole
+// path walked so far rather than just the current node. One entry per event.
+#let _delete-visited-trail(events) = {
+  let out = ()
+  let acc = ()
+  for e in events {
+    if e.kind == "compare" { acc = acc + (e.path,) }
+    out.push(acc)
+  }
+  out
+}
+
+// Where the missing black sits at each event. The trace doesn't carry it
+// — it is a property of the animation, not the algorithm — so walk the
+// events once: it appears after a black excise that the loop will follow,
+// persists across a check, moves with Cases 1 and 2, is untouched by Case
+// 3, and is resolved by Case 4 or either paint-black.
+#let _delete-db-trail(events) = {
+  let out = ()
+  let cur = none
+  for (idx, e) in events.enumerate() {
+    if e.kind == "excise" and not e.was-red {
+      let next-kind = if idx + 1 < events.len() {
+        events.at(idx + 1).kind
+      } else { none }
+      if next-kind != "paint-black-promoted" { cur = e.path }
+    } else if e.kind == "paint-black-promoted" {
+      cur = none
+    } else if e.kind == "case-1" {
+      // The parent moved under the former sibling, so the double-black is
+      // now the parent's near grandchild.
+      let suffix = e.new-sibling-path.slice(e.parent-path.len())
+      cur = e.parent-path + (if suffix == "LR" { "LL" } else { "RR" })
+    } else if e.kind == "case-2" {
+      // If the double-black propagated up to a red node, the next step is
+      // paint-black-db. Suppress the marker: "red and double-black" is not
+      // a stable node state, and drawing it reads wrong.
+      let new-db = e.new-db-path
+      let new-db-node = if new-db == "" { none } else { resolve(e.tree, new-db) }
+      cur = if _is-red(new-db-node) { none } else { new-db }
+    } else if e.kind == "case-4" or e.kind == "paint-black-db" {
+      cur = none
+    } else if e.kind == "check" {
+      cur = e.db-path
+    }
+    out.push(cur)
+  }
+  out
+}
+
+// Each rotate-and-recolor case gets a rotation-only frame first: the
+// post-rotation structure repainted with the pre-rotation colours, so the
+// pivot lands before the colours change. The case's own frame then follows,
+// captioned as the recolor. `prev-tree` / `prev-db` are the preceding
+// event's, which is what "pre-rotation" means here.
+#let _delete-rotate-spec(event, prev-tree, prev-db, bits) = {
+  let tree = _color-preserve(prev-tree, event.tree)
+  // Cases 1 and 4 demote the parent under the former sibling, pushing the
+  // double-black one level deeper; Case 3 only rearranges the sibling's
+  // subtree, so it stays put.
+  let db = if event.kind == "case-3" { prev-db } else {
+    event.parent-path + (if prev-db.last() == "L" { "LL" } else { "RR" })
+  }
+  // The pivot: the sibling moves up in Cases 1 and 4, the near nephew in
+  // Case 3.
+  let pivot = if event.kind == "case-3" { event.sibling-path } else {
+    event.parent-path
+  }
+  let (caption, step, alt) = if event.kind == "case-1" {
+    (
+      [Rotate parent],
+      (kind: "case-1-rotate", parent-path: event.parent-path),
+      "Case 1: rotated around the parent — sibling moves up, parent "
+        + "demoted. Colors swap next.",
+    )
+  } else if event.kind == "case-3" {
+    (
+      [Rotate sibling],
+      (kind: "case-3-rotate", sibling-path: event.sibling-path),
+      "Case 3: rotated around the sibling — near nephew moves up, "
+        + "sibling demoted. Colors swap next.",
+    )
+  } else {
+    (
+      [Rotate parent],
+      (kind: "case-4-rotate", parent-path: event.parent-path),
+      "Case 4: rotated around the parent — sibling moves up, parent "
+        + "demoted. Colors swap and the far nephew is painted black next.",
+    )
+  }
+  (
+    structure: tree,
+    build: th => _db-mark(
+      with-node(_paint(tree, bits: bits), pivot, (stroke: th.op.success-stroke)),
+      db,
+    ),
+    caption: caption,
+    step: step,
+    alt: alt,
+  )
+}
+
+// The caption / step / alt for the double-black fix-up kinds — the loop that
+// runs after a black node is excised. Split from `_delete-meta` because it is
+// its own decision tree: the CLRS cases plus the red node that absorbs the
+// extra black outright.
+#let _delete-fixup-meta(event) = if event.kind == "paint-black-db" {
+  (
+    caption: [Paint red node black],
+    step: (kind: "paint-black-db", path: event.path),
+    alt: "The extra black met a red node; painting it black absorbs the "
+      + "extra black and resolves the fix-up.",
+  )
+} else if event.kind == "case-1" {
+  (
+    caption: [Recolor],
+    step: (
+      kind: "case-1",
+      parent-path: event.parent-path,
+      new-sibling-path: event.new-sibling-path,
+    ),
+    alt: "Case 1: swapped parent and sibling colors after the rotation. "
+      + "The new sibling is black; continuing with Cases 2 to 4.",
+  )
+} else if event.kind == "case-2" {
+  (
+    caption: [Recolor sibling],
+    step: (
+      kind: "case-2",
+      sibling-path: event.sibling-path,
+      new-db-path: event.new-db-path,
+    ),
+    alt: "Case 2: sibling and both nephews were black. Painted the sibling "
+      + "red and propagated the missing black up to the parent.",
+  )
+} else if event.kind == "case-3" {
+  (
+    caption: [Recolor],
+    step: (
+      kind: "case-3",
+      sibling-path: event.sibling-path,
+      near-nephew-path: event.near-nephew-path,
+    ),
+    alt: "Case 3: swapped sibling and near-nephew colors after the "
+      + "rotation; Case 4 now applies.",
+  )
+} else {
+  (
+    caption: [Recolor],
+    step: (kind: "case-4", parent-path: event.parent-path),
+    alt: "Case 4: swapped parent and sibling colors and painted the far "
+      + "nephew black after the rotation. Fix-up complete.",
+  )
+}
+
+// The caption / step / alt text for one delete-trace event. `init-alt`
+// belongs to the caller (it names the tree being operated on) and `v` is
+// read only by the branches that narrate the search.
+#let _delete-meta(event, v, init-alt) = {
+  let caption = none
+  let step = (kind: event.kind)
+  let alt = ""
+
+  if event.kind == "init" {
+    alt = init-alt
+  } else if event.kind == "compare" {
+    let n = resolve(event.tree, event.path)
+    let cmp-text = str(v) + " " + event.cmp + " " + str(n.value)
+    caption = cmp-text
+    step = (
+      kind: if event.found { "found" } else { "compare" },
+      path: event.path,
+      cmp: event.cmp,
+      found: event.found,
+    )
+    alt = if event.found {
+      "Match found at node " + alt-label(n) + "; ready to delete."
+    } else {
+      "Comparing " + cmp-text + " at node " + alt-label(n) + "; descending."
+    }
+  } else if event.kind == "descend" {
+    caption = [Search for #v]
+    step = (kind: "descend", visited: event.visited)
+    alt = "Walked the search path for " + str(v) + "; ready to delete."
+  } else if event.kind == "not-found" {
+    caption = [#v not in tree]
+    alt = str(v) + " is not in the tree; nothing to delete."
+  } else if event.kind == "mark-target" {
+    caption = [Delete #v]
+    step = (kind: "mark-target", path: event.target-path)
+    alt = ("Marked node "
+      + alt-label(resolve(event.tree, event.target-path))
+      + " for deletion.")
+  } else if event.kind == "find-predecessor" {
+    caption = [Find predecessor]
+    step = (
+      kind: "find-predecessor",
+      walk: event.walk,
+      predecessor-path: event.predecessor-path,
+      target-path: event.target-path,
+    )
+    alt = ("Node "
+      + alt-label(resolve(event.tree, event.target-path))
+      + " has two children; walking the left subtree to find the in-order "
+      + "predecessor: "
+      + alt-label(resolve(event.tree, event.predecessor-path))
+      + ".")
+  } else if event.kind == "transfer" {
+    caption = [Transfer #(event.new-value)]
+    step = (
+      kind: "transfer",
+      target-path: event.target-path,
+      predecessor-path: event.predecessor-path,
+    )
+    alt = ("Copied the predecessor's value "
+      + event.new-label
+      + " into the target slot; about to remove the predecessor node.")
+  } else if event.kind == "excise" {
+    caption = [Remove node]
+    step = (kind: "excise", path: event.path)
+    alt = "Removed the deletion-position node from the tree."
+  } else if event.kind == "paint-black-promoted" {
+    caption = [Paint child black]
+    step = (kind: "paint-black-promoted", path: event.path)
+    alt = ("Excised a black node; painted the promoted red child black to "
+      + "restore the black height.")
+  } else {
+    // The double-black fix-up kinds have their own decision tree.
+    let m = _delete-fixup-meta(event)
+    caption = m.caption
+    step = m.step
+    alt = m.alt
+  }
+
+  (caption: caption, step: step, alt: alt)
+}
+
+// The snapshot builder for one delete-trace event: the tree's own red/black
+// painting plus that event's highlight, with the double-black dot last.
+#let _delete-build(event, v, visited, db, bits) = th => {
+  let cur = _paint(event.tree, bits: bits)
+  if event.kind == "compare" {
+    for p in visited {
+      cur = with-node(cur, p, (stroke: th.op.search-stroke))
+    }
+    cur = note-node(
+      cur,
+      event.path,
+      str(v) + " " + event.cmp + " " + str(resolve(event.tree, event.path).value),
+    )
+  } else if event.kind == "descend" or event.kind == "not-found" {
+    for p in event.visited {
+      cur = with-node(cur, p, (stroke: th.op.search-stroke))
+    }
+  } else if event.kind == "mark-target" {
+    cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
+    cur = note-node(cur, event.target-path, [delete])
+  } else if event.kind == "find-predecessor" {
+    cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
+    for p in event.walk {
+      cur = with-node(cur, p, (stroke: th.op.search-stroke))
+    }
+    cur = note-node(cur, event.predecessor-path, [predecessor])
+  } else if event.kind == "transfer" {
+    cur = with-node(cur, event.target-path, (stroke: th.op.settled-stroke))
+    cur = note-node(cur, event.target-path, [← #(event.new-value)])
+    cur = with-node(
+      cur,
+      event.predecessor-path,
+      (stroke: th.op.attention-stroke),
+    )
+  } else if event.kind == "paint-black-promoted" or event.kind == "paint-black-db" {
+    cur = with-node(cur, event.path, (stroke: th.op.settled-stroke))
+  } else if event.kind == "case-1" {
+    cur = with-node(cur, event.parent-path, (stroke: th.op.success-stroke))
+    cur = with-node(
+      cur,
+      event.new-sibling-path,
+      (stroke: th.op.attention-stroke),
+    )
+  } else if event.kind == "case-2" {
+    cur = with-node(cur, event.sibling-path, (stroke: th.op.settled-stroke))
+  } else if event.kind == "case-3" {
+    cur = with-node(cur, event.sibling-path, (stroke: th.op.success-stroke))
+  } else if event.kind == "case-4" {
+    cur = with-node(cur, event.parent-path, (stroke: th.op.settled-stroke))
+  }
+  // "excise" gets no highlight — the structural change speaks for itself.
+  _db-mark(cur, db)
+}
+
 /// Animate deleting `v`, following the CLRS decision tree.
 ///
 /// The target is marked, a two-child target hands its slot to its in-order
@@ -1407,56 +1705,8 @@
   } else { str(v) }
   let init-alt = alt-intro(_DS, describe(tree), "delete " + del-label)
 
-  // The search trail, accumulated so each comparison frame shows the whole
-  // path walked so far rather than just the current node.
-  let visited-by-event = ()
-  let visited-acc = ()
-  for e in events {
-    if e.kind == "compare" { visited-acc = visited-acc + (e.path,) }
-    visited-by-event.push(visited-acc)
-  }
-
-  // Where the missing black sits at each event. The trace doesn't carry it
-  // — it is a property of the animation, not the algorithm — so walk the
-  // events once: it appears after a black excise that the loop will follow,
-  // persists across a check, moves with Cases 1 and 2, is untouched by Case
-  // 3, and is resolved by Case 4 or either paint-black.
-  let db-by-event = ()
-  let cur-db = none
-  for (idx, e) in events.enumerate() {
-    if e.kind == "excise" and not e.was-red {
-      let next-kind = if idx + 1 < events.len() {
-        events.at(idx + 1).kind
-      } else { none }
-      if next-kind != "paint-black-promoted" { cur-db = e.path }
-    } else if e.kind == "paint-black-promoted" {
-      cur-db = none
-    } else if e.kind == "case-1" {
-      // The parent moved under the former sibling, so the double-black is
-      // now the parent's near grandchild.
-      let suffix = e.new-sibling-path.slice(e.parent-path.len())
-      cur-db = e.parent-path + (if suffix == "LR" { "LL" } else { "RR" })
-    } else if e.kind == "case-2" {
-      // If the double-black propagated up to a red node, the next step is
-      // paint-black-db. Suppress the marker: "red and double-black" is not
-      // a stable node state, and drawing it reads wrong.
-      let new-db = e.new-db-path
-      let new-db-node = if new-db == "" { none } else { resolve(e.tree, new-db) }
-      cur-db = if _is-red(new-db-node) { none } else { new-db }
-    } else if e.kind == "case-4" or e.kind == "paint-black-db" {
-      cur-db = none
-    } else if e.kind == "check" {
-      cur-db = e.db-path
-    }
-    db-by-event.push(cur-db)
-  }
-
-  // The double-black dot, drawn on the edge into the node one black short.
-  // The root has no incoming edge, so a root double-black shows nothing —
-  // it is absorbed immediately anyway.
-  let db-mark(cur, db) = if db == none or db == "" { cur } else {
-    with-edge(cur, db, _db-edge-style)
-  }
+  let visited-by-event = _delete-visited-trail(events)
+  let db-by-event = _delete-db-trail(events)
 
   let specs = ()
   for (i, e) in events.enumerate() {
@@ -1466,230 +1716,21 @@
     // A check event's tree is identical to the previous frame's, and the
     // dot already drawn there says the same thing.
     if e.kind == "check" { continue }
-    let event = e
 
-    // Each rotate-and-recolor case gets a rotation-only frame first: the
-    // post-rotation structure repainted with the pre-rotation colours, so
-    // the pivot lands before the colours change. The case's own frame then
-    // follows, captioned as the recolor.
-    if event.kind in ("case-1", "case-3", "case-4") {
-      let intermediate-tree = _color-preserve(events.at(i - 1).tree, event.tree)
-      let prev-db = db-by-event.at(i - 1)
-      // Cases 1 and 4 demote the parent under the former sibling, pushing
-      // the double-black one level deeper; Case 3 only rearranges the
-      // sibling's subtree, so it stays put.
-      let int-db = if event.kind == "case-3" { prev-db } else {
-        event.parent-path + (if prev-db.last() == "L" { "LL" } else { "RR" })
-      }
-      // The pivot: the sibling moves up in Cases 1 and 4, the near nephew
-      // in Case 3.
-      let int-pivot = if event.kind == "case-3" {
-        event.sibling-path
-      } else { event.parent-path }
-      let (int-caption, int-step, int-alt) = if event.kind == "case-1" {
-        (
-          [Rotate parent],
-          (kind: "case-1-rotate", parent-path: event.parent-path),
-          "Case 1: rotated around the parent — sibling moves up, parent "
-            + "demoted. Colors swap next.",
-        )
-      } else if event.kind == "case-3" {
-        (
-          [Rotate sibling],
-          (kind: "case-3-rotate", sibling-path: event.sibling-path),
-          "Case 3: rotated around the sibling — near nephew moves up, "
-            + "sibling demoted. Colors swap next.",
-        )
-      } else {
-        (
-          [Rotate parent],
-          (kind: "case-4-rotate", parent-path: event.parent-path),
-          "Case 4: rotated around the parent — sibling moves up, parent "
-            + "demoted. Colors swap and the far nephew is painted black next.",
-        )
-      }
-      specs.push((
-        structure: intermediate-tree,
-        build: th => db-mark(
-          with-node(
-            _paint(intermediate-tree, bits: bits),
-            int-pivot,
-            (stroke: th.op.success-stroke),
-          ),
-          int-db,
-        ),
-        caption: int-caption,
-        step: int-step,
-        alt: int-alt,
+    if e.kind in ("case-1", "case-3", "case-4") {
+      specs.push(_delete-rotate-spec(
+        e,
+        events.at(i - 1).tree,
+        db-by-event.at(i - 1),
+        bits,
       ))
     }
 
-    let visited-snapshot = visited-by-event.at(i)
-    let caption = none
-    let step = (kind: event.kind)
-    let alt = ""
-
-    if event.kind == "init" {
-      alt = init-alt
-    } else if event.kind == "compare" {
-      let n = resolve(event.tree, event.path)
-      let cmp-text = str(v) + " " + event.cmp + " " + str(n.value)
-      caption = cmp-text
-      step = (
-        kind: if event.found { "found" } else { "compare" },
-        path: event.path,
-        cmp: event.cmp,
-        found: event.found,
-      )
-      alt = if event.found {
-        "Match found at node " + alt-label(n) + "; ready to delete."
-      } else {
-        "Comparing " + cmp-text + " at node " + alt-label(n) + "; descending."
-      }
-    } else if event.kind == "descend" {
-      caption = [Search for #v]
-      step = (kind: "descend", visited: event.visited)
-      alt = "Walked the search path for " + str(v) + "; ready to delete."
-    } else if event.kind == "not-found" {
-      caption = [#v not in tree]
-      alt = str(v) + " is not in the tree; nothing to delete."
-    } else if event.kind == "mark-target" {
-      caption = [Delete #v]
-      step = (kind: "mark-target", path: event.target-path)
-      alt = ("Marked node "
-        + alt-label(resolve(event.tree, event.target-path))
-        + " for deletion.")
-    } else if event.kind == "find-predecessor" {
-      caption = [Find predecessor]
-      step = (
-        kind: "find-predecessor",
-        walk: event.walk,
-        predecessor-path: event.predecessor-path,
-        target-path: event.target-path,
-      )
-      alt = ("Node "
-        + alt-label(resolve(event.tree, event.target-path))
-        + " has two children; walking the left subtree to find the in-order "
-        + "predecessor: "
-        + alt-label(resolve(event.tree, event.predecessor-path))
-        + ".")
-    } else if event.kind == "transfer" {
-      caption = [Transfer #(event.new-value)]
-      step = (
-        kind: "transfer",
-        target-path: event.target-path,
-        predecessor-path: event.predecessor-path,
-      )
-      alt = ("Copied the predecessor's value "
-        + event.new-label
-        + " into the target slot; about to remove the predecessor node.")
-    } else if event.kind == "excise" {
-      caption = [Remove node]
-      step = (kind: "excise", path: event.path)
-      alt = "Removed the deletion-position node from the tree."
-    } else if event.kind == "paint-black-promoted" {
-      caption = [Paint child black]
-      step = (kind: "paint-black-promoted", path: event.path)
-      alt = ("Excised a black node; painted the promoted red child black to "
-        + "restore the black height.")
-    } else if event.kind == "paint-black-db" {
-      caption = [Paint red node black]
-      step = (kind: "paint-black-db", path: event.path)
-      alt = ("The extra black met a red node; painting it black absorbs the "
-        + "extra black and resolves the fix-up.")
-    } else if event.kind == "case-1" {
-      caption = [Recolor]
-      step = (
-        kind: "case-1",
-        parent-path: event.parent-path,
-        new-sibling-path: event.new-sibling-path,
-      )
-      alt = ("Case 1: swapped parent and sibling colors after the rotation. "
-        + "The new sibling is black; continuing with Cases 2 to 4.")
-    } else if event.kind == "case-2" {
-      caption = [Recolor sibling]
-      step = (
-        kind: "case-2",
-        sibling-path: event.sibling-path,
-        new-db-path: event.new-db-path,
-      )
-      alt = ("Case 2: sibling and both nephews were black. Painted the sibling "
-        + "red and propagated the missing black up to the parent.")
-    } else if event.kind == "case-3" {
-      caption = [Recolor]
-      step = (
-        kind: "case-3",
-        sibling-path: event.sibling-path,
-        near-nephew-path: event.near-nephew-path,
-      )
-      alt = ("Case 3: swapped sibling and near-nephew colors after the "
-        + "rotation; Case 4 now applies.")
-    } else if event.kind == "case-4" {
-      caption = [Recolor]
-      step = (kind: "case-4", parent-path: event.parent-path)
-      alt = ("Case 4: swapped parent and sibling colors and painted the far "
-        + "nephew black after the rotation. Fix-up complete.")
-    }
-
-    let db-cur = db-by-event.at(i)
-    let build = th => {
-      let cur = _paint(event.tree, bits: bits)
-      if event.kind == "compare" {
-        for p in visited-snapshot {
-          cur = with-node(cur, p, (stroke: th.op.search-stroke))
-        }
-        cur = note-node(
-          cur,
-          event.path,
-          str(v) + " " + event.cmp + " " + str(resolve(event.tree, event.path).value),
-        )
-      } else if event.kind == "descend" or event.kind == "not-found" {
-        for p in event.visited {
-          cur = with-node(cur, p, (stroke: th.op.search-stroke))
-        }
-      } else if event.kind == "mark-target" {
-        cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
-        cur = note-node(cur, event.target-path, [delete])
-      } else if event.kind == "find-predecessor" {
-        cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
-        for p in event.walk {
-          cur = with-node(cur, p, (stroke: th.op.search-stroke))
-        }
-        cur = note-node(cur, event.predecessor-path, [predecessor])
-      } else if event.kind == "transfer" {
-        cur = with-node(cur, event.target-path, (stroke: th.op.settled-stroke))
-        cur = note-node(cur, event.target-path, [← #(event.new-value)])
-        cur = with-node(
-          cur,
-          event.predecessor-path,
-          (stroke: th.op.attention-stroke),
-        )
-      } else if event.kind == "paint-black-promoted" or event.kind == "paint-black-db" {
-        cur = with-node(cur, event.path, (stroke: th.op.settled-stroke))
-      } else if event.kind == "case-1" {
-        cur = with-node(cur, event.parent-path, (stroke: th.op.success-stroke))
-        cur = with-node(
-          cur,
-          event.new-sibling-path,
-          (stroke: th.op.attention-stroke),
-        )
-      } else if event.kind == "case-2" {
-        cur = with-node(cur, event.sibling-path, (stroke: th.op.settled-stroke))
-      } else if event.kind == "case-3" {
-        cur = with-node(cur, event.sibling-path, (stroke: th.op.success-stroke))
-      } else if event.kind == "case-4" {
-        cur = with-node(cur, event.parent-path, (stroke: th.op.settled-stroke))
-      }
-      // "excise" gets no highlight — the structural change speaks for itself.
-      db-mark(cur, db-cur)
-    }
-
+    let meta = _delete-meta(e, v, init-alt)
     specs.push((
-      structure: event.tree,
-      build: build,
-      caption: caption,
-      step: step,
-      alt: alt,
+      structure: e.tree,
+      build: _delete-build(e, v, visited-by-event.at(i), db-by-event.at(i), bits),
+      ..meta,
     ))
   }
 

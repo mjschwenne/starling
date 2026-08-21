@@ -500,6 +500,84 @@
   edge-style,
 )
 
+// The descent for `word`, one step per character. Each step records the
+// prefix it left, the character it followed, and whether an edge for that
+// character existed; the walk stops at the first missing edge.
+#let _search-steps(trie, word) = {
+  let steps = ()
+  let cur = trie
+  let prefix = ""
+  let dead = false
+  for ch in word.codepoints() {
+    if dead { break }
+    let idx = _child-index(cur, ch)
+    if idx == -1 {
+      steps.push((from: prefix, char: ch, to: prefix + ch, matched: false))
+      dead = true
+    } else {
+      steps.push((from: prefix, char: ch, to: prefix + ch, matched: true))
+      prefix = prefix + ch
+      cur = cur.children.at(idx)
+    }
+  }
+  (steps: steps, dead: dead, terminal: (not dead) and cur.terminal)
+}
+
+// One shared closure builds every snapshot, each frame indexing into the
+// result; Typst memoizes the call, so the accumulation runs once.
+#let _search-build(trie, word, walk) = th => {
+  let cur = _paint(trie)
+  let out = (cur,)
+  for st in walk.steps {
+    if st.matched {
+      cur = with-edge(cur, st.to, (stroke: th.op.search-stroke))
+      cur = with-node(cur, st.to, (stroke: th.op.search-stroke))
+    } else {
+      cur = with-node(
+        cur,
+        st.from,
+        (stroke: th.op.danger-stroke, note: "no '" + st.char + "'"),
+      )
+    }
+    out.push(cur)
+  }
+  if not walk.dead {
+    cur = if walk.terminal {
+      with-node(
+        cur,
+        word,
+        (stroke: th.op.settled-stroke, fill: th.op.success-fill),
+      )
+    } else {
+      with-node(cur, word, (stroke: th.op.attention-stroke, note: "prefix"))
+    }
+    out.push(cur)
+  }
+  out
+}
+
+// The frame a completed descent ends on: a stored word, or a prefix that
+// merely leads somewhere — the distinction a trie exists to make.
+#let _search-terminal-spec(trie, build, at, word, terminal) = if terminal {
+  (
+    structure: trie,
+    build: th => build(th).at(at),
+    caption: _cap("found " + _q(word)),
+    step: (kind: "found", prefix: word),
+    alt: "Reached " + _q(word) + ", a stored word.",
+  )
+} else {
+  (
+    structure: trie,
+    build: th => build(th).at(at),
+    caption: _cap(_q(word) + " is a prefix only"),
+    step: (kind: "prefix", prefix: word),
+    alt: "Reached "
+      + _q(word)
+      + ", but it is only a prefix — not a stored word.",
+  )
+}
+
 /// Animate searching for `word`: one frame per query character, each
 /// lighting the edge it matched and the node it reached.
 ///
@@ -525,56 +603,8 @@
   /// -> dictionary
   theme: (:),
 ) = {
-  let steps = ()
-  let cur = trie
-  let prefix = ""
-  let dead = false
-  for ch in word.codepoints() {
-    if dead { break }
-    let idx = _child-index(cur, ch)
-    if idx == -1 {
-      steps.push((from: prefix, char: ch, to: prefix + ch, matched: false))
-      dead = true
-    } else {
-      steps.push((from: prefix, char: ch, to: prefix + ch, matched: true))
-      prefix = prefix + ch
-      cur = cur.children.at(idx)
-    }
-  }
-  let found-terminal = (not dead) and cur.terminal
-
-  // One shared closure builds every snapshot, each frame indexing into the
-  // result; Typst memoizes the call, so the accumulation runs once.
-  let build-all = th => {
-    let cur = _paint(trie)
-    let out = (cur,)
-    for st in steps {
-      if st.matched {
-        cur = with-edge(cur, st.to, (stroke: th.op.search-stroke))
-        cur = with-node(cur, st.to, (stroke: th.op.search-stroke))
-      } else {
-        cur = with-node(
-          cur,
-          st.from,
-          (stroke: th.op.danger-stroke, note: "no '" + st.char + "'"),
-        )
-      }
-      out.push(cur)
-    }
-    if not dead {
-      cur = if found-terminal {
-        with-node(
-          cur,
-          word,
-          (stroke: th.op.settled-stroke, fill: th.op.success-fill),
-        )
-      } else {
-        with-node(cur, word, (stroke: th.op.attention-stroke, note: "prefix"))
-      }
-      out.push(cur)
-    }
-    out
-  }
+  let walk = _search-steps(trie, word)
+  let build-all = _search-build(trie, word, walk)
 
   let specs = (
     (
@@ -585,55 +615,40 @@
       alt: alt-intro(_DS, describe(trie), "search for " + _q(word)),
     ),
   )
-  for (i, st) in steps.enumerate() {
+  for (i, st) in walk.steps.enumerate() {
     let at = i + 1
-    if st.matched {
-      specs.push((
-        structure: trie,
-        build: th => build-all(th).at(at),
-        caption: raw(st.to),
-        step: (kind: "match", prefix: st.to, char: st.char),
-        alt: "Matched '" + st.char + "'; prefix so far " + _q(st.to) + ".",
-      ))
-    } else {
-      specs.push((
-        structure: trie,
-        build: th => build-all(th).at(at),
-        caption: _cap("no '" + st.char + "' edge"),
-        step: (kind: "not-found", prefix: st.from, char: st.char),
-        alt: "No edge labelled '"
-          + st.char
-          + "' from "
-          + _q(st.from)
-          + "; "
-          + _q(word)
-          + " is not in the trie.",
-      ))
-    }
-  }
-  if not dead {
-    let at = steps.len() + 1
-    specs.push(
-      if found-terminal {
+    specs.push((
+      structure: trie,
+      build: th => build-all(th).at(at),
+      ..if st.matched {
         (
-          structure: trie,
-          build: th => build-all(th).at(at),
-          caption: _cap("found " + _q(word)),
-          step: (kind: "found", prefix: word),
-          alt: "Reached " + _q(word) + ", a stored word.",
+          caption: raw(st.to),
+          step: (kind: "match", prefix: st.to, char: st.char),
+          alt: "Matched '" + st.char + "'; prefix so far " + _q(st.to) + ".",
         )
       } else {
         (
-          structure: trie,
-          build: th => build-all(th).at(at),
-          caption: _cap(_q(word) + " is a prefix only"),
-          step: (kind: "prefix", prefix: word),
-          alt: "Reached "
+          caption: _cap("no '" + st.char + "' edge"),
+          step: (kind: "not-found", prefix: st.from, char: st.char),
+          alt: "No edge labelled '"
+            + st.char
+            + "' from "
+            + _q(st.from)
+            + "; "
             + _q(word)
-            + ", but it is only a prefix — not a stored word.",
+            + " is not in the trie.",
         )
       },
-    )
+    ))
+  }
+  if not walk.dead {
+    specs.push(_search-terminal-spec(
+      trie,
+      build-all,
+      walk.steps.len() + 1,
+      word,
+      walk.terminal,
+    ))
   }
   // A search leaves the trie alone, so the result is the input.
   _frames(_stamp-result(specs, trie), theme, node-style, edge-style)

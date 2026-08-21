@@ -709,6 +709,97 @@
 // variant. For labelled elements it shows the *first-seen* label per key, so
 // with duplicate keys but distinct labels the copies share one label. The
 // prefix engine and radix carry per-element labels faithfully.
+
+// The count phase: one frame per input element, reading it and bumping its
+// bucket. Returns the frames and the finished histogram.
+#let _reconstruct-count-specs(elems, k, table) = {
+  let specs = ()
+  let counts = range(k).map(_ => 0)
+  for i in range(elems.len()) {
+    let e = elems.at(i)
+    let v = e.key
+    counts.at(v) = counts.at(v) + 1
+    let ii = i
+    let vv = v
+    let ds = _disp(e)
+    specs.push((
+      table: table(
+        counts,
+        ((id: "read", from: (row: "in", col: ii), to: (row: "count", col: vv)),),
+      ),
+      build: th => {
+        let s = blank-snapshot()
+        s = with-node(s, cell-key("in", ii), (stroke: th.op.search-stroke))
+        s = with-node(s, cell-key("count", vv), (stroke: th.op.attention-stroke))
+        with-edge(s, "read", (stroke: th.op.search-stroke))
+      },
+      caption: _cap("count[" + str(vv) + "] += 1"),
+      step: (kind: "count", index: ii, bucket: vv),
+      alt: "Read input["
+        + str(ii)
+        + "] = "
+        + ds
+        + "; increment count["
+        + str(vv)
+        + "].",
+    ))
+  }
+  (specs: specs, counts: counts)
+}
+
+// The emit phase: sweep the buckets, writing each value `count[v]` times.
+// Rebuilding from the histogram alone is what makes this variant unstable —
+// element identity is gone, so `bucket-elem` can only offer the first-seen
+// label for a key.
+#let _reconstruct-emit-specs(k, counts, empty-out, bucket-elem, table) = {
+  let specs = ()
+  let output = empty-out
+  let pos = 0
+  for v in range(k) {
+    let c = counts.at(v)
+    for _rep in range(c) {
+      let el = bucket-elem(v)
+      output.at(pos) = el
+      let vv = v
+      let pp = pos
+      let cc = c
+      let dv = _disp-val(el)
+      let ds = _disp(el)
+      specs.push((
+        table: table(
+          output,
+          ((id: "emit", from: (row: "count", col: vv), to: (row: "out", col: pp)),),
+        ),
+        build: th => {
+          let s = blank-snapshot()
+          s = with-node(s, cell-key("count", vv), (stroke: th.op.attention-stroke))
+          s = with-node(
+            s,
+            cell-key("out", pp),
+            (fill: th.op.success-fill, stroke: th.op.settled-stroke),
+          )
+          with-edge(s, "emit", (stroke: th.op.success-stroke))
+        },
+        caption: [emit #dv #sym.arrow #("output[" + str(pp) + "]")],
+        step: (kind: "emit", value: vv, pos: pp),
+        alt: "Emit value "
+          + ds
+          + " into output["
+          + str(pp)
+          + "] (count["
+          + str(vv)
+          + "] = "
+          + str(cc)
+          + ").",
+      ))
+      pos = pos + 1
+    }
+  }
+  (specs: specs, output: output)
+}
+
+// The whole run: the input row over the histogram over the output row, with
+// the count phase and the emit phase between them.
 #let _counting-reconstruct-specs(elems, k) = {
   let n = elems.len()
   let empty-out = range(n).map(_ => none)
@@ -740,38 +831,13 @@
       + "].",
   ),)
 
-  // --- count phase ---
-  let counts = range(k).map(_ => 0)
-  for i in range(n) {
-    let e = elems.at(i)
-    let v = e.key
-    counts.at(v) = counts.at(v) + 1
-    let ii = i
-    let vv = v
-    let ds = _disp(e)
-    specs.push((
-      table: mk-table(
-        counts,
-        empty-out,
-        ((id: "read", from: (row: "in", col: ii), to: (row: "count", col: vv)),),
-      ),
-      build: th => {
-        let s = blank-snapshot()
-        s = with-node(s, cell-key("in", ii), (stroke: th.op.search-stroke))
-        s = with-node(s, cell-key("count", vv), (stroke: th.op.attention-stroke))
-        with-edge(s, "read", (stroke: th.op.search-stroke))
-      },
-      caption: _cap("count[" + str(vv) + "] += 1"),
-      step: (kind: "count", index: ii, bucket: vv),
-      alt: "Read input["
-        + str(ii)
-        + "] = "
-        + ds
-        + "; increment count["
-        + str(vv)
-        + "].",
-    ))
-  }
+  let counting = _reconstruct-count-specs(
+    elems,
+    k,
+    (cs, arrows) => mk-table(cs, empty-out, arrows),
+  )
+  specs += counting.specs
+  let counts = counting.counts
   specs.push((
     table: mk-table(counts, empty-out, ()),
     build: _ => blank-snapshot(),
@@ -780,59 +846,24 @@
     alt: "Histogram complete: count = [" + counts.map(str).join(", ") + "].",
   ))
 
-  // --- emit phase: sweep the buckets, writing each value count[v] times ---
-  let output = empty-out
-  let pos = 0
-  for v in range(k) {
-    let c = counts.at(v)
-    for _rep in range(c) {
-      let el = bucket-elem(v)
-      output.at(pos) = el
-      let vv = v
-      let pp = pos
-      let cc = c
-      let dv = _disp-val(el)
-      let ds = _disp(el)
-      specs.push((
-        table: mk-table(
-          counts,
-          output,
-          ((id: "emit", from: (row: "count", col: vv), to: (row: "out", col: pp)),),
-        ),
-        build: th => {
-          let s = blank-snapshot()
-          s = with-node(s, cell-key("count", vv), (stroke: th.op.attention-stroke))
-          s = with-node(
-            s,
-            cell-key("out", pp),
-            (fill: th.op.success-fill, stroke: th.op.settled-stroke),
-          )
-          with-edge(s, "emit", (stroke: th.op.success-stroke))
-        },
-        caption: [emit #dv #sym.arrow #("output[" + str(pp) + "]")],
-        step: (kind: "emit", value: vv, pos: pp),
-        alt: "Emit value "
-          + ds
-          + " into output["
-          + str(pp)
-          + "] (count["
-          + str(vv)
-          + "] = "
-          + str(cc)
-          + ").",
-      ))
-      pos = pos + 1
-    }
-  }
+  let emitting = _reconstruct-emit-specs(
+    k,
+    counts,
+    empty-out,
+    bucket-elem,
+    (out, arrows) => mk-table(counts, out, arrows),
+  )
+  specs += emitting.specs
 
   specs.push((
-    table: mk-table(counts, output, ()),
+    table: mk-table(counts, emitting.output, ()),
     build: _all-settled(n),
     caption: _cap("sorted"),
     step: (kind: "settled"),
-    alt: _sorted-alt(output),
+    alt: _sorted-alt(emitting.output),
   ))
-  (specs: specs, output: output)
+  (specs: specs, output: emitting.output)
+}
 }
 
 // ===================================================================
@@ -847,62 +878,42 @@
 // stable sort, since tail-append plus head-first read preserves input order
 // within a bucket. Rides the array backend's "buckets" row kind, where the
 // chains hang down from the header cells.
-#let _counting-buckets-specs(elems, k) = {
-  let n = elems.len()
-  // Histogram only to size the reserved chain depth (the deepest bucket), so
-  // every frame reserves the same vertical band and the canvas stays fixed.
-  let loads = range(k).map(_ => 0)
-  for e in elems { loads.at(e.key) = loads.at(e.key) + 1 }
-  let max-depth = if k == 0 { 0 } else { calc.max(0, ..loads) }
 
-  let empty-out = range(n).map(_ => none)
-  // `buckets` is an array of k chains, each a list of elements: k header cells
-  // labelled by index, with the chains hanging down.
-  let bucket-row(buckets) = (
-    id: "buckets",
-    label: [buckets],
-    kind: "buckets",
-    cells: range(k).map(i => (value: [#i], sub: none)),
-    chains: buckets.map(chain => chain.map(e => (
-      value: _cell-value(_disp-val(e)),
-      sub: none,
-    ))),
-    chain-depth: max-depth,
-    indices: none,
-  )
-  let mk-table(buckets, output, arrows) = (
-    rows: (
-      _row("in", [input], elems.map(_disp-val)),
-      bucket-row(buckets),
-      _row("out", [output], _out-vals(output)),
-    ),
-    arrows: arrows,
-  )
+// `buckets` is an array of k chains, each a list of elements: k header cells
+// labelled by index, with the chains hanging down. `max-depth` reserves the
+// deepest chain's band up front, so every frame reserves the same vertical
+// space and the canvas stays fixed as the chains grow.
+#let _bucket-row(k, buckets, max-depth) = (
+  id: "buckets",
+  label: [buckets],
+  kind: "buckets",
+  cells: range(k).map(i => (value: [#i], sub: none)),
+  chains: buckets.map(chain => chain.map(e => (
+    value: _cell-value(_disp-val(e)),
+    sub: none,
+  ))),
+  chain-depth: max-depth,
+  indices: none,
+)
 
-  let buckets = range(k).map(_ => ())
-  let specs = ((
-    table: mk-table(buckets, empty-out, ()),
-    build: _ => blank-snapshot(),
-    caption: none,
-    step: (kind: "init"),
-    alt: "Counting sort (buckets). Input: [" + elems.map(_disp).join(", ") + "].",
-  ),)
-
-  // --- distribute phase: copy each element into its bucket's chain ---
-  for i in range(n) {
+// Distribute: copy each input element into the tail of bucket `key`'s chain,
+// one frame per element. Returns the frames and the filled buckets.
+#let _bucket-distribute-specs(elems, buckets, table) = {
+  let specs = ()
+  let cur = buckets
+  for i in range(elems.len()) {
     let e = elems.at(i)
     let b = e.key
-    let j = buckets.at(b).len()
-    buckets.at(b).push(e)
+    let j = cur.at(b).len()
+    cur.at(b).push(e)
     let ii = i
     let bb = b
     let jj = j
     let dv = _disp-val(e)
     let ds = _disp(e)
     specs.push((
-      table: mk-table(
-        buckets,
-        empty-out,
+      table: table(
+        cur,
         (
           (
             id: "copy",
@@ -934,15 +945,13 @@
         + ").",
     ))
   }
-  specs.push((
-    table: mk-table(buckets, empty-out, ()),
-    build: _ => blank-snapshot(),
-    caption: _cap("all elements distributed"),
-    step: (kind: "distribute-done"),
-    alt: "Every element copied into its bucket; now read the buckets in order.",
-  ))
+  (specs: specs, buckets: cur)
+}
 
-  // --- gather phase: read the buckets in order, each chain head to tail ---
+// Gather: read the buckets left to right, each chain head to tail, into the
+// output. Tail-append plus head-first read is what makes this stable.
+#let _bucket-gather-specs(k, buckets, empty-out, table) = {
+  let specs = ()
   let output = empty-out
   let pos = 0
   for b in range(k) {
@@ -954,8 +963,7 @@
       let pp = pos
       let ds = _disp(e)
       specs.push((
-        table: mk-table(
-          buckets,
+        table: table(
           output,
           (
             (
@@ -990,15 +998,68 @@
       pos = pos + 1
     }
   }
+  (specs: specs, output: output)
+}
+
+// The whole run: the input row, the bucket table, and the output row, with
+// the two phases between them.
+#let _counting-buckets-specs(elems, k) = {
+  let n = elems.len()
+  // Histogram only to size the reserved chain depth (the deepest bucket), so
+  // every frame reserves the same vertical band and the canvas stays fixed.
+  let loads = range(k).map(_ => 0)
+  for e in elems { loads.at(e.key) = loads.at(e.key) + 1 }
+  let max-depth = if k == 0 { 0 } else { calc.max(0, ..loads) }
+
+  let empty-out = range(n).map(_ => none)
+  let mk-table(buckets, output, arrows) = (
+    rows: (
+      _row("in", [input], elems.map(_disp-val)),
+      _bucket-row(k, buckets, max-depth),
+      _row("out", [output], _out-vals(output)),
+    ),
+    arrows: arrows,
+  )
+
+  let empty-buckets = range(k).map(_ => ())
+  let specs = ((
+    table: mk-table(empty-buckets, empty-out, ()),
+    build: _ => blank-snapshot(),
+    caption: none,
+    step: (kind: "init"),
+    alt: "Counting sort (buckets). Input: [" + elems.map(_disp).join(", ") + "].",
+  ),)
+
+  let dist = _bucket-distribute-specs(
+    elems,
+    empty-buckets,
+    (bs, arrows) => mk-table(bs, empty-out, arrows),
+  )
+  specs += dist.specs
+  specs.push((
+    table: mk-table(dist.buckets, empty-out, ()),
+    build: _ => blank-snapshot(),
+    caption: _cap("all elements distributed"),
+    step: (kind: "distribute-done"),
+    alt: "Every element copied into its bucket; now read the buckets in order.",
+  ))
+
+  let gath = _bucket-gather-specs(
+    k,
+    dist.buckets,
+    empty-out,
+    (out, arrows) => mk-table(dist.buckets, out, arrows),
+  )
+  specs += gath.specs
 
   specs.push((
-    table: mk-table(buckets, output, ()),
+    table: mk-table(dist.buckets, gath.output, ()),
     build: _all-settled(n),
     caption: _cap("sorted"),
     step: (kind: "settled"),
-    alt: _sorted-alt(output),
+    alt: _sorted-alt(gath.output),
   ))
-  (specs: specs, output: output)
+  (specs: specs, output: gath.output)
 }
 
 // ===================================================================

@@ -899,25 +899,57 @@
 // Events to frames
 // ===================================================================
 
-// One spec per trace event. Insert, delete and fix-up all draw from the
-// same vocabulary — the climb is literally the same events — so one
-// translation serves all three. The two `descend` flavours are told apart
-// by `insert-path`, which only an insert's descent carries.
-//
-// `visited` is the accumulated search trail, so a `compare` frame shows the
-// whole walk rather than just the current node. `prev-tree` is the previous
-// event's tree: a `recompute` frame reads balance factors from *it*, so a
-// node's factor doesn't update before the climb reaches it. Height tags
-// always come from the current tree, so the label moves with the caption.
-#let _event-spec(
-  event,
-  v,
-  factors,
-  heights,
-  init-alt,
-  visited: (),
-  prev-tree: none,
-) = {
+// The caption / step / alt for the climb kinds — everything that happens on
+// the way back up, after the tree has changed shape. Split from
+// `_event-meta` because it is its own vocabulary: heights are recomputed at
+// each ancestor, and where one is out of balance, the case name says which
+// pair of rotations restores it.
+#let _climb-meta(event, node-at) = if event.kind == "recompute" {
+  (
+    caption: [Recompute height],
+    step: (kind: "recompute", path: event.path, height: event.height),
+    alt: "Recomputed height at node "
+      + node-at(event.path)
+      + ": new height is "
+      + str(event.height)
+      + ".",
+  )
+} else if event.kind == "check" {
+  (
+    caption: [Imbalance: case #(event.case)],
+    step: (kind: "check", path: event.path, case: event.case, bf: event.bf),
+    alt: "Balance factor at node "
+      + node-at(event.path)
+      + " is "
+      + str(event.bf)
+      + "; case "
+      + event.case
+      + " applies.",
+  )
+} else if event.kind == "rotate-zigzag" {
+  (
+    caption: [Rotate child],
+    step: (kind: "rotate-zigzag", path: event.path, case: event.case),
+    alt: "Case "
+      + event.case
+      + " (zigzag): rotated the imbalanced node's child to straighten the "
+      + "configuration.",
+  )
+} else {
+  (
+    caption: [Rotate (case #(event.case))],
+    step: (kind: "rotate-finish", path: event.path, case: event.case),
+    alt: "Case "
+      + event.case
+      + ": rotated the imbalanced node; the AVL invariant is restored in "
+      + "this subtree.",
+  )
+}
+
+// The caption / step / alt for one trace event. `init-alt` belongs to the
+// caller (it names the tree being operated on); `v` is read by the branches
+// that narrate the search.
+#let _event-meta(event, v, init-alt) = {
   let caption = none
   let step = (kind: event.kind)
   let alt = ""
@@ -997,100 +1029,94 @@
     caption = [Remove node]
     step = (kind: "excise", path: event.path)
     alt = "Removed the deletion-position node from the tree."
-  } else if event.kind == "recompute" {
-    caption = [Recompute height]
-    step = (kind: "recompute", path: event.path, height: event.height)
-    alt = ("Recomputed height at node "
-      + node-at(event.path)
-      + ": new height is "
-      + str(event.height)
-      + ".")
-  } else if event.kind == "check" {
-    caption = [Imbalance: case #(event.case)]
-    step = (kind: "check", path: event.path, case: event.case, bf: event.bf)
-    alt = ("Balance factor at node "
-      + node-at(event.path)
-      + " is "
-      + str(event.bf)
-      + "; case "
-      + event.case
-      + " applies.")
-  } else if event.kind == "rotate-zigzag" {
-    caption = [Rotate child]
-    step = (kind: "rotate-zigzag", path: event.path, case: event.case)
-    alt = ("Case "
-      + event.case
-      + " (zigzag): rotated the imbalanced node's child to straighten the "
-      + "configuration.")
-  } else if event.kind == "rotate-finish" {
-    caption = [Rotate (case #(event.case))]
-    step = (kind: "rotate-finish", path: event.path, case: event.case)
-    alt = ("Case "
-      + event.case
-      + ": rotated the imbalanced node; the AVL invariant is restored in "
-      + "this subtree.")
+  } else {
+    let m = _climb-meta(event, node-at)
+    caption = m.caption
+    step = m.step
+    alt = m.alt
   }
 
+  (caption: caption, step: step, alt: alt)
+}
+
+// The snapshot builder for one trace event: the structural painting (balance
+// factors, height tags) plus that event's highlight.
+#let _event-build(event, v, factors, heights, visited, bf-tree) = th => {
+  let cur = _base(event.tree, factors, heights, bf-tree: bf-tree)
+  if event.kind == "compare" {
+    for p in visited { cur = with-node(cur, p, (stroke: th.op.search-stroke)) }
+    cur = note-node(
+      cur,
+      event.path,
+      str(v) + " " + event.cmp + " " + str(resolve(event.tree, event.path).value),
+    )
+  } else if event.kind == "descend" or event.kind == "not-found" {
+    for p in event.visited {
+      cur = with-node(cur, p, (stroke: th.op.search-stroke))
+    }
+  } else if event.kind == "insert" {
+    cur = with-node(
+      cur,
+      event.path,
+      (stroke: th.op.settled-stroke, fill: th.op.success-fill),
+    )
+    cur = with-edge(cur, event.path, (stroke: th.op.success-stroke))
+  } else if event.kind == "mark-target" {
+    cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
+    cur = note-node(cur, event.target-path, [delete])
+  } else if event.kind == "find-predecessor" {
+    cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
+    for p in event.walk { cur = with-node(cur, p, (stroke: th.op.search-stroke)) }
+    cur = note-node(cur, event.predecessor-path, [pred])
+  } else if event.kind == "transfer" {
+    cur = with-node(cur, event.target-path, (stroke: th.op.settled-stroke))
+    cur = note-node(cur, event.target-path, [← #(event.new-value)])
+    cur = with-node(
+      cur,
+      event.predecessor-path,
+      (stroke: th.op.attention-stroke),
+    )
+  } else if event.kind == "recompute" {
+    cur = with-node(cur, event.path, (stroke: th.op.search-stroke))
+  } else if event.kind == "check" {
+    cur = with-node(cur, event.path, (stroke: th.op.attention-stroke))
+    cur = note-node(cur, event.path, event.case)
+  } else if event.kind == "rotate-zigzag" {
+    cur = with-node(cur, event.path, (stroke: th.op.attention-stroke))
+  } else if event.kind == "rotate-finish" {
+    cur = with-node(cur, event.path, (stroke: th.op.settled-stroke))
+    cur = with-edge(cur, event.path, (stroke: th.op.success-stroke))
+  }
+  // "excise" gets no highlight — the structural change speaks for itself.
+  cur
+}
+
+// One spec per trace event. Insert, delete and fix-up all draw from the
+// same vocabulary — the climb is literally the same events — so one
+// translation serves all three. The two `descend` flavours are told apart
+// by `insert-path`, which only an insert's descent carries.
+//
+// `visited` is the accumulated search trail, so a `compare` frame shows the
+// whole walk rather than just the current node. `prev-tree` is the previous
+// event's tree: a `recompute` frame reads balance factors from *it*, so a
+// node's factor doesn't update before the climb reaches it. Height tags
+// always come from the current tree, so the label moves with the caption.
+#let _event-spec(
+  event,
+  v,
+  factors,
+  heights,
+  init-alt,
+  visited: (),
+  prev-tree: none,
+) = {
   let bf-tree = if event.kind == "recompute" and prev-tree != none {
     prev-tree
   } else { auto }
-
-  let build = th => {
-    let cur = _base(event.tree, factors, heights, bf-tree: bf-tree)
-    if event.kind == "compare" {
-      for p in visited { cur = with-node(cur, p, (stroke: th.op.search-stroke)) }
-      cur = note-node(
-        cur,
-        event.path,
-        str(v) + " " + event.cmp + " " + str(resolve(event.tree, event.path).value),
-      )
-    } else if event.kind == "descend" or event.kind == "not-found" {
-      for p in event.visited {
-        cur = with-node(cur, p, (stroke: th.op.search-stroke))
-      }
-    } else if event.kind == "insert" {
-      cur = with-node(
-        cur,
-        event.path,
-        (stroke: th.op.settled-stroke, fill: th.op.success-fill),
-      )
-      cur = with-edge(cur, event.path, (stroke: th.op.success-stroke))
-    } else if event.kind == "mark-target" {
-      cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
-      cur = note-node(cur, event.target-path, [delete])
-    } else if event.kind == "find-predecessor" {
-      cur = with-node(cur, event.target-path, (stroke: th.op.attention-stroke))
-      for p in event.walk { cur = with-node(cur, p, (stroke: th.op.search-stroke)) }
-      cur = note-node(cur, event.predecessor-path, [pred])
-    } else if event.kind == "transfer" {
-      cur = with-node(cur, event.target-path, (stroke: th.op.settled-stroke))
-      cur = note-node(cur, event.target-path, [← #(event.new-value)])
-      cur = with-node(
-        cur,
-        event.predecessor-path,
-        (stroke: th.op.attention-stroke),
-      )
-    } else if event.kind == "recompute" {
-      cur = with-node(cur, event.path, (stroke: th.op.search-stroke))
-    } else if event.kind == "check" {
-      cur = with-node(cur, event.path, (stroke: th.op.attention-stroke))
-      cur = note-node(cur, event.path, event.case)
-    } else if event.kind == "rotate-zigzag" {
-      cur = with-node(cur, event.path, (stroke: th.op.attention-stroke))
-    } else if event.kind == "rotate-finish" {
-      cur = with-node(cur, event.path, (stroke: th.op.settled-stroke))
-      cur = with-edge(cur, event.path, (stroke: th.op.success-stroke))
-    }
-    // "excise" gets no highlight — the structural change speaks for itself.
-    cur
-  }
-
   (
     structure: event.tree,
-    build: build,
-    caption: caption,
-    step: step,
-    alt: alt,
+    build: _event-build(event, v, factors, heights, visited, bf-tree),
+    .._event-meta(event, v, init-alt),
   )
 }
 
@@ -1311,162 +1337,21 @@
   /// -> dictionary
   theme: (:),
 ) = {
-  let child-path = by-value(tree, child.value)
-  if child-path == "" {
-    panic(
-      "avl.rotate-display: cannot rotate around root node "
-        + str(child.value)
-        + "; the child must have a parent.",
-    )
-  }
-  let parent-path = child-path.slice(0, child-path.len() - 1)
-  let parent-subtree = resolve(tree, parent-path)
-  let is-right = child-path.last() == "L"
   let after = rotate(tree, child)
-
-  // For a non-root rotation the grandparent-to-subtree edge (whose path is
-  // `parent-path` itself) must break and reconnect too — otherwise the new
-  // subtree root visibly snaps onto the grandparent without animating.
-  let has-grandparent = parent-path != ""
-
-  // BEFORE paths: the middle child of `child`, which moves to the parent.
-  let middle-path = parent-path + (if is-right { "LR" } else { "RL" })
-  let has-middle = resolve(tree, middle-path) != none
-  let broken-paths = (
-    (if has-grandparent { (parent-path,) } else { () })
-      + (child-path,)
-      + (if has-middle { (middle-path,) } else { () })
-  )
-
-  // AFTER paths.
-  let new-parent-path = parent-path + (if is-right { "R" } else { "L" })
-  let new-middle-path = parent-path + (if is-right { "RL" } else { "LR" })
-  let has-new-middle = resolve(after, new-middle-path) != none
-  let new-edge-paths = (
-    (if has-grandparent { (parent-path,) } else { () })
-      + (new-parent-path,)
-      + (if has-new-middle { (new-middle-path,) } else { () })
-  )
-
-  let direction = if is-right { "right" } else { "left" }
-  let parent-value = alt-label(parent-subtree)
-  let child-value = alt-label(child)
-
-  // Phase A — on the tree as it stands.
-  let build-a = th => {
-    let cur = _base(tree, factors, heights)
-    let out = (cur,)
-    cur = with-node(cur, parent-path, (stroke: th.op.attention-stroke))
-    cur = with-node(cur, child-path, (stroke: th.op.attention-stroke))
-    out.push(cur)
-    cur = with-edge(cur, child-path, (hide: true))
-    if has-middle { cur = with-edge(cur, middle-path, (hide: true)) }
-    if has-grandparent { cur = with-edge(cur, parent-path, (hide: true)) }
-    out.push(cur)
-    out
-  }
-
-  // Phase B — on the rotated tree. Its first frame is already styled (the
-  // pivots stay lit and the moved edges stay hidden), so the restructure
-  // reads as one continuous motion.
-  let build-b = th => {
-    let cur = _base(after, factors, heights)
-    cur = with-node(cur, parent-path, (stroke: th.op.attention-stroke))
-    cur = with-node(cur, new-parent-path, (stroke: th.op.attention-stroke))
-    cur = with-edge(cur, new-parent-path, (hide: true))
-    if has-new-middle { cur = with-edge(cur, new-middle-path, (hide: true)) }
-    if has-grandparent { cur = with-edge(cur, parent-path, (hide: true)) }
-    let out = (cur,)
-    cur = with-edge(
-      cur,
-      new-parent-path,
-      (stroke: th.op.success-stroke, hide: false),
-    )
-    if has-new-middle {
-      cur = with-edge(
-        cur,
-        new-middle-path,
-        (stroke: th.op.success-stroke, hide: false),
-      )
-    }
-    if has-grandparent {
-      cur = with-edge(cur, parent-path, (stroke: th.op.success-stroke, hide: false))
-    }
-    out.push(cur)
-    // Reset to the theme's reset stroke, which should read as unstyled.
-    cur = with-node(cur, parent-path, (stroke: th.op.reset-stroke))
-    cur = with-node(cur, new-parent-path, (stroke: th.op.reset-stroke))
-    cur = with-edge(cur, new-parent-path, (stroke: th.op.reset-stroke))
-    if has-new-middle {
-      cur = with-edge(cur, new-middle-path, (stroke: th.op.reset-stroke))
-    }
-    if has-grandparent {
-      cur = with-edge(cur, parent-path, (stroke: th.op.reset-stroke))
-    }
-    out.push(cur)
-    out
-  }
-
-  _frames(
-    (
-      (
-        structure: tree,
-        build: th => build-a(th).at(0),
-        caption: none,
-        step: (kind: "init"),
-        alt: alt-intro(
-          _DS,
-          describe(tree),
-          direction + "-rotate around node " + child-value,
-        ),
-      ),
-      (
-        structure: tree,
-        build: th => build-a(th).at(1),
-        caption: [Rotate around #child.value],
-        step: (kind: "pivots", paths: (parent-path, child-path)),
-        alt: ("Rotation pivots identified: parent "
-          + parent-value
-          + " and child "
-          + child-value
-          + "."),
-      ),
-      (
-        structure: tree,
-        build: th => build-a(th).at(2),
-        caption: [Break edges],
-        step: (kind: "break", paths: broken-paths),
-        alt: "Breaking the edges that will rotate.",
-      ),
-      (
-        structure: after,
-        build: th => build-b(th).at(0),
-        caption: [Restructure tree],
-        step: (kind: "restructure"),
-        alt: ("Tree restructured: "
-          + child-value
-          + " is now the parent of "
-          + parent-value
-          + "; the rotated edges are still hidden."),
-      ),
-      (
-        structure: after,
-        build: th => build-b(th).at(1),
-        caption: [Reconnect edges],
-        step: (kind: "connect", paths: new-edge-paths),
-        alt: "Reconnecting rotated edges.",
-      ),
-      (
-        structure: after,
-        build: th => build-b(th).at(2),
-        caption: none,
-        step: (kind: "settled", result: after),
-        alt: "Rotation complete.",
-      ),
-    ),
-    theme,
-    node-style,
-    edge-style,
+  tc.render-rotate(
+    tree,
+    after,
+    child,
+    _DS,
+    describe(tree),
+    who: "avl.rotate-display",
+    // Phase B draws the rotated tree, so its tags must come from `after` —
+    // a rotation changes the heights on both sides of the pivot.
+    base: _ => _base(tree, factors, heights),
+    after-base: _ => _base(after, factors, heights),
+    node-style: node-style,
+    edge-style: edge-style,
+    theme: theme,
   )
 }
 

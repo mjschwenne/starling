@@ -13,8 +13,9 @@
 //
 // B24 and the trie are n-ary and keep their own path utilities.
 
+#import "../core/draw-util.typ": text-fill-for
 #import "../core/frame.typ": make-frames
-#import "../core/snapshot.typ": blank-snapshot, note-node, with-node
+#import "../core/snapshot.typ": blank-snapshot, note-node, with-edge, with-node
 #import "../core/text.typ": alt-intro, alt-label
 #import "../draw/tree.typ": draw-tree
 
@@ -278,13 +279,6 @@
 // Traversal animation
 // ===================================================================
 
-// A readable text fill for a given background, from its oklab lightness —
-// so a value stays legible against any point of the traversal gradient.
-#let _text-fill-for(bg) = {
-  let l = bg.oklab().components().first()
-  if l < 60% { white } else { black }
-}
-
 /// Animate a traversal: one frame per visit, the visited node filled from the
 /// theme's `traversal-palette` and badged with its 1-indexed position, the
 /// running output accumulating in the caption. The final frame wears the whole
@@ -334,7 +328,7 @@
       cur = with-node(
         cur,
         p,
-        (fill: fill, text-fill: _text-fill-for(fill), note: str(i + 1)),
+        (fill: fill, text-fill: text-fill-for(fill), note: str(i + 1)),
       )
       out.push(cur)
     }
@@ -466,6 +460,220 @@
 
   make-frames(
     specs,
+    draw-tree,
+    theme: theme,
+    node-style: node-style,
+    edge-style: edge-style,
+  )
+}
+
+// ===================================================================
+// Rotation animation
+// ===================================================================
+
+// The paths a rotation touches, on the tree before and the tree after.
+// `child-path`'s last character says which way the subtree leans: an `L`
+// child becomes the new root by rotating right.
+#let _rotate-paths(tree, after, child-path) = {
+  let parent = child-path.slice(0, child-path.len() - 1)
+  let is-right = child-path.last() == "L"
+
+  // For a non-root rotation the grandparent-to-subtree edge (whose path is
+  // `parent` itself) must break and reconnect too — otherwise the new
+  // subtree root visibly snaps onto the grandparent without animating.
+  let has-grandparent = parent != ""
+
+  // BEFORE: the middle child of `child`, which moves to the parent.
+  let middle = parent + (if is-right { "LR" } else { "RL" })
+  let has-middle = resolve(tree, middle) != none
+
+  // AFTER.
+  let new-parent = parent + (if is-right { "R" } else { "L" })
+  let new-middle = parent + (if is-right { "RL" } else { "LR" })
+  let has-new-middle = resolve(after, new-middle) != none
+
+  let grandparent = if has-grandparent { (parent,) } else { () }
+  (
+    parent: parent,
+    child: child-path,
+    is-right: is-right,
+    has-grandparent: has-grandparent,
+    middle: middle,
+    has-middle: has-middle,
+    new-parent: new-parent,
+    new-middle: new-middle,
+    has-new-middle: has-new-middle,
+    broken: (
+      grandparent + (child-path,) + (if has-middle { (middle,) } else { () })
+    ),
+    reconnected: (
+      grandparent
+        + (new-parent,)
+        + (if has-new-middle { (new-middle,) } else { () })
+    ),
+  )
+}
+
+// Phase A — on the tree as it stands: the pivots light up, then the edges
+// that will move go dark.
+#let _rotate-build-before(p, base) = th => {
+  let cur = if base == none { blank-snapshot() } else { base(th) }
+  let out = (cur,)
+  cur = with-node(cur, p.parent, (stroke: th.op.attention-stroke))
+  cur = with-node(cur, p.child, (stroke: th.op.attention-stroke))
+  out.push(cur)
+  cur = with-edge(cur, p.child, (hide: true))
+  if p.has-middle { cur = with-edge(cur, p.middle, (hide: true)) }
+  if p.has-grandparent { cur = with-edge(cur, p.parent, (hide: true)) }
+  out.push(cur)
+  out
+}
+
+// Phase B — on the rotated tree. Its first snapshot is already styled (the
+// pivots stay lit and the moved edges stay hidden), so the restructure reads
+// as one continuous motion; then the edges reconnect and the highlights
+// clear.
+#let _rotate-build-after(p, base) = th => {
+  let cur = if base == none { blank-snapshot() } else { base(th) }
+  cur = with-node(cur, p.parent, (stroke: th.op.attention-stroke))
+  cur = with-node(cur, p.new-parent, (stroke: th.op.attention-stroke))
+  cur = with-edge(cur, p.new-parent, (hide: true))
+  if p.has-new-middle { cur = with-edge(cur, p.new-middle, (hide: true)) }
+  if p.has-grandparent { cur = with-edge(cur, p.parent, (hide: true)) }
+  let out = (cur,)
+
+  let connect = (s, path) => with-edge(
+    s,
+    path,
+    (stroke: th.op.success-stroke, hide: false),
+  )
+  cur = connect(cur, p.new-parent)
+  if p.has-new-middle { cur = connect(cur, p.new-middle) }
+  if p.has-grandparent { cur = connect(cur, p.parent) }
+  out.push(cur)
+
+  // Reset to the theme's reset stroke, which should read as unstyled.
+  cur = with-node(cur, p.parent, (stroke: th.op.reset-stroke))
+  cur = with-node(cur, p.new-parent, (stroke: th.op.reset-stroke))
+  cur = with-edge(cur, p.new-parent, (stroke: th.op.reset-stroke))
+  if p.has-new-middle {
+    cur = with-edge(cur, p.new-middle, (stroke: th.op.reset-stroke))
+  }
+  if p.has-grandparent {
+    cur = with-edge(cur, p.parent, (stroke: th.op.reset-stroke))
+  }
+  out.push(cur)
+  out
+}
+
+/// Animate a rotation around `child` — anywhere in the tree, not only at the
+/// root. `child` is the node that should become the new subtree root; its
+/// parent and the direction are inferred from the search path. `after` is the
+/// rotated tree, which the caller produces with its own `rotate` (AVL's
+/// recomputes heights, BST's does not).
+///
+/// Six frames: the pivots are marked, the edges that will move are broken,
+/// the tree restructures with those edges still hidden, they reconnect, and
+/// the highlights clear. `step.kind` runs `"init"`, `"pivots"`, `"break"`,
+/// `"restructure"`, `"connect"`, `"settled"`; the last carries `step.result`.
+///
+/// `base` is the DS's structural painting — `(theme) => snapshot` — laid down
+/// beneath the rotation highlights, the same hook `render-search` takes.
+/// `after-base` is the same for the rotated tree, which a DS whose painting
+/// depends on the shape needs (AVL's heights move with the pivot); `auto`
+/// reuses `base`.
+///
+/// -> array
+#let render-rotate(
+  tree,
+  after,
+  child,
+  ds-name,
+  describe-text,
+  who: "rotate-display",
+  base: none,
+  after-base: auto,
+  node-style: (:),
+  edge-style: (:),
+  theme: (:),
+) = {
+  let child-path = by-value(tree, child.value)
+  if child-path == "" {
+    panic(
+      who
+        + ": cannot rotate around root node "
+        + str(child.value)
+        + "; the child must have a parent.",
+    )
+  }
+  let p = _rotate-paths(tree, after, child-path)
+  let before = _rotate-build-before(p, base)
+  let rotated = _rotate-build-after(
+    p,
+    if after-base == auto { base } else { after-base },
+  )
+
+  let direction = if p.is-right { "right" } else { "left" }
+  let parent-value = alt-label(resolve(tree, p.parent))
+  let child-value = alt-label(child)
+
+  make-frames(
+    (
+      (
+        structure: tree,
+        build: th => before(th).at(0),
+        caption: none,
+        step: (kind: "init"),
+        alt: alt-intro(
+          ds-name,
+          describe-text,
+          direction + "-rotate around node " + child-value,
+        ),
+      ),
+      (
+        structure: tree,
+        build: th => before(th).at(1),
+        caption: [Rotate around #child.value],
+        step: (kind: "pivots", paths: (p.parent, p.child)),
+        alt: ("Rotation pivots identified: parent "
+          + parent-value
+          + " and child "
+          + child-value
+          + "."),
+      ),
+      (
+        structure: tree,
+        build: th => before(th).at(2),
+        caption: [Break edges],
+        step: (kind: "break", paths: p.broken),
+        alt: "Breaking the edges that will rotate.",
+      ),
+      (
+        structure: after,
+        build: th => rotated(th).at(0),
+        caption: [Restructure tree],
+        step: (kind: "restructure"),
+        alt: ("Tree restructured: "
+          + child-value
+          + " is now the parent of "
+          + parent-value
+          + "; the rotated edges are still hidden."),
+      ),
+      (
+        structure: after,
+        build: th => rotated(th).at(1),
+        caption: [Reconnect edges],
+        step: (kind: "connect", paths: p.reconnected),
+        alt: "Reconnecting rotated edges.",
+      ),
+      (
+        structure: after,
+        build: th => rotated(th).at(2),
+        caption: none,
+        step: (kind: "settled", result: after),
+        alt: "Rotation complete.",
+      ),
+    ),
     draw-tree,
     theme: theme,
     node-style: node-style,

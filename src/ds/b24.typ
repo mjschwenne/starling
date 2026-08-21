@@ -61,7 +61,7 @@
 // The final frame of every display carries `step.result` — the tree the
 // operation produced (the unchanged input, for a search or traversal).
 
-#import "../core/draw-util.typ": anchor
+#import "../core/draw-util.typ": anchor, text-fill-for
 #import "../core/frame.typ": make-frames, make-renderer
 #import "../core/snapshot.typ": blank-snapshot, with-edge, with-node
 #import "../core/text.typ": alt-describe, alt-intro, alt-key-label
@@ -1044,13 +1044,6 @@
 // Rendering
 // ===================================================================
 
-// A readable text fill for a given background, from its oklab lightness —
-// so a compartment label stays legible against any traversal colour.
-#let _text-fill-for(bg) = {
-  let l = bg.oklab().components().first()
-  if l < 60% { white } else { black }
-}
-
 // A `key-styles` array of length `n` where only compartment `idx` carries
 // the override. Compartment styling merges index-wise, so this is how one
 // key of a node is highlighted without disturbing its neighbours.
@@ -1105,9 +1098,9 @@
 // Each strategy emits an array of `event` records. An event carries
 // the tree state at that moment plus the styling-relevant payload for
 // the frame (`kind`, paths, key indices, accumulated comparison
-// history, etc.). The `_insert-events-to-specs` helper renders each
-// event into a `(tree, build, caption, step, alt)` spec consumable by
-// `_make-frames-multi`.
+// history, etc.). The `_insert-specs` helper renders each event into
+// a `(structure, build, caption, step, alt)` spec consumable by
+// `_frames`.
 //
 // Event kinds (shared vocabulary):
 //   "init"                      — initial tree, no highlights.
@@ -2047,10 +2040,10 @@
   (structure: ev.tree, build: build, caption: caption, step: step, alt: alt)
 })
 
-// One spec per delete event. `disp` names the deleted key the way it is
-// drawn, resolved once up front because a predecessor swap relocates the
-// key mid-descent.
-#let _delete-specs(events, v, disp) = events.map(ev => {
+// The caption / step / alt for one delete event. `disp` names the deleted
+// key the way it is drawn, resolved once up front because a predecessor
+// swap relocates the key mid-descent.
+#let _delete-meta(ev, v, disp) = {
   let caption = none
   let alt = ""
   let step = (kind: ev.kind)
@@ -2108,80 +2101,90 @@
       + "child becomes the new root.")
   }
 
-  let build = th => {
-    let cur = blank-snapshot()
-    if ev.kind == "compare" {
-      cur = _replay-history(cur, ev.tree, ev.history, th)
-    } else if ev.kind == "td-pre-fix-attention" {
-      cur = _replay-history(cur, ev.tree, ev.history, th)
-      cur = with-node(cur, ev.target-path, (stroke: th.op.attention-stroke))
-    } else if ev.kind == "td-borrow-left" or ev.kind == "td-borrow-right" {
-      // The parent's affected key, plus the two edges the keys moved across.
-      let parent = _resolve-at(ev.tree, ev.parent-path)
-      cur = with-node(
-        cur,
-        ev.parent-path,
-        (
-          key-styles: _solo-key-style(
-            parent.keys.len(),
-            ev.parent-key-idx,
-            (stroke: th.op.success-stroke),
-          ),
-        ),
-      )
-      cur = with-edge(cur, ev.target-path, (stroke: th.op.success-stroke))
-      cur = with-edge(cur, ev.sibling-path, (stroke: th.op.success-stroke))
-    } else if ev.kind == "td-merge" {
-      // A root-prep merge has no child edge to highlight — outline the new
-      // merged root instead.
-      if ev.merge-child-idx == none {
-        cur = with-node(cur, ev.merge-path, (stroke: th.op.success-stroke))
-      } else {
-        cur = with-edge(
-          cur,
-          ev.merge-path + str(ev.merge-child-idx),
-          (stroke: th.op.success-stroke),
-        )
-      }
-    } else if ev.kind == "td-target" {
-      cur = _replay-history(cur, ev.tree, ev.history, th)
-      let n = _resolve-at(ev.tree, ev.target-path)
-      cur = with-node(
-        cur,
-        ev.target-path,
-        (
-          key-styles: _solo-key-style(
-            n.keys.len(),
-            ev.target-key-idx,
-            (stroke: th.op.attention-stroke),
-          ),
-        ),
-      )
-    } else if ev.kind == "td-pred-swap" or ev.kind == "td-succ-swap" {
-      let n = _resolve-at(ev.tree, ev.path)
-      cur = with-node(
-        cur,
-        ev.path,
-        (
-          key-styles: _solo-key-style(
-            n.keys.len(),
-            ev.key-idx,
-            (fill: th.op.success-fill, stroke: th.op.success-stroke),
-          ),
-        ),
-      )
-    } else if ev.kind == "td-remove" {
-      // The compartment is gone, so there is nothing to highlight inside the
-      // node; outline the whole node to signal completion.
-      cur = with-node(cur, ev.leaf-path, (stroke: th.op.settled-stroke))
-    } else if ev.kind == "td-root-collapse" {
-      cur = with-node(cur, "", (stroke: th.op.settled-stroke))
-    }
-    cur
-  }
+  (caption: caption, step: step, alt: alt)
+}
 
-  (structure: ev.tree, build: build, caption: caption, step: step, alt: alt)
-})
+// The snapshot builder for one delete event. The descent frames replay
+// their comparison history so the trail stays visible; the structural
+// frames highlight the compartments and edges the fix moved.
+#let _delete-build(ev) = th => {
+  let cur = blank-snapshot()
+  if ev.kind == "compare" {
+    cur = _replay-history(cur, ev.tree, ev.history, th)
+  } else if ev.kind == "td-pre-fix-attention" {
+    cur = _replay-history(cur, ev.tree, ev.history, th)
+    cur = with-node(cur, ev.target-path, (stroke: th.op.attention-stroke))
+  } else if ev.kind == "td-borrow-left" or ev.kind == "td-borrow-right" {
+    // The parent's affected key, plus the two edges the keys moved across.
+    let parent = _resolve-at(ev.tree, ev.parent-path)
+    cur = with-node(
+      cur,
+      ev.parent-path,
+      (
+        key-styles: _solo-key-style(
+          parent.keys.len(),
+          ev.parent-key-idx,
+          (stroke: th.op.success-stroke),
+        ),
+      ),
+    )
+    cur = with-edge(cur, ev.target-path, (stroke: th.op.success-stroke))
+    cur = with-edge(cur, ev.sibling-path, (stroke: th.op.success-stroke))
+  } else if ev.kind == "td-merge" {
+    // A root-prep merge has no child edge to highlight — outline the new
+    // merged root instead.
+    if ev.merge-child-idx == none {
+      cur = with-node(cur, ev.merge-path, (stroke: th.op.success-stroke))
+    } else {
+      cur = with-edge(
+        cur,
+        ev.merge-path + str(ev.merge-child-idx),
+        (stroke: th.op.success-stroke),
+      )
+    }
+  } else if ev.kind == "td-target" {
+    cur = _replay-history(cur, ev.tree, ev.history, th)
+    let n = _resolve-at(ev.tree, ev.target-path)
+    cur = with-node(
+      cur,
+      ev.target-path,
+      (
+        key-styles: _solo-key-style(
+          n.keys.len(),
+          ev.target-key-idx,
+          (stroke: th.op.attention-stroke),
+        ),
+      ),
+    )
+  } else if ev.kind == "td-pred-swap" or ev.kind == "td-succ-swap" {
+    let n = _resolve-at(ev.tree, ev.path)
+    cur = with-node(
+      cur,
+      ev.path,
+      (
+        key-styles: _solo-key-style(
+          n.keys.len(),
+          ev.key-idx,
+          (fill: th.op.success-fill, stroke: th.op.success-stroke),
+        ),
+      ),
+    )
+  } else if ev.kind == "td-remove" {
+    // The compartment is gone, so there is nothing to highlight inside the
+    // node; outline the whole node to signal completion.
+    cur = with-node(cur, ev.leaf-path, (stroke: th.op.settled-stroke))
+  } else if ev.kind == "td-root-collapse" {
+    cur = with-node(cur, "", (stroke: th.op.settled-stroke))
+  }
+  cur
+}
+
+// One spec per delete event.
+#let _delete-specs(events, v, disp) = events.map(ev => (
+  structure: ev.tree,
+  build: _delete-build(ev),
+  .._delete-meta(ev, v, disp),
+))
 
 // Stamp `step.result` onto the last spec — the tree the operation produced.
 #let _stamp-result(specs, after) = {
@@ -2508,7 +2511,7 @@
           key-styles: _solo-key-style(
             node.keys.len(),
             key-idx,
-            (fill: fill, text-fill: _text-fill-for(fill)),
+            (fill: fill, text-fill: text-fill-for(fill)),
           ),
         ),
       )

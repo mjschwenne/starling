@@ -905,6 +905,67 @@
   specs
 }
 
+// The correct resize, one frame per live entry: replay it through the hash
+// under the *new* capacity and land it where that says. Returns the frames
+// and the map they built.
+#let _rehash-specs(acc, live, orientation) = {
+  let specs = ()
+  let cur = acc
+  for e in live {
+    let next = insert(cur, e.key, value: e.value, label: e.label)
+    let hb = _hash-box(next, e.key)
+    let sk = if cur.strategy == "chaining" {
+      let w = _chain-walk(next, e.key)
+      entry-key(w.bucket, w.depth)
+    } else { cell-key(_oa-walk(next, e.key).index) }
+    specs.push((
+      table: _table(next, orientation, hash-box: hb),
+      build: th => _styled(sk, fill: th.op.success-fill, stroke: th.op.settled-stroke),
+      caption: [rehash #e.label],
+      step: (kind: "rehash", key: e.key, index: hb.index),
+      alt: "Rehashed " + e.label + " under the new capacity.",
+    ))
+    cur = next
+  }
+  (specs: specs, acc: cur)
+}
+
+// The buggy copy: each live entry is placed at its OLD index in the larger
+// array. Nothing is hashed, so no hash box is shown.
+#let _copy-specs(hm, acc, orientation) = {
+  let specs = ()
+  let cur = acc
+  let copied = acc.slots
+  for (i, slot) in hm.slots.enumerate() {
+    let entries = if hm.strategy == "chaining" { slot } else if (
+      slot != none and not slot.at("tombstone", default: false)
+    ) { (slot,) } else { () }
+    for (j, entry) in entries.enumerate() {
+      copied.at(i) = if hm.strategy == "chaining" {
+        copied.at(i) + (entry,)
+      } else { entry }
+      let next = (..hm, capacity: acc.capacity, slots: copied)
+      let sk = if hm.strategy == "chaining" { entry-key(i, j) } else { cell-key(i) }
+      let where = if hm.strategy == "chaining" { "bucket" } else { "slot" }
+      specs.push((
+        table: _table(next, orientation),
+        build: th => _styled(sk, fill: th.op.success-fill, stroke: th.op.settled-stroke),
+        caption: [copy #entry.label → #where #i],
+        step: (kind: "copy", key: entry.key, index: i),
+        alt: "Copied "
+          + entry.label
+          + " into "
+          + where
+          + " "
+          + str(i)
+          + " (its old index) without rehashing.",
+      ))
+      cur = next
+    }
+  }
+  (specs: specs, acc: cur)
+}
+
 // Resize: allocate a `new-cap`-slot array and move every live entry into it,
 // one frame per entry landing in the growing array.
 //
@@ -945,10 +1006,9 @@
       ),
     ),
   )
-  let empty = _empty-slots(hm.strategy, new-cap)
-  let acc = (..hm, capacity: new-cap, slots: empty)
+  let empty = (..hm, capacity: new-cap, slots: _empty-slots(hm.strategy, new-cap))
   specs.push((
-    table: _table(acc, orientation),
+    table: _table(empty, orientation),
     build: _ => blank-snapshot(),
     caption: [new array (m = #new-cap)],
     step: (kind: "new-array", capacity: new-cap),
@@ -959,61 +1019,21 @@
       + " each entry into it.",
   ))
 
-  if rehash {
-    for e in live {
-      let next = insert(acc, e.key, value: e.value, label: e.label)
-      let hb = _hash-box(next, e.key)
-      let sk = if hm.strategy == "chaining" {
-        let w = _chain-walk(next, e.key)
-        entry-key(w.bucket, w.depth)
-      } else { cell-key(_oa-walk(next, e.key).index) }
-      specs.push((
-        table: _table(next, orientation, hash-box: hb),
-        build: th => _styled(sk, fill: th.op.success-fill, stroke: th.op.settled-stroke),
-        caption: [rehash #e.label],
-        step: (kind: "rehash", key: e.key, index: hb.index),
-        alt: "Rehashed " + e.label + " under the new capacity.",
-      ))
-      acc = next
-    }
-  } else {
-    // The buggy copy: each live entry is placed at its OLD index in the larger
-    // array. Nothing is hashed, so no hash box is shown.
-    let copied = empty
-    for (i, slot) in hm.slots.enumerate() {
-      let entries = if hm.strategy == "chaining" { slot } else if (
-        slot != none and not slot.at("tombstone", default: false)
-      ) { (slot,) } else { () }
-      for (j, entry) in entries.enumerate() {
-        copied.at(i) = if hm.strategy == "chaining" {
-          copied.at(i) + (entry,)
-        } else { entry }
-        let next = (..hm, capacity: new-cap, slots: copied)
-        let sk = if hm.strategy == "chaining" { entry-key(i, j) } else { cell-key(i) }
-        let where = if hm.strategy == "chaining" { "bucket" } else { "slot" }
-        specs.push((
-          table: _table(next, orientation),
-          build: th => _styled(sk, fill: th.op.success-fill, stroke: th.op.settled-stroke),
-          caption: [copy #entry.label → #where #i],
-          step: (kind: "copy", key: entry.key, index: i),
-          alt: "Copied "
-            + entry.label
-            + " into "
-            + where
-            + " "
-            + str(i)
-            + " (its old index) without rehashing.",
-        ))
-        acc = next
-      }
-    }
-  }
+  let moved = if rehash {
+    _rehash-specs(empty, live, orientation)
+  } else { _copy-specs(hm, empty, orientation) }
+  specs += moved.specs
 
   specs.push((
-    table: _table(acc, orientation),
+    table: _table(moved.acc, orientation),
     build: _ => blank-snapshot(),
     caption: if rehash { [rehashed] } else { [copied (not rehashed)] },
-    step: (kind: "settled", capacity: new-cap, rehashed: rehash, result: acc),
+    step: (
+      kind: "settled",
+      capacity: new-cap,
+      rehashed: rehash,
+      result: moved.acc,
+    ),
     alt: (if rehash {
       "Resize complete: "
     } else {
@@ -1022,10 +1042,11 @@
           + "index for the new capacity, so lookups will miss: "
       )
     })
-      + describe(acc)
+      + describe(moved.acc)
       + ".",
   ))
   specs
+}
 }
 
 // ===================================================================

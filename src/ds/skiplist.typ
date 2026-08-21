@@ -541,6 +541,43 @@
   ),
 )
 
+// The frame a search ends on: keep the trail lit, then ring the whole tower
+// on a hit or mark the successor — the node the walk fell short of — on a
+// miss. `trail` paints the accumulated walk; `boxes`/`edges` are its final
+// extent.
+#let _search-terminal-spec(table, nodes, key, w, trail, boxes, edges) = {
+  let cand-col = if w.cand == none { none } else { _col(w.cand) }
+  if w.found {
+    let h = nodes.at(w.cand).height
+    (
+      table: table,
+      build: th => {
+        let s = trail(th, boxes, edges)
+        let hit = (fill: th.op.success-fill, stroke: th.op.settled-stroke)
+        for L in range(h) { s = with-node(s, box-key(cand-col, L), hit) }
+        with-node(s, data-key(cand-col), hit)
+      },
+      caption: [found #key],
+      step: (kind: "found", key: key),
+      alt: "Found " + str(key) + ".",
+    )
+  } else {
+    (
+      table: table,
+      build: th => {
+        let s = trail(th, boxes, edges)
+        if cand-col != none {
+          s = with-node(s, data-key(cand-col), (stroke: th.op.danger-stroke))
+        }
+        s
+      },
+      caption: [#key not found],
+      step: (kind: "not-found", key: key),
+      alt: str(key) + " is not in the skip list.",
+    )
+  }
+}
+
 // Animate the top-left descent, leaving the WHOLE walk lit: every box the
 // search has stepped on and every pointer it has followed stays in the search
 // stroke — an accumulating trail — while the box currently under comparison
@@ -643,42 +680,58 @@
     }
   }
 
-  // Terminal frame: keep the trail lit, then ring the whole tower on a hit or
-  // mark the successor on a miss.
-  let final-boxes = trail-boxes
-  let final-edges = trail-edges
-  let cand-col = if w.cand == none { none } else { _col(w.cand) }
-  if w.found {
-    let h = nodes.at(w.cand).height
-    specs.push((
-      table: table,
-      build: th => {
-        let s = paint-trail(th, final-boxes, final-edges)
-        let hit = (fill: th.op.success-fill, stroke: th.op.settled-stroke)
-        for L in range(h) { s = with-node(s, box-key(cand-col, L), hit) }
-        with-node(s, data-key(cand-col), hit)
-      },
-      caption: [found #key],
-      step: (kind: "found", key: key),
-      alt: "Found " + str(key) + ".",
-    ))
-  } else {
-    specs.push((
-      table: table,
-      build: th => {
-        let s = paint-trail(th, final-boxes, final-edges)
-        if cand-col != none {
-          s = with-node(s, data-key(cand-col), (stroke: th.op.danger-stroke))
-        }
-        s
-      },
-      caption: [#key not found],
-      step: (kind: "not-found", key: key),
-      alt: str(key) + " is not in the skip list.",
-    ))
-  }
+  specs.push(_search-terminal-spec(
+    table,
+    nodes,
+    key,
+    w,
+    paint-trail,
+    trail-boxes,
+    trail-edges,
+  ))
   specs
 }
+
+// ===================================================================
+// Descent frames shared by insert and delete
+// ===================================================================
+//
+// Both mutations run the same top-left descent; only the surgery they
+// interleave with it differs. These two produce the pure-navigation frames,
+// which read identically in both — the caller supplies the table (the two
+// track different link states) and the alt text.
+
+// One step right on a lane: follow the current box's pointer and land on the
+// next one, which becomes the node under comparison.
+#let _advance-spec(table, next-key, key, L, from-col, to-col, alt) = (
+  table: table,
+  build: th => {
+    let s = blank-snapshot()
+    s = with-node(s, box-key(from-col, L), (stroke: th.op.search-stroke))
+    s = with-node(s, box-key(to-col, L), (stroke: th.op.attention-stroke))
+    with-edge(s, forward-key(from-col, L), (stroke: th.op.search-stroke))
+  },
+  caption: [#next-key < #key #sym.arrow right],
+  step: (kind: "advance", level: L),
+  alt: alt,
+)
+
+// One step down a lane where nothing happens: the box under the cursor and
+// the one below it light up.
+#let _descend-spec(table, lvl, at-col, alt) = (
+  table: table,
+  build: th => {
+    let s = blank-snapshot()
+    s = with-node(s, box-key(at-col, lvl), (stroke: th.op.search-stroke))
+    if lvl > 0 {
+      s = with-node(s, box-key(at-col, lvl - 1), (stroke: th.op.search-stroke))
+    }
+    s
+  },
+  caption: [level #lvl #sym.arrow drop],
+  step: (kind: "drop", level: lvl),
+  alt: alt,
+)
 
 // ===================================================================
 // Insert
@@ -691,6 +744,50 @@
 // first drops onto its top lane, where it materializes; each drop onto a
 // lower lane then splices it in there, raising its linked range from the top
 // by lowering `link-min` from `height` toward 0.
+
+// The new node appearing: its slot has been reserved (ghosted) since the
+// first frame, so this only turns the drawing on. Emitted on the descent's
+// first contact with a lane the tower occupies.
+#let _materialize-spec(table, key, height, new-col) = (
+  table: table,
+  build: th => {
+    let s = blank-snapshot()
+    for LL in range(height) {
+      s = with-node(s, box-key(new-col, LL), (stroke: th.op.attention-stroke))
+    }
+    s
+  },
+  caption: [new node #key, height #height],
+  step: (kind: "materialize", key: key, height: height),
+  alt: "Create the node "
+    + str(key)
+    + " with a tower of height "
+    + str(height)
+    + "; splice it in from the top lane down as the search descends.",
+)
+
+// The pointer surgery on one lane: `update[L]` now points at the new node,
+// and the new node at what `update[L]` pointed to.
+#let _splice-spec(table, key, lvl, new-col, upd-col) = (
+  table: table,
+  build: th => {
+    let s = blank-snapshot()
+    // The two rewired pointers: update[L] -> new, and new -> old next.
+    s = with-node(s, box-key(upd-col, lvl), (stroke: th.op.search-stroke))
+    s = with-edge(s, forward-key(upd-col, lvl), (stroke: th.op.success-stroke))
+    s = with-edge(s, forward-key(new-col, lvl), (stroke: th.op.success-stroke))
+    with-node(
+      s,
+      box-key(new-col, lvl),
+      (fill: th.op.success-fill, stroke: th.op.settled-stroke),
+    )
+  },
+  caption: [splice level #lvl],
+  step: (kind: "splice", level: lvl),
+  alt: "Splice the new node into the level-"
+    + str(lvl)
+    + " list as the search reaches it.",
+)
 
 #let _insert-specs(sl, key, label, height) = {
   let nodes = sl.nodes
@@ -747,23 +844,17 @@
   for mv in w.path {
     let L = mv.level
     if mv.kind == "advance" {
-      let from-col = _col(mv.from)
-      let to-col = _col(mv.to)
       // Below the new node's top lane it is already materialized.
-      let tbl = if materialized { _mk-table(live-cols(lmin)) } else {
-        _mk-table(ghost-cols)
-      }
-      specs.push((
-        table: tbl,
-        build: th => {
-          let s = blank-snapshot()
-          s = with-node(s, box-key(from-col, L), (stroke: th.op.search-stroke))
-          s = with-node(s, box-key(to-col, L), (stroke: th.op.attention-stroke))
-          with-edge(s, forward-key(from-col, L), (stroke: th.op.search-stroke))
+      specs.push(_advance-spec(
+        if materialized { _mk-table(live-cols(lmin)) } else {
+          _mk-table(ghost-cols)
         },
-        caption: [#dnodes.at(mv.to).key < #key #sym.arrow right],
-        step: (kind: "advance", level: L),
-        alt: "Advance right at level "
+        dnodes.at(mv.to).key,
+        key,
+        L,
+        _col(mv.from),
+        _col(mv.to),
+        "Advance right at level "
           + str(L)
           + " while the next key is below "
           + str(key)
@@ -777,62 +868,28 @@
         // occupies: materialize on first contact, then splice here.
         if not materialized {
           materialized = true
-          specs.push((
-            table: _mk-table(live-cols(height)),
-            build: th => {
-              let s = blank-snapshot()
-              for LL in range(height) {
-                s = with-node(s, box-key(new-col, LL), (stroke: th.op.attention-stroke))
-              }
-              s
-            },
-            caption: [new node #key, height #height],
-            step: (kind: "materialize", key: key, height: height),
-            alt: "Create the node "
-              + str(key)
-              + " with a tower of height "
-              + str(height)
-              + "; splice it in from the top lane down as the search descends.",
+          specs.push(_materialize-spec(
+            _mk-table(live-cols(height)),
+            key,
+            height,
+            new-col,
           ))
         }
         lmin = lvl // linked range now [lvl, height)
-        let cur-lmin = lmin
-        let upd-col = at-col
-        specs.push((
-          table: _mk-table(live-cols(cur-lmin)),
-          build: th => {
-            let s = blank-snapshot()
-            // The two rewired pointers: update[L] -> new, and new -> old next.
-            s = with-node(s, box-key(upd-col, lvl), (stroke: th.op.search-stroke))
-            s = with-edge(s, forward-key(upd-col, lvl), (stroke: th.op.success-stroke))
-            s = with-edge(s, forward-key(new-col, lvl), (stroke: th.op.success-stroke))
-            with-node(
-              s,
-              box-key(new-col, lvl),
-              (fill: th.op.success-fill, stroke: th.op.settled-stroke),
-            )
-          },
-          caption: [splice level #lvl],
-          step: (kind: "splice", level: lvl),
-          alt: "Splice the new node into the level-"
-            + str(lvl)
-            + " list as the search reaches it.",
+        specs.push(_splice-spec(
+          _mk-table(live-cols(lmin)),
+          key,
+          lvl,
+          new-col,
+          at-col,
         ))
       } else {
         // Above the new node's tower: just drop, still ghosted.
-        specs.push((
-          table: _mk-table(ghost-cols),
-          build: th => {
-            let s = blank-snapshot()
-            s = with-node(s, box-key(at-col, lvl), (stroke: th.op.search-stroke))
-            if lvl > 0 {
-              s = with-node(s, box-key(at-col, lvl - 1), (stroke: th.op.search-stroke))
-            }
-            s
-          },
-          caption: [level #lvl #sym.arrow drop],
-          step: (kind: "drop", level: lvl),
-          alt: "The new tower does not reach level " + str(lvl) + "; drop down.",
+        specs.push(_descend-spec(
+          _mk-table(ghost-cols),
+          lvl,
+          at-col,
+          "The new tower does not reach level " + str(lvl) + "; drop down.",
         ))
       }
     }
@@ -854,6 +911,48 @@
   specs
 }
 
+// A delete that misses is a single terminal frame ringing the successor —
+// the node the walk fell short of — if there is one.
+#let _delete-miss-spec(table, key, w) = {
+  let cand-col = if w.cand == none { none } else { _col(w.cand) }
+  (
+    table: table,
+    build: th => {
+      let s = blank-snapshot()
+      if cand-col != none {
+        s = with-node(s, data-key(cand-col), (stroke: th.op.danger-stroke))
+      }
+      s
+    },
+    caption: [#key not found],
+    step: (kind: "not-found", key: key),
+    alt: str(key) + " is not in the skip list; nothing to delete.",
+  )
+}
+
+// The pointer surgery on one lane: `update[L]` now points past the target,
+// whose box at this level is marked for removal.
+#let _unlink-spec(table, key, height, lvl, tgt-col, upd-col) = (
+  table: table,
+  build: th => {
+    let s = blank-snapshot()
+    // The bypass pointer update[L] -> (the node after the target)
+    // lights up; the target's box at this level is marked for removal.
+    s = with-node(s, box-key(upd-col, lvl), (stroke: th.op.search-stroke))
+    s = with-edge(s, forward-key(upd-col, lvl), (stroke: th.op.success-stroke))
+    with-node(s, box-key(tgt-col, lvl), (stroke: th.op.danger-stroke))
+  },
+  caption: if lvl == height - 1 [found #key #sym.arrow unlink level #lvl] else [unlink level #lvl],
+  step: (kind: "unlink", level: lvl),
+  alt: "Reached "
+    + str(key)
+    + " at level "
+    + str(lvl)
+    + "; bypass it (update["
+    + str(lvl)
+    + "] now points past it).",
+)
+
 // ===================================================================
 // Delete
 // ===================================================================
@@ -871,21 +970,12 @@
   let w = search-walk(nodes, links, key)
   let live-states = nodes.map(_ => "live")
 
-  // A miss is a single terminal frame ringing the successor, if there is one.
+  // A miss stops at one frame; there is nothing to unlink.
   if not w.found {
-    let cand-col = if w.cand == none { none } else { _col(w.cand) }
-    return ((
-      table: _mk-table(_mk-cols(nodes, live-states, links, sl.nil)),
-      build: th => {
-        let s = blank-snapshot()
-        if cand-col != none {
-          s = with-node(s, data-key(cand-col), (stroke: th.op.danger-stroke))
-        }
-        s
-      },
-      caption: [#key not found],
-      step: (kind: "not-found", key: key),
-      alt: str(key) + " is not in the skip list; nothing to delete.",
+    return (_delete-miss-spec(
+      _mk-table(_mk-cols(nodes, live-states, links, sl.nil)),
+      key,
+      w,
     ),)
   }
 
@@ -914,20 +1004,14 @@
   for mv in w.path {
     let L = mv.level
     if mv.kind == "advance" {
-      let from-col = _col(mv.from)
-      let to-col = _col(mv.to)
-      let cur-tlink = tlink
-      specs.push((
-        table: _mk-table(cols-with(cur-tlink)),
-        build: th => {
-          let s = blank-snapshot()
-          s = with-node(s, box-key(from-col, L), (stroke: th.op.search-stroke))
-          s = with-node(s, box-key(to-col, L), (stroke: th.op.attention-stroke))
-          with-edge(s, forward-key(from-col, L), (stroke: th.op.search-stroke))
-        },
-        caption: [#nodes.at(mv.to).key < #key #sym.arrow right],
-        step: (kind: "advance", level: L),
-        alt: "Advance right at level " + str(L) + ".",
+      specs.push(_advance-spec(
+        _mk-table(cols-with(tlink)),
+        nodes.at(mv.to).key,
+        key,
+        L,
+        _col(mv.from),
+        _col(mv.to),
+        "Advance right at level " + str(L) + ".",
       ))
     } else {
       let at-col = _col(mv.at)
@@ -936,44 +1020,21 @@
         // The descent has reached the target's predecessor on a lane it
         // occupies: bypass it here, top-down.
         tlink = lvl
-        let cur-tlink = tlink
-        let upd-col = at-col
-        specs.push((
-          table: _mk-table(cols-with(cur-tlink)),
-          build: th => {
-            let s = blank-snapshot()
-            // The bypass pointer update[L] -> (the node after the target)
-            // lights up; the target's box at this level is marked for removal.
-            s = with-node(s, box-key(upd-col, lvl), (stroke: th.op.search-stroke))
-            s = with-edge(s, forward-key(upd-col, lvl), (stroke: th.op.success-stroke))
-            with-node(s, box-key(tgt-col, lvl), (stroke: th.op.danger-stroke))
-          },
-          caption: if lvl == height - 1 [found #key #sym.arrow unlink level #lvl] else [unlink level #lvl],
-          step: (kind: "unlink", level: lvl),
-          alt: "Reached "
-            + str(key)
-            + " at level "
-            + str(lvl)
-            + "; bypass it (update["
-            + str(lvl)
-            + "] now points past it).",
+        specs.push(_unlink-spec(
+          _mk-table(cols-with(tlink)),
+          key,
+          height,
+          lvl,
+          tgt-col,
+          at-col,
         ))
       } else {
         // Above the target's tower: just drop.
-        let cur-tlink = tlink
-        specs.push((
-          table: _mk-table(cols-with(cur-tlink)),
-          build: th => {
-            let s = blank-snapshot()
-            s = with-node(s, box-key(at-col, lvl), (stroke: th.op.search-stroke))
-            if lvl > 0 {
-              s = with-node(s, box-key(at-col, lvl - 1), (stroke: th.op.search-stroke))
-            }
-            s
-          },
-          caption: [level #lvl #sym.arrow drop],
-          step: (kind: "drop", level: lvl),
-          alt: str(key) + " is not on level " + str(lvl) + "; drop down.",
+        specs.push(_descend-spec(
+          _mk-table(cols-with(tlink)),
+          lvl,
+          at-col,
+          str(key) + " is not on level " + str(lvl) + "; drop down.",
         ))
       }
     }

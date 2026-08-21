@@ -889,6 +889,87 @@
   )
 }
 
+// The caption / step / alt for one Kruskal moment. `name` labels a node the
+// way it is drawn and `aux-note` spells the current partition out for the
+// alt text, both closed over by the caller.
+#let _kruskal-meta(m, g, all-ids, name, aux-note) = if m.kind == "init" {
+  (
+    caption: [Sort edges by weight],
+    step: (kind: "init"),
+    alt: alt-intro(_DS, describe(g), "run Kruskal's algorithm")
+      + " Edges are considered in increasing weight order; each node "
+      + "starts in its own component."
+      + aux-note(m),
+  )
+} else if m.kind == "consider" {
+  let e = m.edge
+  (
+    caption: [Consider #(e.u)–#(e.v) (#(e.weight))],
+    step: (kind: "consider", edge: (e.u, e.v), weight: e.weight),
+    alt: "Considering edge "
+      + name(e.u)
+      + "–"
+      + name(e.v)
+      + " with weight "
+      + str(e.weight)
+      + "."
+      + aux-note(m),
+  )
+} else if m.kind == "add" {
+  let e = m.edge
+  (
+    caption: [Add #(e.u)–#(e.v); weight #(m.total)],
+    step: (kind: "add", edge: (e.u, e.v), total: m.total),
+    alt: name(e.u)
+      + " and "
+      + name(e.v)
+      + " are in different components; add the edge and merge them. "
+      + "Total weight "
+      + str(m.total)
+      + "."
+      + aux-note(m),
+  )
+} else if m.kind == "reject" {
+  let e = m.edge
+  (
+    caption: [Reject #(e.u)–#(e.v) (cycle)],
+    step: (kind: "reject", edge: (e.u, e.v)),
+    alt: name(e.u)
+      + " and "
+      + name(e.v)
+      + " are already connected; this edge would form a cycle, so skip "
+      + "it."
+      + aux-note(m),
+  )
+} else if m.kind == "settled" {
+  (
+    caption: [MST weight #(m.total)],
+    step: (kind: "settled", total: m.total),
+    alt: "Minimum spanning tree complete; total weight "
+      + str(m.total)
+      + "."
+      + aux-note(m),
+  )
+} else {
+  (
+    caption: [Spanning tree],
+    step: (
+      kind: "spanning-tree",
+      edges: m.tree-keys.len(),
+      nodes: all-ids.len(),
+      total: m.total,
+    ),
+    alt: "Removed the non-tree edges; the minimum spanning tree ("
+      + str(m.tree-keys.len())
+      + " edge(s) over "
+      + str(all-ids.len())
+      + " node(s), total weight "
+      + str(m.total)
+      + ") remains."
+      + aux-note(m),
+  )
+}
+
 // One spec per moment.
 #let _kruskal-specs(g, sorted-edges, sorted-keys, moments, build-all) = {
   let all-ids = g.nodes.keys()
@@ -904,83 +985,7 @@
     .enumerate()
     .map(((i, m)) => {
       let views = _kruskal-views(g, sorted-edges, sorted-keys, m)
-      let spec = if m.kind == "init" {
-        (
-          caption: [Sort edges by weight],
-          step: (kind: "init"),
-          alt: alt-intro(_DS, describe(g), "run Kruskal's algorithm")
-            + " Edges are considered in increasing weight order; each node "
-            + "starts in its own component."
-            + aux-note(m),
-        )
-      } else if m.kind == "consider" {
-        let e = m.edge
-        (
-          caption: [Consider #(e.u)–#(e.v) (#(e.weight))],
-          step: (kind: "consider", edge: (e.u, e.v), weight: e.weight),
-          alt: "Considering edge "
-            + name(e.u)
-            + "–"
-            + name(e.v)
-            + " with weight "
-            + str(e.weight)
-            + "."
-            + aux-note(m),
-        )
-      } else if m.kind == "add" {
-        let e = m.edge
-        (
-          caption: [Add #(e.u)–#(e.v); weight #(m.total)],
-          step: (kind: "add", edge: (e.u, e.v), total: m.total),
-          alt: name(e.u)
-            + " and "
-            + name(e.v)
-            + " are in different components; add the edge and merge them. "
-            + "Total weight "
-            + str(m.total)
-            + "."
-            + aux-note(m),
-        )
-      } else if m.kind == "reject" {
-        let e = m.edge
-        (
-          caption: [Reject #(e.u)–#(e.v) (cycle)],
-          step: (kind: "reject", edge: (e.u, e.v)),
-          alt: name(e.u)
-            + " and "
-            + name(e.v)
-            + " are already connected; this edge would form a cycle, so skip "
-            + "it."
-            + aux-note(m),
-        )
-      } else if m.kind == "settled" {
-        (
-          caption: [MST weight #(m.total)],
-          step: (kind: "settled", total: m.total),
-          alt: "Minimum spanning tree complete; total weight "
-            + str(m.total)
-            + "."
-            + aux-note(m),
-        )
-      } else {
-        (
-          caption: [Spanning tree],
-          step: (
-            kind: "spanning-tree",
-            edges: m.tree-keys.len(),
-            nodes: all-ids.len(),
-            total: m.total,
-          ),
-          alt: "Removed the non-tree edges; the minimum spanning tree ("
-            + str(m.tree-keys.len())
-            + " edge(s) over "
-            + str(all-ids.len())
-            + " node(s), total weight "
-            + str(m.total)
-            + ") remains."
-            + aux-note(m),
-        )
-      }
+      let spec = _kruskal-meta(m, g, all-ids, name, aux-note)
       (
         build: th => build-all(th).at(i),
         caption: spec.caption,
@@ -1530,6 +1535,108 @@
 // style, its discovery edge lights up, and a closing prune frame drops every
 // edge that isn't in the tree.
 
+// One shared closure for every snapshot of a traversal: the walk
+// accumulates, so each frame carries the previous one's styling plus its
+// own. Index 0 is the untouched graph, index i+1 the state after visiting
+// `order.at(i)`; a search or a prune appends one more.
+#let _traversal-build-all(pg, order, tree-edges, target) = th => {
+  let n = order.len()
+  let grad = gradient.linear(..th.op.traversal-palette)
+  let cur = blank-snapshot()
+  let out = (cur,)
+  for (i, id) in order.enumerate() {
+    if tree-edges == none {
+      // Traversal: sample the palette across the visit order.
+      let fill = grad.sample(if n <= 1 { 0% } else { (i / (n - 1)) * 100% })
+      cur = with-node(
+        cur,
+        id,
+        (fill: fill, text-fill: text-fill-for(fill), note: str(i + 1)),
+      )
+    } else {
+      // Spanning tree: the node joins with one uniform commit style and its
+      // discovery edge lights up. The root's entry is `none`.
+      cur = with-node(
+        cur,
+        id,
+        (
+          fill: th.op.success-fill,
+          text-fill: text-fill-for(th.op.success-fill),
+          stroke: th.op.settled-stroke,
+        ),
+      )
+      let k = tree-edges.at(i)
+      if k != none { cur = with-edge(cur, k, (stroke: th.op.success-stroke)) }
+    }
+    out.push(cur)
+  }
+  if target != none {
+    if order.contains(target) {
+      cur = with-node(cur, target, (stroke: th.op.settled-stroke))
+    }
+    out.push(cur)
+  }
+  if tree-edges != none {
+    // Prune: hide every edge that isn't a discovery edge. The tree styling
+    // carries through, so only the surplus goes.
+    let tree-keys = tree-edges.filter(e => e != none)
+    for e in pg.edges {
+      if not tree-keys.contains(e.key) { cur = with-edge(cur, e.key, (hide: true)) }
+    }
+    out.push(cur)
+  }
+  out
+}
+
+// The terminal frame of a *search*: the target was reached, or the walk ran
+// out of reachable nodes without it.
+#let _traversal-search-spec(build-all, n, target, label, found, aux) = if found {
+  (
+    build: th => build-all(th).at(n + 1),
+    caption: [Found #label(target)],
+    step: (kind: "found", node: target, visits: n),
+    alt: "Found "
+      + label(target)
+      + " after visiting "
+      + str(n)
+      + " node(s); the search stops here.",
+    aux: aux,
+  )
+} else {
+  (
+    build: th => build-all(th).at(n + 1),
+    caption: [#label(target) not found],
+    step: (kind: "not-found", target: target, visits: n),
+    alt: "Visited all "
+      + str(n)
+      + " reachable node(s); "
+      + label(target)
+      + " was not found.",
+    aux: aux,
+  )
+}
+
+// The terminal frame of a spanning-tree run: everything but the discovery
+// edges goes, leaving the tree alone.
+#let _traversal-prune-spec(build-all, n, tree-edges, name, aux) = {
+  let n-tree = tree-edges.filter(e => e != none).len()
+  (
+    build: th => build-all(th).at(n + 1),
+    caption: [Spanning tree],
+    step: (kind: "spanning-tree", edges: n-tree, nodes: n),
+    alt: "Removed the non-tree edges; the "
+      + name
+      + " spanning tree ("
+      + str(n-tree)
+      + " edge(s) over "
+      + str(n)
+      + " node(s)) remains.",
+    // The final (post-traversal) structure, so this frame's strip reads
+    // like any other in the sequence.
+    aux: aux,
+  )
+}
+
 // Shared per-visit animation. `aux-states` is parallel to the frame sequence:
 // index 0 is the initial structure, index i its state after visiting
 // order[i-1].
@@ -1556,53 +1663,7 @@
     "(empty)"
   } else { "[" + a.map(label).join(", ") + "]" }
 
-  // One shared closure for every snapshot: the traversal accumulates, so each
-  // frame carries the previous one's styling plus its own.
-  let build-all = th => {
-    let grad = gradient.linear(..th.op.traversal-palette)
-    let cur = blank-snapshot()
-    let out = (cur,)
-    for (i, id) in order.enumerate() {
-      if tree-edges == none {
-        // Traversal: sample the palette across the visit order.
-        let fill = grad.sample(if n <= 1 { 0% } else { (i / (n - 1)) * 100% })
-        cur = with-node(
-          cur,
-          id,
-          (fill: fill, text-fill: text-fill-for(fill), note: str(i + 1)),
-        )
-      } else {
-        // Spanning tree: the node joins with one uniform commit style and its
-        // discovery edge lights up. The root's entry is `none`.
-        cur = with-node(
-          cur,
-          id,
-          (
-            fill: th.op.success-fill,
-            text-fill: text-fill-for(th.op.success-fill),
-            stroke: th.op.settled-stroke,
-          ),
-        )
-        let k = tree-edges.at(i)
-        if k != none { cur = with-edge(cur, k, (stroke: th.op.success-stroke)) }
-      }
-      out.push(cur)
-    }
-    if searching {
-      if found { cur = with-node(cur, target, (stroke: th.op.settled-stroke)) }
-      out.push(cur)
-    }
-    if tree-edges != none {
-      // Prune: hide every edge that isn't a discovery edge. The tree styling
-      // carries through, so only the surplus goes.
-      let tree-keys = tree-edges.filter(e => e != none)
-      for e in pg.edges {
-        if not tree-keys.contains(e.key) { cur = with-edge(cur, e.key, (hide: true)) }
-      }
-      out.push(cur)
-    }
-    out
-  }
+  let build-all = _traversal-build-all(pg, order, tree-edges, target)
 
   let specs = (
     (
@@ -1649,51 +1710,22 @@
     ))
   }
   if searching {
-    let a = aux-states.at(-1, default: ())
-    specs.push(
-      if found {
-        (
-          build: th => build-all(th).at(n + 1),
-          caption: [Found #label(target)],
-          step: (kind: "found", node: target, visits: n),
-          alt: "Found "
-            + label(target)
-            + " after visiting "
-            + str(n)
-            + " node(s); the search stops here.",
-          aux: a,
-        )
-      } else {
-        (
-          build: th => build-all(th).at(n + 1),
-          caption: [#label(target) not found],
-          step: (kind: "not-found", target: target, visits: n),
-          alt: "Visited all "
-            + str(n)
-            + " reachable node(s); "
-            + label(target)
-            + " was not found.",
-          aux: a,
-        )
-      },
-    )
+    specs.push(_traversal-search-spec(
+      build-all,
+      n,
+      target,
+      label,
+      found,
+      aux-states.at(-1, default: ()),
+    ))
   }
   if tree-edges != none {
-    let n-tree = tree-edges.filter(e => e != none).len()
-    specs.push((
-      build: th => build-all(th).at(n + 1),
-      caption: [Spanning tree],
-      step: (kind: "spanning-tree", edges: n-tree, nodes: n),
-      alt: "Removed the non-tree edges; the "
-        + name
-        + " spanning tree ("
-        + str(n-tree)
-        + " edge(s) over "
-        + str(n)
-        + " node(s)) remains.",
-      // The final (post-traversal) structure, so this frame's strip reads
-      // like any other in the sequence.
-      aux: aux-states.at(-1, default: ()),
+    specs.push(_traversal-prune-spec(
+      build-all,
+      n,
+      tree-edges,
+      name,
+      aux-states.at(-1, default: ()),
     ))
   }
   // Fold each spec's aux snapshot into its step as the one-view list every

@@ -475,6 +475,200 @@
   _frames(specs, theme, node-style, edge-style)
 }
 
+// Which of the three deletion shapes the target is. The whole animation
+// branches on this — the snapshots, the narration, and the settle frame.
+#let _delete-case(target) = if target.left == none and target.right == none {
+  "leaf"
+} else if target.left == none or target.right == none {
+  "one-child"
+} else { "two-children" }
+
+// The path to the target's only child, for the one-child case.
+#let _only-child-path(tree, target-path) = {
+  let target = resolve(tree, target-path)
+  target-path + (if target.left != none { "L" } else { "R" })
+}
+
+// Phase A — everything drawn on the *original* tree. Returns
+// `theme => array of snapshots`: the whole phase is accumulated once and
+// each frame indexes into it, so the styling stays cumulative and the work
+// is shared across the frames.
+#let _delete-build-a(tree, target-path, shape, search, search-steps) = th => {
+  let cur = blank-snapshot()
+  let out = (cur,)
+  for s in search-steps {
+    cur = note-node(
+      with-node(cur, s.path, (stroke: th.op.search-stroke)),
+      s.path,
+      s.cmp,
+    )
+    out.push(cur)
+  }
+  if shape == "leaf" {
+    cur = with-node(cur, target-path, (stroke: th.op.attention-stroke))
+    // The comparison notes have done their job; clear them so they don't
+    // compete with the deletion highlights.
+    if search { cur = clear-notes(cur) }
+    out.push(cur)
+    cur = with-edge(cur, target-path, (stroke: th.op.danger-stroke))
+    out.push(cur)
+  } else if shape == "one-child" {
+    let child-path = _only-child-path(tree, target-path)
+    cur = with-node(cur, target-path, (stroke: th.op.attention-stroke))
+    if search { cur = clear-notes(cur) }
+    cur = with-node(cur, child-path, (stroke: th.op.search-stroke))
+    out.push(cur)
+    cur = with-edge(cur, target-path, (stroke: th.op.danger-stroke))
+    cur = with-edge(cur, child-path, (stroke: th.op.danger-stroke))
+    out.push(cur)
+    cur = with-edge(cur, target-path, (hide: true))
+    cur = with-edge(cur, child-path, (hide: true))
+    cur = with-node(cur, target-path, (hide: true))
+    out.push(cur)
+  } else {
+    cur = with-node(cur, target-path, (stroke: th.op.attention-stroke))
+    if search { cur = clear-notes(cur) }
+    out.push(cur)
+    for p in _predecessor-paths(tree, target-path) {
+      cur = with-node(cur, p, (stroke: th.op.search-stroke))
+      out.push(cur)
+    }
+    cur = note-node(
+      cur,
+      target-path,
+      "← " + str(resolve(tree, _predecessor-paths(tree, target-path).last()).value),
+    )
+    out.push(cur)
+  }
+  out
+}
+
+// Phase A's per-frame narration, in the same order `_delete-build-a` pushes
+// its snapshots (its first snapshot belongs to the `init` frame, so these
+// line up at an offset of one).
+#let _delete-meta-a(tree, target-path, target-label, v, shape, search-steps) = {
+  let out = ()
+  for s in search-steps {
+    let node-value = alt-label(resolve(tree, s.path))
+    out.push((
+      caption: s.cmp,
+      step: (kind: "compare", path: s.path, cmp: s.cmp, found: s.found),
+      alt: if s.found {
+        "Found target node " + node-value + "; ready to delete."
+      } else {
+        "Comparing " + s.cmp + " at node " + node-value + "; descending."
+      },
+    ))
+  }
+  if shape == "leaf" {
+    out.push((
+      caption: [Delete #v],
+      step: (kind: "highlight", path: target-path),
+      alt: "Marked leaf node " + target-label + " for deletion.",
+    ))
+    out.push((
+      caption: [Remove edge],
+      step: (kind: "break", path: target-path),
+      alt: "Removing the edge to node " + target-label + ".",
+    ))
+  } else if shape == "one-child" {
+    let child-path = _only-child-path(tree, target-path)
+    let child-value = alt-label(resolve(tree, child-path))
+    out.push((
+      caption: [Delete #v],
+      step: (kind: "highlight", path: target-path, child: child-path),
+      alt: "Marked node "
+        + target-label
+        + " for deletion; its single child "
+        + child-value
+        + " will be promoted.",
+    ))
+    out.push((
+      caption: [Mark edges to remove],
+      step: (kind: "break", paths: (target-path, child-path)),
+      alt: "Marking edges around node " + target-label + " for removal.",
+    ))
+    out.push((
+      caption: [Remove],
+      step: (kind: "break", paths: (target-path, child-path), hidden: true),
+      alt: "Removed node " + target-label + " and its edges.",
+    ))
+  } else {
+    let predecessor-paths = _predecessor-paths(tree, target-path)
+    let predecessor-node = resolve(tree, predecessor-paths.last())
+    out.push((
+      caption: [Delete #v],
+      step: (kind: "highlight", path: target-path),
+      alt: "Marked node "
+        + target-label
+        + " for deletion; it has two children, so an in-order predecessor "
+        + "will replace it.",
+    ))
+    for p in predecessor-paths {
+      out.push((
+        caption: [Find predecessor],
+        step: (kind: "descend", path: p),
+        alt: "Descending into the left subtree at node "
+          + alt-label(resolve(tree, p))
+          + ".",
+      ))
+    }
+    out.push((
+      caption: [Transfer #predecessor-node.value],
+      step: (
+        kind: "transfer",
+        from: predecessor-paths.last(),
+        to: target-path,
+        value: predecessor-node.value,
+      ),
+      alt: "Replacing "
+        + target-label
+        + " with predecessor value "
+        + alt-label(predecessor-node)
+        + ".",
+    ))
+  }
+  out
+}
+
+// Phase B — the one settle frame, drawn on the tree the deletion produced.
+#let _delete-settle(after, target-path, target-label, shape) = if (
+  shape == "leaf"
+) {
+  (
+    build: _ => blank-snapshot(),
+    caption: [Done],
+    step: (kind: "settled", result: after),
+    alt: "Deletion of " + target-label + " complete.",
+  )
+} else if shape == "one-child" {
+  (
+    build: th => with-edge(
+      with-node(blank-snapshot(), target-path, (stroke: th.op.search-stroke)),
+      target-path,
+      (stroke: th.op.success-stroke),
+    ),
+    caption: [Reattach],
+    step: (kind: "settled", path: target-path, result: after),
+    alt: "Child reattached in place of " + target-label + "; deletion complete.",
+  )
+} else {
+  (
+    build: th => with-node(
+      blank-snapshot(),
+      target-path,
+      (stroke: th.op.settled-stroke, fill: th.op.success-fill),
+    ),
+    caption: [Done],
+    step: (kind: "settled", path: target-path, result: after),
+    alt: "Deletion of "
+      + target-label
+      + " complete; node now holds "
+      + alt-label(resolve(after, target-path))
+      + ".",
+  )
+}
+
 /// Animate deleting `v`, dispatching on the target's children:
 ///
 /// - a leaf is highlighted, its edge dashed, then it is gone;
@@ -510,14 +704,11 @@
   let target = resolve(tree, target-path)
   let target-label = alt-label(target)
   let after = delete(tree, v)
+  let shape = _delete-case(target)
 
   // `by-value` has already confirmed `v` is present, so this walk always
   // terminates at the match.
   let search-steps = if search { tc.descend-walk(tree, v) } else { () }
-  let is-leaf = target.left == none and target.right == none
-  let is-one-child = (
-    (not is-leaf) and (target.left == none or target.right == none)
-  )
 
   let specs = (
     (
@@ -529,188 +720,24 @@
     ),
   )
 
-  // Phase A — everything drawn on the *original* tree. `build-a` accumulates
-  // the whole phase's snapshots once; each frame indexes into it. Each step
-  // starts from the previous snapshot, so the styling is cumulative.
-  let build-a = th => {
-    let cur = blank-snapshot()
-    let out = (cur,)
-    for s in search-steps {
-      cur = note-node(
-        with-node(cur, s.path, (stroke: th.op.search-stroke)),
-        s.path,
-        s.cmp,
-      )
-      out.push(cur)
-    }
-    if is-leaf {
-      cur = with-node(cur, target-path, (stroke: th.op.attention-stroke))
-      // The comparison notes have done their job; clear them so they don't
-      // compete with the deletion highlights.
-      if search { cur = clear-notes(cur) }
-      out.push(cur)
-      cur = with-edge(cur, target-path, (stroke: th.op.danger-stroke))
-      out.push(cur)
-    } else if is-one-child {
-      let child-path = target-path + (if target.left != none { "L" } else { "R" })
-      cur = with-node(cur, target-path, (stroke: th.op.attention-stroke))
-      if search { cur = clear-notes(cur) }
-      cur = with-node(cur, child-path, (stroke: th.op.search-stroke))
-      out.push(cur)
-      cur = with-edge(cur, target-path, (stroke: th.op.danger-stroke))
-      cur = with-edge(cur, child-path, (stroke: th.op.danger-stroke))
-      out.push(cur)
-      cur = with-edge(cur, target-path, (hide: true))
-      cur = with-edge(cur, child-path, (hide: true))
-      cur = with-node(cur, target-path, (hide: true))
-      out.push(cur)
-    } else {
-      cur = with-node(cur, target-path, (stroke: th.op.attention-stroke))
-      if search { cur = clear-notes(cur) }
-      out.push(cur)
-      for p in _predecessor-paths(tree, target-path) {
-        cur = with-node(cur, p, (stroke: th.op.search-stroke))
-        out.push(cur)
-      }
-      cur = note-node(
-        cur,
-        target-path,
-        "← " + str(resolve(tree, _predecessor-paths(tree, target-path).last()).value),
-      )
-      out.push(cur)
-    }
-    out
-  }
-
-  // Phase A metadata, in the same order `build-a` pushes.
-  let meta-a = ()
-  for s in search-steps {
-    let node-value = alt-label(resolve(tree, s.path))
-    meta-a.push((
-      caption: s.cmp,
-      step: (kind: "compare", path: s.path, cmp: s.cmp, found: s.found),
-      alt: if s.found {
-        "Found target node " + node-value + "; ready to delete."
-      } else {
-        "Comparing " + s.cmp + " at node " + node-value + "; descending."
-      },
-    ))
-  }
-  if is-leaf {
-    meta-a.push((
-      caption: [Delete #v],
-      step: (kind: "highlight", path: target-path),
-      alt: "Marked leaf node " + target-label + " for deletion.",
-    ))
-    meta-a.push((
-      caption: [Remove edge],
-      step: (kind: "break", path: target-path),
-      alt: "Removing the edge to node " + target-label + ".",
-    ))
-  } else if is-one-child {
-    let child-path = target-path + (if target.left != none { "L" } else { "R" })
-    let child-value = alt-label(resolve(tree, child-path))
-    meta-a.push((
-      caption: [Delete #v],
-      step: (kind: "highlight", path: target-path, child: child-path),
-      alt: "Marked node "
-        + target-label
-        + " for deletion; its single child "
-        + child-value
-        + " will be promoted.",
-    ))
-    meta-a.push((
-      caption: [Mark edges to remove],
-      step: (kind: "break", paths: (target-path, child-path)),
-      alt: "Marking edges around node " + target-label + " for removal.",
-    ))
-    meta-a.push((
-      caption: [Remove],
-      step: (kind: "break", paths: (target-path, child-path), hidden: true),
-      alt: "Removed node " + target-label + " and its edges.",
-    ))
-  } else {
-    let predecessor-paths = _predecessor-paths(tree, target-path)
-    let predecessor-node = resolve(tree, predecessor-paths.last())
-    meta-a.push((
-      caption: [Delete #v],
-      step: (kind: "highlight", path: target-path),
-      alt: "Marked node "
-        + target-label
-        + " for deletion; it has two children, so an in-order predecessor "
-        + "will replace it.",
-    ))
-    for p in predecessor-paths {
-      meta-a.push((
-        caption: [Find predecessor],
-        step: (kind: "descend", path: p),
-        alt: "Descending into the left subtree at node "
-          + alt-label(resolve(tree, p))
-          + ".",
-      ))
-    }
-    meta-a.push((
-      caption: [Transfer #predecessor-node.value],
-      step: (
-        kind: "transfer",
-        from: predecessor-paths.last(),
-        to: target-path,
-        value: predecessor-node.value,
-      ),
-      alt: "Replacing "
-        + target-label
-        + " with predecessor value "
-        + alt-label(predecessor-node)
-        + ".",
-    ))
-  }
+  let build-a = _delete-build-a(tree, target-path, shape, search, search-steps)
+  let meta-a = _delete-meta-a(
+    tree,
+    target-path,
+    target-label,
+    v,
+    shape,
+    search-steps,
+  )
   for (i, m) in meta-a.enumerate() {
     let at = i + 1
-    specs.push((
-      structure: tree,
-      build: th => build-a(th).at(at),
-      caption: m.caption,
-      step: m.step,
-      alt: m.alt,
-    ))
+    specs.push((structure: tree, build: th => build-a(th).at(at), ..m))
   }
 
-  // Phase B — one settle frame on the tree the deletion produced.
-  let settle = if is-leaf {
-    (
-      build: _ => blank-snapshot(),
-      caption: [Done],
-      step: (kind: "settled", result: after),
-      alt: "Deletion of " + target-label + " complete.",
-    )
-  } else if is-one-child {
-    (
-      build: th => with-edge(
-        with-node(blank-snapshot(), target-path, (stroke: th.op.search-stroke)),
-        target-path,
-        (stroke: th.op.success-stroke),
-      ),
-      caption: [Reattach],
-      step: (kind: "settled", path: target-path, result: after),
-      alt: "Child reattached in place of " + target-label + "; deletion complete.",
-    )
-  } else {
-    (
-      build: th => with-node(
-        blank-snapshot(),
-        target-path,
-        (stroke: th.op.settled-stroke, fill: th.op.success-fill),
-      ),
-      caption: [Done],
-      step: (kind: "settled", path: target-path, result: after),
-      alt: "Deletion of "
-        + target-label
-        + " complete; node now holds "
-        + alt-label(resolve(after, target-path))
-        + ".",
-    )
-  }
-  specs.push((structure: after, ..settle))
+  specs.push((
+    structure: after,
+    .._delete-settle(after, target-path, target-label, shape),
+  ))
   _frames(specs, theme, node-style, edge-style)
 }
 
@@ -738,165 +765,17 @@
   /// Partial theme override for this call.
   /// -> dictionary
   theme: (:),
-) = {
-  let child-path = by-value(tree, child.value)
-  if child-path == "" {
-    panic(
-      "bst.rotate-display: cannot rotate around root node "
-        + str(child.value)
-        + "; the child must have a parent.",
-    )
-  }
-  let parent-path = child-path.slice(0, child-path.len() - 1)
-  let parent-subtree = resolve(tree, parent-path)
-  let is-right = child-path.last() == "L"
-  let after = rotate(tree, child)
-
-  // For a non-root rotation the grandparent-to-subtree edge (whose path is
-  // `parent-path` itself) must break and reconnect too — otherwise the new
-  // subtree root visibly snaps onto the grandparent without animating.
-  let has-grandparent = parent-path != ""
-
-  // BEFORE paths: the middle child of `child`, which moves to the parent.
-  let middle-path = parent-path + (if is-right { "LR" } else { "RL" })
-  let has-middle = resolve(tree, middle-path) != none
-  let broken-paths = (
-    (if has-grandparent { (parent-path,) } else { () })
-      + (child-path,)
-      + (if has-middle { (middle-path,) } else { () })
-  )
-
-  // AFTER paths.
-  let new-parent-path = parent-path + (if is-right { "R" } else { "L" })
-  let new-middle-path = parent-path + (if is-right { "RL" } else { "LR" })
-  let has-new-middle = resolve(after, new-middle-path) != none
-  let new-edge-paths = (
-    (if has-grandparent { (parent-path,) } else { () })
-      + (new-parent-path,)
-      + (if has-new-middle { (new-middle-path,) } else { () })
-  )
-
-  let direction = if is-right { "right" } else { "left" }
-  let parent-value = alt-label(parent-subtree)
-  let child-value = alt-label(child)
-
-  // Phase A — on the tree as it stands.
-  let build-a = th => {
-    let cur = blank-snapshot()
-    let out = (cur,)
-    cur = with-node(cur, parent-path, (stroke: th.op.attention-stroke))
-    cur = with-node(cur, child-path, (stroke: th.op.attention-stroke))
-    out.push(cur)
-    cur = with-edge(cur, child-path, (hide: true))
-    if has-middle { cur = with-edge(cur, middle-path, (hide: true)) }
-    if has-grandparent { cur = with-edge(cur, parent-path, (hide: true)) }
-    out.push(cur)
-    out
-  }
-
-  // Phase B — on the rotated tree. Its first frame is already styled (the
-  // pivots stay lit and the moved edges stay hidden), so the restructure
-  // reads as one continuous motion.
-  let build-b = th => {
-    let cur = blank-snapshot()
-    cur = with-node(cur, parent-path, (stroke: th.op.attention-stroke))
-    cur = with-node(cur, new-parent-path, (stroke: th.op.attention-stroke))
-    cur = with-edge(cur, new-parent-path, (hide: true))
-    if has-new-middle { cur = with-edge(cur, new-middle-path, (hide: true)) }
-    if has-grandparent { cur = with-edge(cur, parent-path, (hide: true)) }
-    let out = (cur,)
-    cur = with-edge(
-      cur,
-      new-parent-path,
-      (stroke: th.op.success-stroke, hide: false),
-    )
-    if has-new-middle {
-      cur = with-edge(
-        cur,
-        new-middle-path,
-        (stroke: th.op.success-stroke, hide: false),
-      )
-    }
-    if has-grandparent {
-      cur = with-edge(
-        cur,
-        parent-path,
-        (stroke: th.op.success-stroke, hide: false),
-      )
-    }
-    out.push(cur)
-    // Reset to the theme's reset stroke, which should read as unstyled.
-    cur = with-node(cur, parent-path, (stroke: th.op.reset-stroke))
-    cur = with-node(cur, new-parent-path, (stroke: th.op.reset-stroke))
-    cur = with-edge(cur, new-parent-path, (stroke: th.op.reset-stroke))
-    if has-new-middle {
-      cur = with-edge(cur, new-middle-path, (stroke: th.op.reset-stroke))
-    }
-    if has-grandparent {
-      cur = with-edge(cur, parent-path, (stroke: th.op.reset-stroke))
-    }
-    out.push(cur)
-    out
-  }
-
-  let specs = (
-    (
-      structure: tree,
-      build: _ => blank-snapshot(),
-      caption: none,
-      step: (kind: "init"),
-      alt: alt-intro(
-        _DS,
-        describe(tree),
-        direction + "-rotate around node " + child-value,
-      ),
-    ),
-    (
-      structure: tree,
-      build: th => build-a(th).at(1),
-      caption: [Rotate around #child.value],
-      step: (kind: "pivots", paths: (parent-path, child-path)),
-      alt: "Rotation pivots identified: parent "
-        + parent-value
-        + " and child "
-        + child-value
-        + ".",
-    ),
-    (
-      structure: tree,
-      build: th => build-a(th).at(2),
-      caption: [Break edges],
-      step: (kind: "break", paths: broken-paths),
-      alt: "Breaking the edges that will rotate.",
-    ),
-    (
-      structure: after,
-      build: th => build-b(th).at(0),
-      caption: [Restructure tree],
-      step: (kind: "restructure"),
-      alt: "Tree restructured: "
-        + child-value
-        + " is now the parent of "
-        + parent-value
-        + "; the rotated edges are still hidden.",
-    ),
-    (
-      structure: after,
-      build: th => build-b(th).at(1),
-      caption: [Reconnect edges],
-      step: (kind: "connect", paths: new-edge-paths),
-      alt: "Reconnecting rotated edges.",
-    ),
-    (
-      structure: after,
-      build: th => build-b(th).at(2),
-      caption: none,
-      step: (kind: "settled", result: after),
-      alt: "Rotation complete.",
-    ),
-  )
-  _frames(specs, theme, node-style, edge-style)
-}
+) = tc.render-rotate(
+  tree,
+  rotate(tree, child),
+  child,
+  _DS,
+  describe(tree),
+  who: "bst.rotate-display",
+  node-style: node-style,
+  edge-style: edge-style,
+  theme: theme,
+)
 
 // ===================================================================
 // Traversals

@@ -746,7 +746,13 @@ path utilities): value/label tuple parsing (the 4× duplicated factory `parse`),
 traversal walks, a parameterized `describe`, and
 `render-traversal(structure, order, alt-prefix, node-tag-fn, …)` (merging the 3
 copies; the `factors:`/`heights:` hooks become the `node-tag-fn`/edge-tag
-parameters).
+parameters). It also holds `render-search`, `stamp-result`, and — *added in
+Phase 7* — `render-rotate(structure, after, child, ds-name, describe-text,
+who:, base:, after-base:, …)`, which merges bst's and avl's byte-for-byte
+identical `rotate-display` bodies. `after` is the caller's own `rotate` applied
+(AVL's recomputes heights), `who:` is the panic prefix, and `after-base:` is
+the `base:` for the rotated tree — a DS whose structural painting depends on
+the shape needs a different one per tree, and `auto` reuses `base:`.
 
 **bst / rbt / avl / b24 / trie** — literal builders (this ships what lectures
 hand-rolled three times):
@@ -1413,7 +1419,7 @@ All of that holds: 106/106 green, the export check is a bare equality with no
 allowances, and `grep -r typsy src/` is finally empty — the Phase 5 carve-out
 was `GitTheme`, and it died with `set-git-theme`.
 
-### Phase 7 — Sweep
+### Phase 7 — Sweep — ✅ DONE (commit `Phase 7: the sweep`)
 
 1. Grep-audit: no `_`-prefixed name is referenced across module boundaries
    except from `core/*` siblings (allowed) — DS and presentation modules use
@@ -1426,6 +1432,83 @@ was `GitTheme`, and it died with `set-git-theme`.
    flag anything
    > 20% slower (suspect: theme resolution or lost closure caching — see §4.5
    > perf rule).
+
+**Result.** The boundary audit came back clean: no module imports a
+`_`-prefixed name from another, and no `mod._name` access exists anywhere in
+`src/` or `tests/`. The import discipline of §2 holds file-for-file. Two real
+stragglers turned up and were fixed: `ds/tree-common.typ` and `ds/b24.typ`
+each carried a byte-identical private copy of `core/draw-util.typ`'s **public**
+`text-fill-for` (which `aux.typ` and `ds/graph.typ` already import), and a
+comment block in `ds/b24.typ` still named the pre-refactor helpers
+`_insert-events-to-specs` / `_make-frames-multi`.
+
+**Splitting rule actually applied** (the plan's "NEW code" line needed one):
+a function is *exempt* when its body **is** the algorithm's control flow — a
+loop or recursion implementing the textbook procedure and emitting events as
+it goes. Cutting one of those in half is exactly the behavior-churn risk the
+plan warns about, and it reads worse. A function gets *split* when it is a
+**dispatch table** (a flat `if kind == …` chain) or a **multi-phase
+orchestrator** whose phases are independent — there the pieces move verbatim.
+Under that rule the exempt set is the five draw backends, `rbt._delete-trace`
+and `_insert-fixup`, b24's three `_*-events` traces, and
+`graph._dijkstra-moments`. Everything else over 100 lines was split; the whole
+suite stayed pixel-identical through every step, and a string-literal audit
+across the changed files confirmed no caption, alt text, or `step.kind`
+changed (alt text is *not* covered by the visual refs, so it needed its own
+check).
+
+The recurring shape of the split is the one the plan's spec pipeline already
+implies: an event/moment list becomes `_<op>-meta(event, …)` (caption / step /
+alt) plus `_<op>-build(event, …)` (the snapshot closure), and
+`_<op>-specs` just zips them. rbt, avl and b24 all landed on it. Three splits
+turned into **dedup** instead, which is the better outcome:
+
+- `tree-common.render-rotate` — bst's and avl's `rotate-display` were the same
+  180 lines modulo the base painting and the panic prefix, so the shared one
+  joins `render-search` / `render-traversal` in `ds/tree-common.typ`. It takes
+  `after` (the caller's own `rotate` produces it — AVL's recomputes heights)
+  and both a `base:` and an `after-base:`, since a DS whose painting depends on
+  the shape needs a different one per tree.
+- `skiplist._advance-spec` / `_descend-spec` — the pure-navigation frames of
+  the insert and delete descents, identical but for the table and the alt text.
+- `hashmap._rehash-specs` / `_copy-specs` — the correct and the buggy resize
+  bodies, which were two arms of one function.
+
+**Timing.** No regression; the branch is *faster*, and the sweep itself made
+it faster again. Parallel full suite: main 27.7s / 95 tests, branch 23.1s /
+106 tests; summing per-test times over the 95 tests both trees share, main
+23.6s → branch 17.6s (**−25%**), with the 15 BST tests Phase 0 renamed all
+8–39% faster.
+
+The reliable measurement on this machine is `tt run -j 1` summed over
+per-test times, since a parallel run swings ±40% with scheduling. Three
+rounds, one with the order reversed to rule out cache warming (min of three):
+
+| tree | round 1 | round 2 | round 3 (reversed) | min |
+| --- | --- | --- | --- | --- |
+| `main` | 38.9s | 40.7s | 50.1s | **38.9s** |
+| pre-sweep (Phase 6) | 37.0s | 39.9s | 35.5s | **35.5s** |
+| post-sweep (Phase 7) | 31.9s | 28.4s | 26.1s | **26.1s** |
+
+Post-sweep wins every round including the one where it ran first (coldest),
+so it is not an ordering artifact: **−26% against pre-sweep, −33% against
+main.** The likely mechanism is Typst's result cache — a module-level named
+helper memoizes across call sites and across repeated display calls in one
+document, where a closure built inside a display body is a fresh value per
+call and shares nothing. If so, extracting spec builders to module scope is a
+perf idiom for this codebase, not just a tidiness one; it has not been proven
+beyond the timings above.
+
+One caution for whoever measures next: two tests looked *slower* in the first
+parallel run (`git-graph` +43%, `graph-scale` +16%) and both were pure
+scheduling noise — run alone they are faster on the branch (git-graph 324ms →
+198ms). Do not read a single parallel `tt run` as a measurement.
+
+Two known duplications were left alone deliberately, as out of scope for a
+sweep: the 6-line `_stamp-result` in `ds/b24.typ`, `ds/trie.typ` and
+`ds/skiplist.typ` (a copy of `tree-common.stamp-result`, which those three
+cannot import — it would want to move to `core/frame.typ`, a core change), and
+the one-line `_cap` / `_styled` conveniences.
 
 ### Phase 8 — Docs & Packaging
 
