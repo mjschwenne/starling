@@ -46,6 +46,28 @@
 
 #let _DS = "Array"
 
+// ===================================================================
+// Anchors
+// ===================================================================
+//
+// One per key helper: `<x>-anchor(..)` is `anchor(<x>-key(..))`, the cetz
+// element name the backend drew that piece under. Pass `canvas:` to qualify
+// the name with an enclosing canvas.
+
+/// The cetz anchor for one cell of one row.
+/// -> str
+#let cell-anchor(row, col, canvas: none) = anchor(
+  cell-key(row, col),
+  canvas: canvas,
+)
+
+/// The cetz anchor for one entry of one row's chain.
+/// -> str
+#let entry-anchor(row, i, j, canvas: none) = anchor(
+  entry-key(row, i, j),
+  canvas: canvas,
+)
+
 /// The counting-sort variants this module understands.
 #let variants = ("prefix", "reconstruct", "buckets")
 

@@ -160,6 +160,13 @@
 /// -> str
 #let ek(g, u, v) = edge-key(u, v, directed: g.directed)
 
+/// The cetz anchor for the edge between `u` and `v` — `anchor(ek(g, u, v))`,
+/// the element name the backend drew that edge under. Pass `canvas:` to
+/// qualify the name with an enclosing canvas. A node's own key is its id, so
+/// its anchor is just `anchor(id)`.
+/// -> str
+#let edge-anchor(g, u, v, canvas: none) = anchor(ek(g, u, v), canvas: canvas)
+
 /// Whether `id` is a node of this graph.
 /// -> bool
 #let contains-node(g, id) = id in g.nodes

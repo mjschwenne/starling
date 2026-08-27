@@ -197,6 +197,7 @@
       "contains-edge",
       "ek",
       "edge-key",
+      "edge-anchor",
       "positioned",
       "adjacency-matrix",
       "adjacency-list",
@@ -222,6 +223,8 @@
       "positioned",
       "cell-key",
       "entry-key",
+      "cell-anchor",
+      "entry-anchor",
     ),
     displays: ("counting-display", "radix-display"),
   ),
@@ -244,6 +247,9 @@
       "box-key",
       "forward-key",
       "data-key",
+      "box-anchor",
+      "forward-anchor",
+      "data-anchor",
     ),
     displays: ("search-display", "insert-display", "delete-display"),
   ),
@@ -263,6 +269,8 @@
       "positioned",
       "cell-key",
       "entry-key",
+      "cell-anchor",
+      "entry-anchor",
     ),
     displays: (
       "insert-display",
@@ -331,6 +339,8 @@
   // Snapshots and the op stream.
   "blank-snapshot",
   "apply-snapshot",
+  "with-node",
+  "with-edge",
   "style-node",
   "style-edge",
   "annotate",
@@ -347,6 +357,7 @@
   // Theme.
   "theme-ref",
   "role",
+  "resolve-refs",
   "default-theme",
   "set-theme",
   // Presentation.
@@ -512,6 +523,36 @@
   message: "starling.git's public surface drifted from REFACTOR.md §9: "
     + git-exported.filter(n => not git-verbs.contains(n)).join(", "),
 )
+
+// ===================================================================
+// The `insert` call trap
+// ===================================================================
+//
+// Typst parses `x.insert(..)` as a call to its own *mutating* dict/array
+// method, and a variable captured from an enclosing scope is read-only — so
+// `bst.insert(t, v)` does not compile inside a function body, though the same
+// line is fine at top level. Seven of the nine namespaces export `insert`, so
+// this is the one verb every user trips over; the manual documents it at
+// <insert-trap>.
+//
+// These assertions pin the two documented workarounds. If a future Typst
+// makes the bare form work, the parenthesized one still will — this test
+// keeps the escape hatch honest, it does not assert the trap persists.
+#let _t = bst.new(5, 3, 8)
+
+// Workaround 1: parenthesize the function reference.
+#let _via-parens = v => (bst.insert)(_t, v)
+#assert.eq(bst.contains(_via-parens(7), 7), true)
+
+// Workaround 2: import the verb out of the namespace.
+#import "/src/ds/bst.typ": insert as _bst-insert
+#let _via-import = v => _bst-insert(_t, v)
+#assert.eq(bst.contains(_via-import(7), 7), true)
+
+// Hyphenated siblings are unaffected — Typst has no `insert-many` method, so
+// the bare form is safe there and needs no workaround.
+#let _via-plain = vs => bst.insert-many(_t, ..vs)
+#assert.eq(bst.contains(_via-plain((7, 9)), 9), true)
 
 // Placeholder page (tytanic always compares a rendered page).
 #set page(width: auto, height: auto, margin: 6pt)

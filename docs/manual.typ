@@ -183,6 +183,43 @@ positional argument; `theme:` is always a partial nested theme override
 (@theming); `node-style:` and `edge-style:` are the base style layers; and
 every animation is named `<op>-display` and nothing else is.
 
+== Calling `insert` inside a function <insert-trap>
+
+One name needs care. Typst reads `x.insert(..)` as a call to *its own*
+mutating `insert` method, and a variable captured from an enclosing scope
+cannot be mutated — so inside any function or closure body, the natural
+spelling fails:
+
+```typ
+#let f = x => bst.insert(t, x)
+// error: variables from outside the function are read-only
+//        and cannot be modified
+```
+
+The caret points at `bst`, and the message never mentions `insert`, so the
+diagnostic gives no route to the fix. At the top level of a document the same
+line is fine, which is what makes this easy to miss until a helper is
+extracted.
+
+Parenthesize the function reference, and it is an ordinary call again:
+
+```typ
+#let f = x => (bst.insert)(t, x)
+```
+
+Importing the verb out of the namespace also works, if you would rather not
+carry the parentheses:
+
+```typ
+#import starling.bst: insert
+#let f = x => insert(t, x)
+```
+
+This affects only the bare name `insert` — which `bst`, `rbt`, `avl`, `b24`,
+`trie`, `hashmap`, and `skiplist` all export. `insert-many` and every other
+verb (`delete`, `contains`, `display`, …) are unaffected, since Typst has no
+method by those names.
+
 = The animation model
 
 Four shapes do all the work, and all four are plain dictionaries you can
@@ -629,6 +666,13 @@ compose with `+`, and `apply-ops` folds one into a renderer.
 The three pieces: a renderer from the structure's own namespace (so it comes
 pre-painted with that structure's styling), a stream, and `render`.
 
+The three painting namespaces — `rbt`, `avl`, `trie` — always apply their
+palette. When you want the *structure* but none of its colouring, because
+every fill is coming from your own ops, go through the extension point
+directly: `make-renderer(t, draw-tree)` gives an unpainted renderer over the
+same tree. Reaching for `bst.renderer` instead would work, but it would
+misname what you are drawing.
+
 ```typ
 #let r = bst.renderer(t, sticky: true)
 #let frames = render(apply-ops(r,
@@ -752,6 +796,30 @@ key into the cetz element name that backend drew under (`"LR"` #sym.arrow
 Compass sub-anchors work as usual — `anchor("LR") + ".north"` — and
 `anchor(key, canvas: "t")` qualifies the name when the drawing sits inside a
 named group. Pass `name:` to any backend to create that group.
+
+The snapshot need not be blank. A structure's `renderer()` gives you its
+structural painting — a trie's terminal shading, a red-black tree's colours —
+and `apply-ops` layers the style vocabulary on top; either snapshot drops
+straight into a backend:
+
+```typ
+#cetz.canvas({
+  let t = trie.new("car", "cat")
+  starling.draw-tree(t, trie.renderer(t).snapshots.last())
+})
+```
+
+#align(center, cetz.canvas({
+  let t = trie.new("car", "cat")
+  starling.draw-tree(t, trie.renderer(t).snapshots.last())
+}))
+
+Where a backend has key helpers, each has a matching anchor helper that saves
+the wrapping call — `skiplist.box-anchor(c, l)` is `anchor(skiplist.box-key(c,
+l))`, and likewise `forward-anchor` / `data-anchor`, `hashmap.cell-anchor` /
+`entry-anchor`, `sort.cell-anchor` / `entry-anchor`, and
+`graph.edge-anchor(g, u, v)`. Each takes the same `canvas:` argument. A graph
+node's key is its id, so its anchor is just `anchor(id)`.
 
 The non-tree backends take the structure's *positioned* form, which is what
 turns a graph or a table into coordinates:
@@ -1929,6 +1997,13 @@ compiler will tell you so. The mapping is mechanical.
   table.header[*0.3.x*][*1.0.0*],
   [`bst(16, 11, 29)`], [`bst.new(16, 11, 29)` — plus `bst.node` / `bst.leaf`
     for literals],
+  [`trie("cat")`, `graph(nodes, edges: ..)`, `hashmap(7, ..)`, `sort(..)`,
+    `skiplist(..)`],
+  [`trie.new(..)` and so on — every factory became its namespace's `new`],
+
+  [`(s.style-node)(p, fill: red)` on a snapshot],
+  [`with-node(s, p, (fill: red))` — or `apply-snapshot(s, style-node(p, fill:
+    red))` to fold in a whole stream],
   [`(t.insert)(5)`], [`bst.insert(t, 5)`],
   [`(t.insert-display)(5)`], [`bst.insert-display(t, 5)`],
   [`(t.insert-display)(5)` then `(t = (t.insert)(5))`],
@@ -1945,10 +2020,14 @@ compiler will tell you so. The mapping is mechanical.
   [`(r.render)()`], [`render(r)`],
   [`paint-rbt(make-renderer(t), t, bits: true)`], [`rbt.renderer(t, bits: true)`],
   [`paint-trie(r, t)`], [`trie.renderer(t)`],
+  [`make-graph-renderer(g.positioned())`], [`graph.renderer(g)` — it takes the
+    *graph* and positions internally, so drop the `positioned` call.
+    `graph.positioned` stays, for a hand-composed `draw-graph` canvas],
   [`theme:` (op-theme, on bst/avl/b24/graph)], [`theme: (op: (..))`],
   [`theme:` (palette, on rbt/trie/hashmap/sort/skiplist)], [`theme: (rbt: (..))`
     and so on],
-  [`render-theme: (..)`], [`theme: (render: (..))`],
+  [`render-theme: (..)`], [`theme: (render: (..))` — on a `draw-*` call too;
+    a partial theme layers over the default there as well],
   [`set-op-theme(..)`, `set-render-theme(..)`, `set-rbt-theme(..)`, …],
   [`set-theme((op: .., render: .., rbt: ..))` — one state, one setter],
 
@@ -1956,7 +2035,8 @@ compiler will tell you so. The mapping is mechanical.
   [`path-anchor(p, tree-name: "t")`], [`anchor(p, canvas: "t")`],
   [`node-anchor(id)`, `cell-anchor(i)`, `array-cell-anchor(r, c)`,
     `sl-box-anchor(c, l)`],
-  [`anchor(<the key>)`, via that module's key constructor],
+  [`anchor(id)`, `hashmap.cell-anchor(i)`, `sort.cell-anchor(r, c)`,
+    `skiplist.box-anchor(c, l)` — one `<x>-anchor` per `<x>-key`],
 
   [`cell-key(i)` / `entry-key(i, j)`], [`hashmap.cell-key(i)` /
     `hashmap.entry-key(i, j)`],
@@ -1994,10 +2074,42 @@ variable — is what `result(frames)` replaces.
 sort and trie captions that used to be strings are not any more). Nothing
 derives alt from a caption.
 
-Two smaller notes. `import cetz.draw: *` inside a canvas now shadows
-starling's `anchor`, since cetz has an `anchor` of its own — import
-selectively. And there is no `Op` enum: the constructors are top-level
-functions, each returning an array, so streams compose with `+`.
+*Hash-map cells are measured once per animation, not once per frame.* The
+width fits the widest entry the whole animation will hold, so a frame whose
+entries are a subset of that no longer shrinks. Decks that relied on the old
+per-frame sizing will see those frames stay wide — that is the fix, not a
+regression.
+
+Four smaller notes, all of them things a real port tripped over.
+
+`import cetz.draw: *` inside a canvas now shadows starling's `anchor`, since
+cetz has an `anchor` of its own — import selectively.
+
+`bst.insert(t, v)` and its siblings do not compile *inside a function body* —
+Typst reads the call as its own mutating `insert` on a captured variable.
+Write `(bst.insert)(t, v)`, or import the verb. See @insert-trap; this one bit
+hardest in the port, because the error names the namespace and never mentions
+`insert`.
+
+There is no `Op` enum: the constructors are top-level functions, each
+returning an *array*, so streams compose with `+`. The old constructors
+returned a single op, so a deck that accumulates with `ops.push(..)` now
+pushes an array into an array. `apply-ops` flattens, so it happens to work,
+but write `ops += ..` (and `.flatten()` after a `.map`) and mean it.
+
+Every namespace name — `bst`, `rbt`, `sort`, `graph`, `trie`, `skiplist` — is
+an ordinary identifier, so a deck-local `#let sort = ..` or a parameter named
+`rbt` now shadows the module. The flat exports are just as stealable: `commit`
+in particular collides with the helper decks tend to write around it, and a
+local definition wins at module scope, so the helper's own body has to call
+`starling.commit(..)` rather than recursing into itself. This is the most
+common way a port breaks somewhere unrelated to the edit that caused it.
+
+Backends name their elements through `anchor(<key>)` now, where 0.3.x let each
+one choose (the array backend used `acell-<row>-<col>`, the tree backend used
+cetz-tree's positional `node-0-0-1`). If a deck builds an element name by
+string concatenation rather than calling the helper, the prefix has to change
+to `el-`.
 
 // tidy emits a heading per function and per parameter, so the reference
 // would otherwise number five levels deep. Keep numbers on the sections a

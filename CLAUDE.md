@@ -169,6 +169,11 @@ palette" rule).
 
 **Theme references** (`core/style.typ`): `role(key)` / `theme-ref(section, key)` store a marker
 that `resolve-refs` swaps for the real value inside `make-canvas`, just before the backend runs.
+Each `draw/*.typ` backend *also* resolves on entry (`style.resolve-inputs`), which is what makes the
+public direct-call path work — `draw-tree(t, trie.renderer(t).snapshots.last())` in a hand-rolled
+`cetz.canvas`, where nothing else would resolve. Resolution is idempotent and guarded by
+`has-refs`, so the redundant pass on the animation path allocates nothing. `tests/direct-draw` is
+the tripwire; keep `make-canvas` resolving too, so a *custom* backend still gets resolved styles.
 That is what lets `styles.attention("L")` follow a `set-theme` made after the op was built.
 
 **Perf:** reading and writing one Typst state in a document forces a second layout pass. There is
@@ -352,3 +357,19 @@ locally.
 4. Export the namespace from `lib.typ` and add the module to `tests/api-conformance`.
 5. Add tests: one assertion-style `<name>-ops`, plus visual tests per animation.
 6. Add a tour chapter and a tidy reference stanza to `docs/manual.typ`.
+
+## The `insert` call trap
+
+`bst.insert(t, v)` — and the same on `rbt`, `avl`, `b24`, `trie`, `hashmap`,
+`skiplist` — **does not compile inside a function or closure body**. Typst
+parses `x.insert(..)` as its own *mutating* dict/array method, and a variable
+captured from an enclosing scope is read-only, so it errors with "variables
+from outside the function are read-only and cannot be modified" pointing at
+the *namespace*, never mentioning `insert`. The same line at document top
+level is fine, which is what makes it easy to miss.
+
+Workarounds: `(bst.insert)(t, v)`, or `#import starling.bst: insert`. Only the
+bare name `insert` collides — `insert-many`, `delete`, `contains` and the rest
+are unaffected, since Typst has no methods by those names. Documented for
+users in the manual's `<insert-trap>` section. Renaming the verb would be the
+only real fix and it is not worth breaking the DS contract over.

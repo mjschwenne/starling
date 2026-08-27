@@ -25,7 +25,10 @@
 
 /// Parse one factory argument into a `(value, label)` pair: either a bare
 /// ordering value (label `auto`, so the backend draws `str(value)`) or an
-/// explicit `(value, label)` 2-tuple. `who` names the caller in errors.
+/// explicit `(value, label)` 2-tuple. `auto` is itself a legal label in that
+/// pair, so `(5, auto)` and a bare `5` are the same thing — which is what lets
+/// a caller holding parallel `keys` / `labels` arrays zip them and pass the
+/// result straight in. `who` names the caller in errors.
 ///
 /// -> dictionary
 #let parse-value(x, who) = if type(x) == array {

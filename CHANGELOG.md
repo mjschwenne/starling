@@ -128,6 +128,26 @@ import shadows `anchor` with cetz's own.
 - `result(frames)` — the structure an animation's final frame produced.
 - `make-renderer(structure, draw, ..)` as a documented extension point: a draw
   backend is a plain function, and the bundled five go through the same door.
+- An anchor helper per key helper, so naming an element in your own cetz code
+  is one call rather than two: `hashmap.cell-anchor` / `entry-anchor`,
+  `sort.cell-anchor` / `entry-anchor`, `skiplist.box-anchor` / `forward-anchor`
+  / `data-anchor`, and `graph.edge-anchor(g, u, v)`. Each takes the same
+  `canvas:` argument as `anchor`. A graph node's key is its id and a tree's key
+  is its path, so those stay `anchor(key)`.
+- `with-node` / `with-edge` on the public surface, so a snapshot can be built
+  by hand — the progressive-reveal idiom — without routing every element
+  through the op stream just to fold it straight back in.
+- A partial `theme:` on the `draw-*` backends, matching every DS-level entry
+  point: naming one key layers it over the default rather than requiring a
+  whole resolved theme. The full theme the animation path passes merges to
+  itself, so nothing there changes.
+- `resolve-refs(style, theme)` on the public surface, for a draw backend of
+  your own. The bundled backends now call it themselves, so a snapshot carrying
+  theme references — anything from a structure's `renderer()` or from
+  `styles.*` — can be handed straight to `draw-tree` and friends inside your
+  own `cetz.canvas`. Previously only `make-canvas` resolved, so that path
+  panicked deep inside cetz with `expected color, found dictionary`, and
+  `resolve-refs` being private left no way to work around it.
 - `set-theme` / `default-theme` — one nested theme with a section per concern
   (`render`, `op`, and a palette per structure that needs one), replacing eight
   separate states and setters.

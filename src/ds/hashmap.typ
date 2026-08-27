@@ -50,6 +50,23 @@
 
 #let _DS = "Hash table"
 
+// ===================================================================
+// Anchors
+// ===================================================================
+//
+// One per key helper: `<x>-anchor(..)` is `anchor(<x>-key(..))`, the cetz
+// element name the backend drew that piece under. Pass `canvas:` to qualify
+// the name with an enclosing canvas.
+
+/// The cetz anchor for slot `i`.
+/// -> str
+#let cell-anchor(i, canvas: none) = anchor(cell-key(i), canvas: canvas)
+
+/// The cetz anchor for the `j`-th entry in slot `i` — also the anchor of the
+/// chain link that reaches it.
+/// -> str
+#let entry-anchor(i, j, canvas: none) = anchor(entry-key(i, j), canvas: canvas)
+
 /// The collision strategies this module understands.
 #let strategies = ("chaining", "linear", "quadratic", "double")
 

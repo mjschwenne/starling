@@ -53,8 +53,8 @@
 #import "../core/draw-util.typ": (
   PAD-X, PAD-Y, anchor, haloed, measure-max, resolve-dims, stroke-paint,
 )
-#import "../core/style.typ": merge-into
-#import "../core/theme.typ": default-theme
+#import "../core/style.typ": merge-into, resolve-inputs
+#import "../core/theme.typ": default-theme, merge-theme
 
 // ===================================================================
 // Cell / entry identity
@@ -296,7 +296,8 @@
   /// Base link styling, applied beneath the snapshot's per-link styles.
   /// -> dictionary
   edge-style: (:),
-  /// The full resolved theme. The backend reads `theme.render`,
+  /// A theme, partial or whole — a partial one layers over the default, as
+  /// on every DS entry point. The backend reads `theme.render`,
   /// `theme.hashmap`, and `theme.op.attention-stroke` (the hash-box
   /// arrow).
   /// -> dictionary
@@ -308,6 +309,19 @@
   name: none,
 ) = {
   import cetz.draw
+  // Layer a partial theme over the default, so a direct call takes the same
+  // partial `theme:` every DS-level entry point does. The full resolved theme
+  // `make-canvas` passes merges to itself, leaving the animation path alone.
+  let theme = merge-theme(default-theme, theme)
+  // Resolve theme references so the public direct-call path works: a
+  // snapshot straight from a DS `renderer()` or a `styles.*` helper carries
+  // refs that only `make-canvas` would otherwise resolve.
+  let (snapshot, node-style, edge-style) = resolve-inputs(
+    snapshot,
+    node-style,
+    edge-style,
+    theme,
+  )
   let rt = theme.render
   let pal = theme.hashmap
   let m = tbl.capacity

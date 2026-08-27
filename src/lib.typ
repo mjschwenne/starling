@@ -40,7 +40,12 @@
 // ===================================================================
 
 /// Snapshots — the sparse per-element style overlay for one frame.
-#import "core/snapshot.typ": apply-snapshot, blank-snapshot
+/// `blank-snapshot()` seeds one; `with-node` / `with-edge` add one element's
+/// styling directly, which is what a hand-built progressive reveal wants;
+/// `apply-snapshot` folds a whole op stream in at once.
+#import "core/snapshot.typ": (
+  apply-snapshot, blank-snapshot, with-edge, with-node,
+)
 
 /// The op command stream. Each constructor returns an *array*, so streams
 /// compose with `+`; `apply-ops` folds one into a renderer.
@@ -55,7 +60,9 @@
 
 /// Theme references — a placeholder for `theme.<section>.<key>`, resolved when
 /// the frame is drawn, so a style built ahead of time follows the live theme.
-#import "core/style.typ": role, theme-ref
+/// `resolve-refs(style, theme)` performs that substitution; the draw backends
+/// call it for you, so you only need it for a backend of your own.
+#import "core/style.typ": resolve-refs, role, theme-ref
 
 /// The one theme: one nested dict, one setter.
 #import "core/theme.typ": default-theme, set-theme

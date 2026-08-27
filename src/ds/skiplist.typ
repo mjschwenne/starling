@@ -45,6 +45,32 @@
 #let _DS = "Skip list"
 
 // ===================================================================
+// Anchors
+// ===================================================================
+//
+// One per key helper: `<x>-anchor(..)` is `anchor(<x>-key(..))`, the cetz
+// element name the backend drew that piece under. Pass `canvas:` to qualify
+// the name with an enclosing canvas.
+
+/// The cetz anchor for one node box at one level.
+/// -> str
+#let box-anchor(col, level, canvas: none) = anchor(
+  box-key(col, level),
+  canvas: canvas,
+)
+
+/// The cetz anchor for one forward pointer at one level.
+/// -> str
+#let forward-anchor(col, level, canvas: none) = anchor(
+  forward-key(col, level),
+  canvas: canvas,
+)
+
+/// The cetz anchor for one column's data cell.
+/// -> str
+#let data-anchor(col, canvas: none) = anchor(data-key(col), canvas: canvas)
+
+// ===================================================================
 // Deterministic PRNG (Typst has no built-in RNG)
 // ===================================================================
 //

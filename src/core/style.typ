@@ -231,3 +231,44 @@
   for (k, style) in styles.pairs() { out.insert(k, resolve-refs(style, theme)) }
   out
 }
+
+/// Whether a value contains a theme reference anywhere inside it.
+///
+/// The backends call this to skip the rebuild when their inputs are already
+/// resolved — the common case, since `frame.make-canvas` resolves before
+/// handing a snapshot over. Walking to answer "no" allocates nothing, where
+/// `resolve-refs` would rebuild every dict on the way down.
+#let has-refs(v) = {
+  if is-theme-ref(v) {
+    true
+  } else if type(v) == dictionary {
+    v.values().any(has-refs)
+  } else if type(v) == array {
+    v.any(has-refs)
+  } else { false }
+}
+
+/// Resolve theme references in one backend's whole input set at once.
+///
+/// Every `draw/*.typ` backend calls this on entry, which is what makes the
+/// public direct-call path — `draw-tree(t, trie.renderer(t).snapshots.last())`
+/// inside your own `cetz.canvas` — work. `frame.make-canvas` has already
+/// resolved on the animation path, so this is a no-op walk there; resolution
+/// is idempotent, and `has-refs` keeps the redundant pass allocation-free.
+///
+/// Returns `(snapshot, node-style, edge-style)`.
+#let resolve-inputs(snapshot, node-style, edge-style, theme) = {
+  let ns = if has-refs(node-style) {
+    resolve-refs(node-style, theme)
+  } else { node-style }
+  let es = if has-refs(edge-style) {
+    resolve-refs(edge-style, theme)
+  } else { edge-style }
+  let snap = if has-refs(snapshot.nodes) or has-refs(snapshot.edges) {
+    (
+      nodes: resolve-refs-map(snapshot.nodes, theme),
+      edges: resolve-refs-map(snapshot.edges, theme),
+    )
+  } else { snapshot }
+  (snapshot: snap, node-style: ns, edge-style: es)
+}

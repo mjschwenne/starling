@@ -28,8 +28,8 @@
 
 #import "@preview/cetz:0.5.2"
 #import "../core/draw-util.typ": anchor
-#import "../core/style.typ": merge-into
-#import "../core/theme.typ": default-theme
+#import "../core/style.typ": merge-into, resolve-inputs
+#import "../core/theme.typ": default-theme, merge-theme
 
 // ===================================================================
 // Anchor aliasing
@@ -235,7 +235,8 @@
   /// Base edge styling, applied beneath the snapshot's per-edge styles.
   /// -> dictionary
   edge-style: (:),
-  /// The full resolved theme. The backend reads `theme.render`.
+  /// A theme, partial or whole — a partial one layers over the default, as
+  /// on every DS entry point. The backend reads `theme.render`.
   /// -> dictionary
   theme: default-theme,
   /// Wrap the whole tree in a cetz group of this name, qualifying every
@@ -256,6 +257,19 @@
 ) = {
   import cetz.draw
   import cetz.tree as cetz-tree
+  // Layer a partial theme over the default, so a direct call takes the same
+  // partial `theme:` every DS-level entry point does. The full resolved theme
+  // `make-canvas` passes merges to itself, leaving the animation path alone.
+  let theme = merge-theme(default-theme, theme)
+  // Resolve theme references so the public direct-call path works: a
+  // snapshot straight from a DS `renderer()` or a `styles.*` helper carries
+  // refs that only `make-canvas` would otherwise resolve.
+  let (snapshot, node-style, edge-style) = resolve-inputs(
+    snapshot,
+    node-style,
+    edge-style,
+    theme,
+  )
   let rt = theme.render
 
   // Shape dispatch. A trie carries `terminal` (and `children`); an n-ary
